@@ -3,8 +3,9 @@ import io
 import shutil
 import tempfile
 
+from django.conf import settings
 from django.core.management import call_command
-from django.test import TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 from rest_framework.test import APIClient
 
 from accounts.models import User
@@ -61,3 +62,25 @@ class PortalSmokeTests(TestCase):
         resp = APIClient().post("/api/v1/auth/token/", {"username": "GW-EMP-001", "password": "Password@123"}, format="json")
         self.assertEqual(resp.status_code, 200)
         self.assertIn("access", resp.data)
+
+
+class StaticFilesWhiteNoiseTests(SimpleTestCase):
+    def test_whitenoise_configured_and_serves_static_files(self):
+        self.assertIn("whitenoise.middleware.WhiteNoiseMiddleware", settings.MIDDLEWARE)
+        self.assertIn("whitenoise.runserver_nostatic", settings.INSTALLED_APPS)
+        sec_idx = settings.MIDDLEWARE.index("django.middleware.security.SecurityMiddleware")
+        wn_idx = settings.MIDDLEWARE.index("whitenoise.middleware.WhiteNoiseMiddleware")
+        self.assertEqual(wn_idx, sec_idx + 1)
+
+        with tempfile.TemporaryDirectory() as static_root:
+            storages = {
+                **settings.STORAGES,
+                "staticfiles": {
+                    "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+                },
+            }
+            with override_settings(DEBUG=False, STATIC_ROOT=static_root, STORAGES=storages):
+                call_command("collectstatic", interactive=False, verbosity=0)
+                resp = self.client.get("/static/css/portal.css")
+                self.assertEqual(resp.status_code, 200)
+                resp.close()
