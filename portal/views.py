@@ -9,7 +9,7 @@ from datetime import datetime, date, timedelta
 from decimal import Decimal
 
 from accounts.models import User, RoleChoices, EmployeeProfile, UserBranchScope
-from organization.models import Organization, Branch, Department
+from organization.models import Branch, Department
 from expenses.models import (
     ExpenseClaim, ExpenseCategory, ExpenseAttachment,
     ExpenseClaimStatus, ReimbursementPayment
@@ -22,7 +22,7 @@ from leaves.services import (
     get_employee_leave_balances, record_manual_leave_adjustment,
     validate_leave_request, LeaveRequestError,
 )
-from portal.admin_views import validate_upload, can_manage_users
+from portal.admin_views import validate_upload, can_manage_users, get_default_organization
 import secrets
 from notifications.models import NotificationEvent
 from notifications.services import notify_expense_event, notify_leave_event
@@ -862,9 +862,7 @@ def _handle_branch_action(request, user, redirect_response, target_branch=None):
         if Branch.objects.filter(code=fields["code"]).exists():
             messages.error(request, f"A branch with code '{fields['code']}' already exists.")
             return redirect_response
-        org = Organization.objects.first()
-        if org is None:
-            org = Organization.objects.create(name="Great Waters", code="GW")
+        org = get_default_organization(user)
         branch = Branch.objects.create(organization=org, **fields)
         messages.success(request, f"Branch '{branch.name}' ({branch.code}) created.")
         if request.POST.get("open_after_create") == "1":

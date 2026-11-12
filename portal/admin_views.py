@@ -44,6 +44,20 @@ def can_manage_users(user):
     ]
 
 
+def get_default_organization(user=None):
+    """Resolve the active organization, creating a default record if none exists yet."""
+    branch = getattr(user, "primary_branch", None) if user is not None else None
+    if branch is not None and branch.organization_id:
+        return branch.organization
+    org = Organization.objects.first()
+    if org is None:
+        org, _ = Organization.objects.get_or_create(
+            code="GW",
+            defaults={"name": "Great Waters"},
+        )
+    return org
+
+
 def validate_upload(f):
     """Returns an error string, or None if the uploaded proof file is acceptable."""
     import mimetypes
@@ -269,9 +283,9 @@ def expense_categories_view(request):
             elif ExpenseCategory.objects.filter(code=code).exists():
                 messages.error(request, f"Category code {code} already exists.")
             else:
-                org = Organization.objects.first()
+                org = get_default_organization(user)
                 ExpenseCategory.objects.create(
-                    organization=org, name=name, code=code,
+                    organization=org, name=name[:100], code=code[:50],
                     description=request.POST.get("description", "").strip(),
                 )
                 messages.success(request, f"Category '{name}' added.")
@@ -327,7 +341,7 @@ def leave_settings_view(request):
         messages.error(request, "Leave settings are managed by the HR Coordinator.")
         return redirect("portal_dashboard")
 
-    org = Organization.objects.first()
+    org = get_default_organization(user)
 
     if request.method == "POST":
         action = request.POST.get("action")
@@ -335,8 +349,8 @@ def leave_settings_view(request):
         posted_year = _safe_int(request.POST.get("year"))
 
         if action == "create_leave_type":
-            name = request.POST.get("name", "").strip()
-            code = request.POST.get("code", "").strip().upper()
+            name = request.POST.get("name", "").strip()[:50]
+            code = request.POST.get("code", "").strip().upper()[:20]
             if not name or not code:
                 messages.error(request, "Leave type name and code are required.")
                 return _redirect_leave_settings(tab="types", year=posted_year)
@@ -359,7 +373,9 @@ def leave_settings_view(request):
 
         elif action == "update_leave_type":
             lt = get_object_or_404(LeaveType, pk=request.POST.get("leave_type_id"))
-            lt.name = request.POST.get("name", lt.name).strip() or lt.name
+            if not lt.organization_id:
+                lt.organization = org
+            lt.name = (request.POST.get("name", lt.name).strip() or lt.name)[:50]
             lt.is_paid = request.POST.get("is_paid") == "1"
             lt.is_accrual_based = request.POST.get("is_accrual_based") == "1"
             lt.requires_attachment = request.POST.get("requires_attachment") == "1"
@@ -379,6 +395,13 @@ def leave_settings_view(request):
             }
             if any(v is None or v < 0 for v in values.values()):
                 messages.error(request, "Entitlement, accrual rate and carry-forward must be non-negative numbers.")
+                return _redirect_leave_settings(tab="types", year=posted_year, open_type=lt.id)
+            if (
+                values["yearly_entitlement"] > Decimal("999.99")
+                or values["monthly_accrual_rate"] > Decimal("99.99")
+                or values["max_carry_forward"] > Decimal("999.99")
+            ):
+                messages.error(request, "Entitlement/carry-forward cannot exceed 999.99 days, and monthly accrual rate cannot exceed 99.99 days.")
                 return _redirect_leave_settings(tab="types", year=posted_year, open_type=lt.id)
             frequency = request.POST.get("accrual_frequency", "MONTHLY")
             if frequency not in ("MONTHLY", "YEARLY", "NONE"):

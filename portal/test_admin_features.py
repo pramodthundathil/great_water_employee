@@ -137,6 +137,23 @@ class LeaveSettingsViewTests(TestCase):
         self.assertEqual(resp2.status_code, 302)
         self.assertTrue(LeavePolicy.objects.filter(leave_type=lt, yearly_entitlement=Decimal("90.00")).exists())
 
+    def test_create_leave_type_auto_creates_default_organization_when_empty(self):
+        Organization.objects.all().delete()
+        hr_no_branch = User.objects.create_user(
+            username="HR2", employee_id="HR2", email="hr2@gw.test", password="Password@123",
+            role=RoleChoices.HR_COORDINATOR, is_global_scope=True,
+        )
+        self.client.force_login(hr_no_branch)
+        resp = self.client.post("/leaves/settings/", {
+            "action": "create_leave_type",
+            "code": "CL",
+            "name": "Casual Leave",
+            "is_paid": "1",
+        })
+        self.assertEqual(resp.status_code, 302)
+        lt = LeaveType.objects.get(code="CL")
+        self.assertIsNotNone(lt.organization_id)
+
     def test_add_update_and_delete_holiday_preserves_tab_and_year(self):
         self.client.force_login(self.hr)
         resp = self.client.post("/leaves/settings/", {
