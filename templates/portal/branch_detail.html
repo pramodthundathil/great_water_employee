@@ -1,0 +1,437 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}{{ branch.name }} ({{ branch.code }}) — Great Waters{% endblock %}
+
+{% block content %}
+<div class="page-title-box">
+    <div class="page-title-meta">
+        <div class="d-flex align-items-center flex-wrap gap-2 mb-1">
+            <a href="{% url 'portal_branches' %}" class="btn btn-sm btn-light border py-1 px-2" aria-label="Back to Offices and Branches">
+                <i class="bi bi-arrow-left" aria-hidden="true"></i>
+            </a>
+            <span class="gw-lt-code">{{ branch.code }}</span>
+            <h1 class="page-title m-0">{{ branch.name }}</h1>
+            <span class="status-badge {% if branch.is_active %}badge-approved{% else %}badge-draft{% endif %}">
+                {% if branch.is_active %}Active Office{% else %}Inactive{% endif %}
+            </span>
+        </div>
+        <p class="page-subtitle">
+            <i class="bi bi-geo-alt me-1" aria-hidden="true"></i>
+            {% if branch.city or branch.country %}
+                {{ branch.city }}{% if branch.city and branch.country %}, {% endif %}{{ branch.country }}
+            {% else %}
+                Location not specified
+            {% endif %}
+            {% if branch.phone %} &middot; <i class="bi bi-telephone ms-1 me-1" aria-hidden="true"></i>{{ branch.phone }}{% endif %}
+        </p>
+    </div>
+
+    {% if can_manage_branches %}
+    <div class="d-flex flex-wrap gap-2 dashboard-quick-actions">
+        <button
+            type="button"
+            class="btn btn-gw-secondary js-edit-branch-btn"
+            data-id="{{ branch.id }}"
+            data-code="{{ branch.code }}"
+            data-name="{{ branch.name }}"
+            data-city="{{ branch.city }}"
+            data-country="{{ branch.country }}"
+            data-phone="{{ branch.phone }}"
+            data-address="{{ branch.address }}"
+            data-active="{% if branch.is_active %}1{% else %}0{% endif %}"
+        >
+            <i class="bi bi-pencil" aria-hidden="true"></i>
+            <span>Edit Office</span>
+        </button>
+
+        <button
+            type="button"
+            class="btn {% if branch.is_active %}btn-outline-warning{% else %}btn-outline-success{% endif %} rounded-pill px-3 js-toggle-branch-btn"
+            data-id="{{ branch.id }}"
+            data-name="{{ branch.name }}"
+            data-active="{% if branch.is_active %}1{% else %}0{% endif %}"
+        >
+            <i class="bi {% if branch.is_active %}bi-pause-circle{% else %}bi-play-circle{% endif %} me-1" aria-hidden="true"></i>
+            <span>{% if branch.is_active %}Deactivate{% else %}Activate{% endif %}</span>
+        </button>
+
+        {% if can_delete %}
+        <button
+            type="button"
+            class="btn btn-outline-danger rounded-pill px-3 js-delete-branch-btn"
+            data-id="{{ branch.id }}"
+            data-name="{{ branch.name }}"
+        >
+            <i class="bi bi-trash me-1" aria-hidden="true"></i>
+            <span>Delete</span>
+        </button>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+
+<!-- Branch KPI Strip -->
+<div class="row g-3 mb-4">
+    <div class="col-6 col-xl-3">
+        <div class="kpi-card kpi-card-compact">
+            <div class="kpi-icon-wrapper" style="background: var(--gw-primary-light); color: var(--gw-primary);">
+                <i class="bi bi-people" aria-hidden="true"></i>
+            </div>
+            <div class="min-w-0">
+                <div class="kpi-label">Active Staff</div>
+                <div class="kpi-value">{{ active_employees_count }}</div>
+                <div class="kpi-meta mt-0">{{ employees|length }} total assigned</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-xl-3">
+        <div class="kpi-card kpi-card-compact">
+            <div class="kpi-icon-wrapper" style="background: #FEF3C7; color: #D97706;">
+                <i class="bi bi-receipt" aria-hidden="true"></i>
+            </div>
+            <div class="min-w-0">
+                <div class="kpi-label">Expense Claims</div>
+                <div class="kpi-value">{{ claims_count }}</div>
+                <div class="kpi-meta mt-0">{{ pending_claims_count }} awaiting review</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-xl-3">
+        <div class="kpi-card kpi-card-compact">
+            <div class="kpi-icon-wrapper" style="background: #ECFDF5; color: #059669;">
+                <i class="bi bi-calendar3" aria-hidden="true"></i>
+            </div>
+            <div class="min-w-0">
+                <div class="kpi-label">Leave Requests</div>
+                <div class="kpi-value">{{ leaves_count }}</div>
+                <div class="kpi-meta mt-0">{{ pending_leaves_count }} awaiting approval</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-xl-3">
+        <div class="kpi-card kpi-card-compact">
+            <div class="kpi-icon-wrapper" style="background: #E0F2FE; color: #0284C7;">
+                <i class="bi bi-calendar-event" aria-hidden="true"></i>
+            </div>
+            <div class="min-w-0">
+                <div class="kpi-label">{{ current_year }} Holidays</div>
+                <div class="kpi-value">{{ holidays|length }}</div>
+                <div class="kpi-meta mt-0">Branch calendar entries</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4 align-items-start">
+    <!-- Left Sidebar: Office Profile, Holidays, Cross-Branch Scopes -->
+    <div class="col-lg-4 d-flex flex-column gap-4">
+        <div class="gw-card mb-0">
+            <div class="gw-card-header">
+                <h2 class="gw-card-title"><i class="bi bi-building me-2 text-primary" aria-hidden="true"></i>Office Details</h2>
+            </div>
+            <div class="gw-card-body">
+                <dl class="row g-2 small mb-0">
+                    <dt class="col-4 text-muted">Code</dt>
+                    <dd class="col-8 fw-semibold"><code>{{ branch.code }}</code></dd>
+
+                    <dt class="col-4 text-muted">Organization</dt>
+                    <dd class="col-8 fw-semibold">{{ branch.organization.name }}</dd>
+
+                    <dt class="col-4 text-muted">City</dt>
+                    <dd class="col-8">{{ branch.city|default:"—" }}</dd>
+
+                    <dt class="col-4 text-muted">Country</dt>
+                    <dd class="col-8">{{ branch.country|default:"—" }}</dd>
+
+                    <dt class="col-4 text-muted">Phone</dt>
+                    <dd class="col-8">{{ branch.phone|default:"—" }}</dd>
+
+                    <dt class="col-4 text-muted">Address</dt>
+                    <dd class="col-8">{{ branch.address|default:"—"|linebreaksbr }}</dd>
+
+                    <dt class="col-4 text-muted">Created</dt>
+                    <dd class="col-8">{{ branch.created_at|date:"d M Y" }}</dd>
+
+                    <dt class="col-4 text-muted">Updated</dt>
+                    <dd class="col-8">{{ branch.updated_at|date:"d M Y" }}</dd>
+                </dl>
+
+                {% if can_manage_branches and not can_delete %}
+                <div class="mt-3 pt-3 border-top small text-muted">
+                    <i class="bi bi-shield-lock me-1" aria-hidden="true"></i>
+                    Protected from deletion because this office has {{ delete_block_reasons }}. You can deactivate it instead.
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="gw-card mb-0">
+            <div class="gw-card-header">
+                <h2 class="gw-card-title"><i class="bi bi-calendar-event me-2 text-primary" aria-hidden="true"></i>{{ current_year }} Branch Holidays</h2>
+                {% if user.is_hr_coordinator or user.is_director or user.is_superuser %}
+                <a href="{% url 'portal_leave_settings' %}?tab=holidays&amp;year={{ current_year }}" class="small fw-semibold text-decoration-none gw-header-link">Manage</a>
+                {% endif %}
+            </div>
+            <div class="gw-card-body p-0">
+                <ul class="list-group list-group-flush">
+                    {% for h in holidays %}
+                    <li class="list-group-item d-flex justify-content-between align-items-center px-3 py-2">
+                        <div>
+                            <div class="fw-semibold small text-dark">{{ h.name }}</div>
+                            <div class="text-muted" style="font-size: 0.75rem;">{{ h.date|date:"D, d M Y" }}</div>
+                        </div>
+                        {% if h.is_optional %}
+                        <span class="badge bg-light text-secondary border">Optional</span>
+                        {% else %}
+                        <span class="badge bg-success-subtle text-success">Public</span>
+                        {% endif %}
+                    </li>
+                    {% empty %}
+                    <li class="list-group-item text-center text-muted small py-3">
+                        No branch-specific holidays set for {{ current_year }}.
+                    </li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+
+        {% if scoped_users %}
+        <div class="gw-card mb-0">
+            <div class="gw-card-header">
+                <h2 class="gw-card-title"><i class="bi bi-diagram-3 me-2 text-primary" aria-hidden="true"></i>Cross-Branch Access</h2>
+            </div>
+            <div class="gw-card-body p-0">
+                <ul class="list-group list-group-flush">
+                    {% for s in scoped_users %}
+                    <li class="list-group-item d-flex justify-content-between align-items-center px-3 py-2 small">
+                        <div>
+                            <div class="fw-semibold text-dark">{{ s.user.full_name }}</div>
+                            <div class="text-muted" style="font-size: 0.75rem;">{{ s.user.employee_id }} &middot; {{ s.user.get_role_display }}</div>
+                        </div>
+                        {% if can_manage_employees %}
+                        <a href="{% url 'portal_employee_edit' s.user.id %}" class="btn btn-sm btn-light border">Edit</a>
+                        {% endif %}
+                    </li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Right Workspace: Staff, Recent Claims, Recent Leaves -->
+    <div class="col-lg-8">
+        <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+            <div class="gw-segmented-tabs" role="tablist" aria-label="Branch activity sections">
+                <button type="button" role="tab" id="btab-staff" class="gw-segmented-tab active" aria-controls="bpanel-staff" aria-selected="true" data-btab="staff">
+                    <i class="bi bi-people" aria-hidden="true"></i>
+                    <span>Staff</span>
+                    <span class="gw-tab-count">{{ employees|length }}</span>
+                </button>
+                <button type="button" role="tab" id="btab-claims" class="gw-segmented-tab" aria-controls="bpanel-claims" aria-selected="false" data-btab="claims">
+                    <i class="bi bi-receipt" aria-hidden="true"></i>
+                    <span>Expense Claims</span>
+                    <span class="gw-tab-count">{{ claims_count }}</span>
+                </button>
+                <button type="button" role="tab" id="btab-leaves" class="gw-segmented-tab" aria-controls="bpanel-leaves" aria-selected="false" data-btab="leaves">
+                    <i class="bi bi-calendar3" aria-hidden="true"></i>
+                    <span>Leave Requests</span>
+                    <span class="gw-tab-count">{{ leaves_count }}</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Tab 1: Staff -->
+        <section id="bpanel-staff" role="tabpanel" aria-labelledby="btab-staff" class="gw-card mb-0">
+            <div class="gw-card-header">
+                <h2 id="branch-staff-title" class="gw-card-title">Assigned Staff ({{ employees|length }})</h2>
+                <a href="{% url 'portal_employees' %}?branch={{ branch.id }}" class="small fw-semibold text-decoration-none gw-header-link">
+                    Open in Directory <i class="bi bi-arrow-right" aria-hidden="true"></i>
+                </a>
+            </div>
+            <div class="gw-card-body p-0">
+                <div tabindex="0" role="region" aria-labelledby="branch-staff-title" class="gw-responsive-table-wrap">
+                    <table class="table gw-table gw-responsive-table m-0">
+                        <thead>
+                            <tr>
+                                <th scope="col">Employee</th>
+                                <th scope="col">Role</th>
+                                <th scope="col">Department</th>
+                                <th scope="col">Status</th>
+                                {% if can_manage_employees %}<th scope="col" class="text-end">Action</th>{% endif %}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for e in employees %}
+                            <tr>
+                                <td data-label="Employee">
+                                    <div class="fw-semibold text-dark">{{ e.full_name }}</div>
+                                    <div class="small text-muted"><code>{{ e.employee_id }}</code> &middot; {{ e.email }}</div>
+                                </td>
+                                <td data-label="Role">{{ e.get_role_display }}</td>
+                                <td data-label="Department">{{ e.profile.department.name|default:"—" }}</td>
+                                <td data-label="Status">
+                                    <span class="status-badge {% if e.is_active %}badge-approved{% else %}badge-draft{% endif %}">
+                                        {% if e.is_active %}Active{% else %}Inactive{% endif %}
+                                    </span>
+                                </td>
+                                {% if can_manage_employees %}
+                                <td data-label="Action" class="text-end">
+                                    <a href="{% url 'portal_employee_edit' e.id %}" class="btn btn-sm btn-light border">Edit</a>
+                                </td>
+                                {% endif %}
+                            </tr>
+                            {% empty %}
+                            <tr class="is-empty-row">
+                                <td colspan="{% if can_manage_employees %}5{% else %}4{% endif %}">
+                                    <div class="empty-state">
+                                        <div class="empty-state-icon"><i class="bi bi-people" aria-hidden="true"></i></div>
+                                        <div class="empty-state-title">No employees assigned yet</div>
+                                        <div class="empty-state-desc">Assign employees to {{ branch.name }} from the Employees directory.</div>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- Tab 2: Recent Expense Claims -->
+        <section id="bpanel-claims" role="tabpanel" aria-labelledby="btab-claims" class="gw-card mb-0" hidden>
+            <div class="gw-card-header">
+                <h2 id="branch-claims-title" class="gw-card-title">Recent Expense Claims</h2>
+            </div>
+            <div class="gw-card-body p-0">
+                <div tabindex="0" role="region" aria-labelledby="branch-claims-title" class="gw-responsive-table-wrap">
+                    <table class="table gw-table gw-responsive-table m-0">
+                        <thead>
+                            <tr>
+                                <th scope="col">Claim #</th>
+                                <th scope="col">Employee</th>
+                                <th scope="col">Category</th>
+                                <th scope="col">Date</th>
+                                <th scope="col">Amount</th>
+                                <th scope="col">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for c in recent_claims %}
+                            <tr>
+                                <td data-label="Claim #">
+                                    <a href="{% url 'portal_expense_detail' c.id %}" class="fw-bold text-decoration-none">{{ c.claim_number }}</a>
+                                </td>
+                                <td data-label="Employee">{{ c.employee.full_name }}</td>
+                                <td data-label="Category">{{ c.category.name }}</td>
+                                <td data-label="Date">{{ c.expense_date|date:"d M Y" }}</td>
+                                <td data-label="Amount" class="fw-semibold">{{ c.amount }}</td>
+                                <td data-label="Status"><span class="badge bg-light text-dark border">{{ c.get_status_display }}</span></td>
+                            </tr>
+                            {% empty %}
+                            <tr class="is-empty-row">
+                                <td colspan="6">
+                                    <div class="empty-state">
+                                        <div class="empty-state-icon"><i class="bi bi-receipt" aria-hidden="true"></i></div>
+                                        <div class="empty-state-title">No expense claims yet</div>
+                                        <div class="empty-state-desc">Claims submitted under {{ branch.name }} will appear here.</div>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- Tab 3: Recent Leave Requests -->
+        <section id="bpanel-leaves" role="tabpanel" aria-labelledby="btab-leaves" class="gw-card mb-0" hidden>
+            <div class="gw-card-header">
+                <h2 id="branch-leaves-title" class="gw-card-title">Recent Leave Requests</h2>
+            </div>
+            <div class="gw-card-body p-0">
+                <div tabindex="0" role="region" aria-labelledby="branch-leaves-title" class="gw-responsive-table-wrap">
+                    <table class="table gw-table gw-responsive-table m-0">
+                        <thead>
+                            <tr>
+                                <th scope="col">Request #</th>
+                                <th scope="col">Employee</th>
+                                <th scope="col">Type</th>
+                                <th scope="col">Dates</th>
+                                <th scope="col">Days</th>
+                                <th scope="col">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for l in recent_leaves %}
+                            <tr>
+                                <td data-label="Request #">
+                                    <a href="{% url 'portal_leave_detail' l.id %}" class="fw-bold text-decoration-none">{{ l.application_number }}</a>
+                                </td>
+                                <td data-label="Employee">{{ l.employee.full_name }}</td>
+                                <td data-label="Type">{{ l.leave_type.name }}</td>
+                                <td data-label="Dates">{{ l.start_date|date:"d M" }} &ndash; {{ l.end_date|date:"d M Y" }}</td>
+                                <td data-label="Days">{{ l.number_of_days|floatformat:"-2" }}</td>
+                                <td data-label="Status"><span class="badge bg-light text-dark border">{{ l.get_status_display }}</span></td>
+                            </tr>
+                            {% empty %}
+                            <tr class="is-empty-row">
+                                <td colspan="6">
+                                    <div class="empty-state">
+                                        <div class="empty-state-icon"><i class="bi bi-calendar3" aria-hidden="true"></i></div>
+                                        <div class="empty-state-title">No leave requests yet</div>
+                                        <div class="empty-state-desc">Leave applications from {{ branch.name }} staff will appear here.</div>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+    </div>
+</div>
+
+{% if can_manage_branches %}
+{% url 'portal_branch_detail' branch.id as branch_detail_action_url %}
+{% include "portal/_branch_modals.html" with form_action=branch_detail_action_url %}
+{% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const bTabBtns = Array.from(document.querySelectorAll('[role="tab"][data-btab]'));
+    const bPanels = {
+        staff: document.getElementById('bpanel-staff'),
+        claims: document.getElementById('bpanel-claims'),
+        leaves: document.getElementById('bpanel-leaves'),
+    };
+    const activateBranchTab = (name) => {
+        bTabBtns.forEach((btn) => {
+            const match = btn.dataset.btab === name;
+            btn.classList.toggle('active', match);
+            btn.setAttribute('aria-selected', String(match));
+        });
+        Object.entries(bPanels).forEach(([k, panel]) => {
+            if (panel) panel.hidden = (k !== name);
+        });
+    };
+    bTabBtns.forEach((btn, idx) => {
+        btn.addEventListener('click', () => activateBranchTab(btn.dataset.btab));
+        btn.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+                e.preventDefault();
+                const dir = e.key === 'ArrowRight' ? 1 : -1;
+                const nextBtn = bTabBtns[(idx + dir + bTabBtns.length) % bTabBtns.length];
+                nextBtn.focus();
+                activateBranchTab(nextBtn.dataset.btab);
+            }
+        });
+    });
+});
+</script>
+{% endblock %}

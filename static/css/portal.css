@@ -1636,6 +1636,505 @@ body {
 .badge-rejected { background: var(--status-rejected-bg); color: var(--status-rejected-text); }
 .badge-rejected::before { background: #DC2626; }
 
+/* ==========================================================================
+   Leave Settings Experience (Cards, Switches, Radio Cards, Dialogs, Holidays)
+   ========================================================================== */
+.kpi-card-compact {
+    padding: 1rem 1.2rem;
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+}
+
+.kpi-card-compact .kpi-icon-wrapper {
+    width: 42px;
+    height: 42px;
+    font-size: 1.2rem;
+    margin-bottom: 0;
+    flex-shrink: 0;
+}
+
+.kpi-card-compact .kpi-value {
+    font-size: 1.25rem;
+    margin-bottom: 0.1rem;
+}
+
+.gw-lt-card {
+    background: var(--gw-surface);
+    border: 1px solid var(--gw-border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-subtle);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    overflow: clip;
+}
+
+.gw-lt-card:hover {
+    border-color: #CBD5E1;
+    box-shadow: var(--shadow-card);
+}
+
+.gw-lt-card.is-open {
+    border-color: rgba(91, 69, 224, 0.38);
+    box-shadow: var(--shadow-card);
+}
+
+.gw-lt-card.is-inactive {
+    opacity: 0.85;
+    background: #FCFCFE;
+}
+
+.gw-lt-header {
+    padding: 1.15rem 1.35rem;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.gw-lt-code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    padding: 0.35rem 0.65rem;
+    border-radius: var(--radius-sm);
+    background: var(--gw-primary-light);
+    color: var(--gw-primary-dark);
+    border: 1px solid rgba(91, 69, 224, 0.18);
+    flex-shrink: 0;
+}
+
+.gw-lt-card.is-inactive .gw-lt-code {
+    background: var(--status-draft-bg);
+    color: var(--status-draft-text);
+    border-color: rgba(100, 116, 139, 0.2);
+}
+
+.gw-rule-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.76rem;
+    font-weight: 600;
+    padding: 0.24rem 0.62rem;
+    border-radius: var(--radius-full);
+    background: var(--gw-surface-muted);
+    color: var(--gw-text-primary);
+    border: 1px solid var(--gw-border);
+}
+
+.gw-rule-chip--warn {
+    background: var(--status-pending-bg);
+    color: var(--status-pending-text);
+    border-color: rgba(217, 119, 6, 0.25);
+}
+
+.gw-rule-chip--accent {
+    background: #EEF2FF;
+    color: var(--gw-primary-dark);
+    border-color: rgba(91, 69, 224, 0.2);
+}
+
+.gw-lt-body {
+    border-top: 1px solid var(--gw-border);
+    background: #FAFBFD;
+    padding: 1.35rem;
+}
+
+.gw-fieldset {
+    border: 1px solid var(--gw-border);
+    border-radius: var(--radius-md);
+    background: #FFFFFF;
+    padding: 1.15rem;
+    margin: 0;
+}
+
+.gw-fieldset-legend {
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--gw-dark);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 0.9rem;
+    padding: 0;
+    float: none;
+    width: auto;
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+}
+
+/* Accessible Native Switch Controls */
+.gw-switch-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+}
+
+.gw-switch-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.85rem;
+    padding: 0.65rem 0.85rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--gw-border);
+    background: #FFFFFF;
+    cursor: pointer;
+    transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.gw-switch-row:hover {
+    border-color: #CBD5E1;
+    background: #FAF9FE;
+}
+
+.gw-switch-label-title {
+    font-size: 0.84rem;
+    font-weight: 600;
+    color: var(--gw-dark);
+    display: block;
+    line-height: 1.3;
+}
+
+.gw-switch-label-hint {
+    font-size: 0.75rem;
+    color: var(--gw-text-secondary);
+    display: block;
+    margin-top: 0.15rem;
+    line-height: 1.35;
+}
+
+input[type="checkbox"][switch].gw-native-switch {
+    accent-color: var(--gw-primary);
+    width: 2.15rem;
+    height: 1.25rem;
+    margin: 0.1rem 0 0 0;
+    flex-shrink: 0;
+    cursor: pointer;
+}
+
+input[type="checkbox"][switch].gw-native-switch:focus-visible {
+    outline: 2px solid var(--gw-primary);
+    outline-offset: 2px;
+}
+
+/* Progressive pill-switch fallback when native <input switch> is unsupported */
+input[type="checkbox"][switch].gw-native-switch.is-switch-fallback {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 2.35rem;
+    height: 1.32rem;
+    border-radius: 9999px;
+    background-color: #CBD5E1;
+    position: relative;
+    transition: background-color 0.18s ease;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+input[type="checkbox"][switch].gw-native-switch.is-switch-fallback::before {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: calc(1.32rem - 6px);
+    height: calc(1.32rem - 6px);
+    border-radius: 50%;
+    background-color: #FFFFFF;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.25);
+    transition: transform 0.18s ease;
+}
+
+input[type="checkbox"][switch].gw-native-switch.is-switch-fallback:checked {
+    background-color: var(--gw-primary);
+}
+
+input[type="checkbox"][switch].gw-native-switch.is-switch-fallback:checked::before {
+    transform: translateX(1.03rem);
+}
+
+/* Radio Option Cards for Accrual Frequency */
+.gw-radio-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+    gap: 0.6rem;
+}
+
+.gw-radio-card {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    padding: 0.72rem 0.85rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--gw-border);
+    background: #FFFFFF;
+    cursor: pointer;
+    transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.gw-radio-card:hover {
+    border-color: #CBD5E1;
+}
+
+.gw-radio-card input[type="radio"] {
+    accent-color: var(--gw-primary);
+    margin-top: 0.2rem;
+    flex-shrink: 0;
+    cursor: pointer;
+}
+
+.gw-radio-card:has(input[type="radio"]:checked) {
+    border-color: var(--gw-primary);
+    background: #F6F4FF;
+    box-shadow: 0 0 0 1px rgba(91, 69, 224, 0.2);
+}
+
+.gw-radio-title {
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: var(--gw-dark);
+    display: block;
+    line-height: 1.25;
+}
+
+.gw-radio-desc {
+    font-size: 0.72rem;
+    color: var(--gw-text-secondary);
+    display: block;
+    margin-top: 0.18rem;
+    line-height: 1.3;
+}
+
+/* Holiday Calendar Badge */
+.gw-date-badge {
+    width: 44px;
+    border-radius: 10px;
+    border: 1px solid var(--gw-border);
+    overflow: hidden;
+    text-align: center;
+    background: #FFFFFF;
+    flex-shrink: 0;
+    box-shadow: var(--shadow-subtle);
+}
+
+.gw-date-badge-month {
+    background: var(--gw-primary);
+    color: #FFFFFF;
+    font-size: 0.64rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 0.15rem 0;
+    line-height: 1.1;
+}
+
+.gw-date-badge-day {
+    font-size: 0.98rem;
+    font-weight: 800;
+    color: var(--gw-dark);
+    padding: 0.2rem 0;
+    line-height: 1.1;
+}
+
+/* Responsive Tables with Container Query Stacking */
+.gw-holidays-table-wrap,
+.gw-responsive-table-wrap {
+    overflow: auto;
+    max-inline-size: 100%;
+    container-type: inline-size;
+}
+
+@container (width < 600px) {
+    .gw-holidays-table,
+    .gw-holidays-table thead,
+    .gw-holidays-table tbody,
+    .gw-holidays-table tr,
+    .gw-holidays-table th,
+    .gw-holidays-table td,
+    .gw-responsive-table,
+    .gw-responsive-table thead,
+    .gw-responsive-table tbody,
+    .gw-responsive-table tr,
+    .gw-responsive-table th,
+    .gw-responsive-table td {
+        display: block;
+    }
+
+    .gw-holidays-table thead,
+    .gw-responsive-table thead {
+        display: none;
+    }
+
+    .gw-holidays-table tbody tr,
+    .gw-responsive-table tbody tr {
+        margin: 0.75rem;
+        border: 1px solid var(--gw-border);
+        border-radius: var(--radius-md);
+        background: #FFFFFF;
+        padding: 0.35rem 0;
+        box-shadow: var(--shadow-subtle);
+    }
+
+    .gw-holidays-table tbody tr.is-empty-row,
+    .gw-responsive-table tbody tr.is-empty-row {
+        border: none;
+        box-shadow: none;
+        margin: 0;
+    }
+
+    .gw-holidays-table tbody td,
+    .gw-responsive-table tbody td {
+        border-bottom: 1px solid var(--gw-border-subtle);
+        padding: 0.55rem 0.9rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        text-align: end;
+    }
+
+    .gw-holidays-table tbody td:last-child,
+    .gw-responsive-table tbody td:last-child {
+        border-bottom: none;
+    }
+
+    .gw-holidays-table tbody td[data-label]::before,
+    .gw-responsive-table tbody td[data-label]::before {
+        content: attr(data-label);
+        font-size: 0.72rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--gw-text-secondary);
+        text-align: start;
+        flex-shrink: 0;
+    }
+
+    .gw-holidays-table tbody tr.is-empty-row td::before,
+    .gw-responsive-table tbody tr.is-empty-row td::before {
+        content: none;
+    }
+}
+
+/* Branch Master Cards & Stat Strip */
+.gw-branch-card.is-inactive {
+    opacity: 0.84;
+    background: #FCFCFE;
+}
+
+.gw-branch-stat-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.5rem;
+    padding: 0.75rem;
+    border-radius: var(--radius-md);
+    background: var(--gw-surface-muted);
+    border: 1px solid var(--gw-border);
+}
+
+.gw-branch-stat-item {
+    text-align: center;
+    min-width: 0;
+}
+
+.gw-branch-stat-value {
+    font-size: 1.05rem;
+    font-weight: 800;
+    color: var(--gw-dark);
+    line-height: 1.2;
+}
+
+.gw-branch-stat-label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--gw-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+/* Native <dialog> Modals */
+dialog.gw-dialog {
+    border: 1px solid var(--gw-border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-floating);
+    background: var(--gw-surface);
+    color: var(--gw-text-primary);
+    padding: 0;
+    max-width: min(540px, calc(100vw - 2rem));
+    width: 100%;
+    margin: auto;
+    overscroll-behavior: contain;
+}
+
+dialog.gw-dialog::backdrop {
+    background: rgba(26, 17, 70, 0.45);
+    backdrop-filter: blur(4px);
+}
+
+.gw-dialog-header {
+    padding: 1.15rem 1.35rem;
+    border-bottom: 1px solid var(--gw-border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    background: #FAFAFD;
+}
+
+.gw-dialog-title {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--gw-dark);
+    margin: 0;
+}
+
+.gw-dialog-body {
+    padding: 1.25rem 1.35rem;
+}
+
+.gw-dialog-footer {
+    padding: 0.95rem 1.35rem;
+    border-top: 1px solid var(--gw-border);
+    background: #FAFAFD;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.6rem;
+}
+
+/* Required Field Validation (:user-invalid + fallback) */
+.field-error-msg {
+    display: none;
+    color: #B91C1C;
+    font-size: 0.76rem;
+    font-weight: 600;
+    margin-top: 0.3rem;
+    align-items: center;
+    gap: 0.3rem;
+}
+
+.gw-settings-form .form-control:user-invalid,
+.gw-settings-form .form-select:user-invalid,
+.gw-settings-form .form-control.user-invalid-fallback,
+.gw-settings-form .form-select.user-invalid-fallback {
+    border-color: #DC2626;
+    background-color: #FEF2F2;
+}
+
+.gw-settings-form .form-control:user-invalid ~ .field-error-msg,
+.gw-settings-form .form-select:user-invalid ~ .field-error-msg,
+.gw-settings-form .form-control.user-invalid-fallback ~ .field-error-msg,
+.gw-settings-form .form-select.user-invalid-fallback ~ .field-error-msg {
+    display: flex;
+}
+
+.gw-sticky-panel {
+    position: sticky;
+    top: calc(var(--header-height) + 1rem);
+}
+
 /* Reduced Motion Override for Accessibility */
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {

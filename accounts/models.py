@@ -53,6 +53,18 @@ class User(AbstractUser):
         name = self.get_full_name() or self.username
         return f"{name} ({self.employee_id}) - {self.get_role_display()}"
 
+    def save(self, *args, **kwargs):
+        # The system administrator (superuser) is always the Director with organisation-wide scope,
+        # whether created via createsuperuser, the Django admin, or promoted later.
+        if self.is_superuser:
+            self.role = RoleChoices.DIRECTOR
+            self.is_global_scope = True
+            self.is_staff = True
+            update_fields = kwargs.get("update_fields")
+            if update_fields is not None:
+                kwargs["update_fields"] = set(update_fields) | {"role", "is_global_scope", "is_staff"}
+        super().save(*args, **kwargs)
+
     @property
     def full_name(self):
         name = f"{self.first_name} {self.last_name}".strip()

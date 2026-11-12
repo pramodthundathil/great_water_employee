@@ -6,6 +6,7 @@ from accounts.api_views import (
     ChangePasswordView, ForgotPasswordView,
 )
 from portal.api_views import DashboardSummaryView, PendingApprovalsView
+from portal.analytics_api import DashboardAnalyticsView
 from organization.api_views import UserBranchListView, DepartmentListView
 from expenses.api_views import (
     ExpenseCategoryListView, ExpenseClaimListCreateView,
@@ -38,6 +39,7 @@ urlpatterns = [
 
     # Mobile aggregates
     path("dashboard/summary/", DashboardSummaryView.as_view(), name="api_dashboard_summary"),
+    path("dashboard/analytics/", DashboardAnalyticsView.as_view(), name="api_dashboard_analytics"),
     path("approvals/pending/", PendingApprovalsView.as_view(), name="api_approvals_pending"),
 
     # Organization

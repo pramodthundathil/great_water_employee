@@ -1,109 +1,1170 @@
 {% extends "base.html" %}
 {% block title %}Leave Settings{% endblock %}
+
 {% block content %}
 <div class="page-title-box">
-    <div>
+    <div class="page-title-meta">
         <h1 class="page-title">Leave Settings</h1>
-        <p class="page-subtitle">Leave types, entitlement &amp; earned-leave accrual rules, and the public holiday list.</p>
+        <p class="page-subtitle">Configure leave categories, entitlement &amp; earned-leave accrual rules, and office holiday calendars.</p>
     </div>
-    <form method="post" onsubmit="return confirm('Credit this month\'s earned leave now? Employees already credited for this month are skipped.');">
-        {% csrf_token %}
-        <input type="hidden" name="action" value="run_accrual">
-        <button class="btn btn-outline-primary"><i class="bi bi-arrow-repeat me-1"></i>Run this month's accrual</button>
-    </form>
+    <div class="d-flex flex-wrap gap-2 dashboard-quick-actions">
+        <button
+            type="button"
+            class="btn btn-gw-secondary"
+            commandfor="runAccrualDialog"
+            command="show-modal"
+        >
+            <i class="bi bi-arrow-repeat" aria-hidden="true"></i>
+            <span>Run {{ current_period_label }} Accrual</span>
+        </button>
+        <button
+            type="button"
+            class="btn btn-gw-primary"
+            commandfor="createLeaveTypeDialog"
+            command="show-modal"
+        >
+            <i class="bi bi-plus-lg" aria-hidden="true"></i>
+            <span>Add Leave Type</span>
+        </button>
+    </div>
 </div>
 
-<div class="gw-card mb-4">
-    <div class="gw-card-header"><h5 class="gw-card-title"><i class="bi bi-calendar2-check me-2"></i>Leave types &amp; policies</h5></div>
-    <div class="gw-card-body p-0">
-        {% for lt in leave_types %}
-        <div class="border-bottom p-3 p-md-4">
-            <form method="post" class="row g-2 align-items-end mb-3">
-                {% csrf_token %}
-                <input type="hidden" name="action" value="update_leave_type">
-                <input type="hidden" name="leave_type_id" value="{{ lt.id }}">
-                <div class="col-md-3">
-                    <label class="form-label small fw-bold m-0">Leave type <code>{{ lt.code }}</code></label>
-                    <input type="text" name="name" value="{{ lt.name }}" class="form-control form-control-sm">
+<!-- Quick Overview Strip -->
+<div class="row g-3 mb-4">
+    <div class="col-6 col-xl-3">
+        <div class="kpi-card kpi-card-compact">
+            <div class="kpi-icon-wrapper" style="background: var(--gw-primary-light); color: var(--gw-primary);">
+                <i class="bi bi-calendar2-check" aria-hidden="true"></i>
+            </div>
+            <div class="min-w-0">
+                <div class="kpi-label">Leave Types</div>
+                <div class="kpi-value">{{ active_leave_types_count }} Active</div>
+                <div class="kpi-meta mt-0">{{ leave_types|length }} total configured</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-xl-3">
+        <div class="kpi-card kpi-card-compact">
+            <div class="kpi-icon-wrapper" style="background: #ECFDF5; color: #059669;">
+                <i class="bi bi-sliders2" aria-hidden="true"></i>
+            </div>
+            <div class="min-w-0">
+                <div class="kpi-label">Active Policies</div>
+                <div class="kpi-value">{{ active_policies_count }} Active</div>
+                <div class="kpi-meta mt-0">{{ monthly_accrual_policies_count }} monthly accrual</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-xl-3">
+        <div class="kpi-card kpi-card-compact">
+            <div class="kpi-icon-wrapper" style="background: #E0F2FE; color: #0284C7;">
+                <i class="bi bi-calendar-event" aria-hidden="true"></i>
+            </div>
+            <div class="min-w-0">
+                <div class="kpi-label">{{ year }} Holidays</div>
+                <div class="kpi-value">{{ holidays|length }} Listed</div>
+                <div class="kpi-meta mt-0">{{ mandatory_holidays_count }} public &middot; {{ optional_holidays_count }} optional</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-xl-3">
+        <div class="kpi-card kpi-card-compact">
+            <div class="kpi-icon-wrapper" style="background: #FEF3C7; color: #D97706;">
+                <i class="bi bi-clock-history" aria-hidden="true"></i>
+            </div>
+            <div class="min-w-0">
+                <div class="kpi-label">Accrual ({{ current_period_label }})</div>
+                <div class="kpi-value">{{ current_period_credited_count }} Credited</div>
+                <div class="kpi-meta mt-0">
+                    {% if current_period_credited_count %}Run completed this month{% else %}Ready to run{% endif %}
                 </div>
-                <div class="col-auto"><div class="form-check"><input class="form-check-input" type="checkbox" name="is_paid" value="1" id="paid{{ lt.id }}" {% if lt.is_paid %}checked{% endif %}><label class="form-check-label small" for="paid{{ lt.id }}">Paid (uses balance)</label></div></div>
-                <div class="col-auto"><div class="form-check"><input class="form-check-input" type="checkbox" name="is_accrual_based" value="1" id="acc{{ lt.id }}" {% if lt.is_accrual_based %}checked{% endif %}><label class="form-check-label small" for="acc{{ lt.id }}">Earned by service</label></div></div>
-                <div class="col-auto"><div class="form-check"><input class="form-check-input" type="checkbox" name="requires_attachment" value="1" id="att{{ lt.id }}" {% if lt.requires_attachment %}checked{% endif %}><label class="form-check-label small" for="att{{ lt.id }}">Attachment required</label></div></div>
-                <div class="col-auto"><div class="form-check"><input class="form-check-input" type="checkbox" name="is_active" value="1" id="act{{ lt.id }}" {% if lt.is_active %}checked{% endif %}><label class="form-check-label small" for="act{{ lt.id }}">Active</label></div></div>
-                <div class="col-auto ms-auto"><button class="btn btn-sm btn-outline-primary">Save type</button></div>
-            </form>
+            </div>
+        </div>
+    </div>
+</div>
 
-            {% for p in lt.policies.all %}
-            {% include "portal/_leave_policy_form.html" with policy=p lt=lt %}
-            {% empty %}
-            {% if lt.is_paid %}
-            <div class="small text-muted mb-2">No entitlement policy yet — add one:</div>
-            {% include "portal/_leave_policy_form.html" with policy=None lt=lt %}
-            {% endif %}
-            {% endfor %}
+<!-- Segmented Section Switcher -->
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-3 mb-4">
+    <div class="gw-segmented-tabs" role="tablist" aria-label="Leave Settings Sections">
+        <button
+            type="button"
+            role="tab"
+            id="tab-btn-types"
+            class="gw-segmented-tab {% if active_tab == 'types' %}active{% endif %}"
+            aria-controls="panel-types"
+            aria-selected="{% if active_tab == 'types' %}true{% else %}false{% endif %}"
+            data-tab-target="types"
+        >
+            <i class="bi bi-calendar2-check" aria-hidden="true"></i>
+            <span>Leave Types &amp; Policies</span>
+            <span class="gw-tab-count">{{ leave_types|length }}</span>
+        </button>
+        <button
+            type="button"
+            role="tab"
+            id="tab-btn-holidays"
+            class="gw-segmented-tab {% if active_tab == 'holidays' %}active{% endif %}"
+            aria-controls="panel-holidays"
+            aria-selected="{% if active_tab == 'holidays' %}true{% else %}false{% endif %}"
+            data-tab-target="holidays"
+        >
+            <i class="bi bi-calendar-event" aria-hidden="true"></i>
+            <span>Public Holidays ({{ year }})</span>
+            <span class="gw-tab-count">{{ holidays|length }}</span>
+        </button>
+    </div>
+</div>
+
+<!-- ======================================================================
+     TAB 1: Leave Types & Policies
+     ====================================================================== -->
+<section
+    id="panel-types"
+    role="tabpanel"
+    aria-labelledby="tab-btn-types"
+    {% if active_tab != 'types' %}hidden{% endif %}
+>
+    <div class="d-flex align-items-center justify-content-between flex-wrap gap-3 mb-3">
+        <div class="d-flex align-items-center flex-wrap gap-2 flex-grow-1">
+            <div class="panel-search-box" style="min-width: min(260px, 100%);">
+                <i class="bi bi-search panel-search-icon" aria-hidden="true"></i>
+                <label for="ltSearchInput" class="visually-hidden">Search leave types</label>
+                <input
+                    id="ltSearchInput"
+                    type="search"
+                    class="form-control form-control-sm rounded-pill ps-5"
+                    style="background-color: #FFFFFF; min-height: 38px;"
+                    placeholder="Search leave types or codes..."
+                    autocorrect="off"
+                    autocapitalize="off"
+                    spellcheck="false"
+                >
+            </div>
+            <div class="gw-pill-filter-group" role="group" aria-label="Filter leave types by status">
+                <button type="button" class="gw-pill-filter active js-lt-status-filter" data-status="all">All</button>
+                <button type="button" class="gw-pill-filter js-lt-status-filter" data-status="active">Active</button>
+                <button type="button" class="gw-pill-filter js-lt-status-filter" data-status="inactive">Inactive</button>
+            </div>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+            <button type="button" class="btn btn-sm btn-gw-secondary" id="toggleAllLeaveTypesBtn" aria-pressed="false">
+                <i class="bi bi-arrows-expand" aria-hidden="true"></i>
+                <span>Expand all</span>
+            </button>
+        </div>
+    </div>
+
+    <div class="d-flex flex-column gap-3" id="leaveTypesList">
+        {% for lt in leave_types %}
+        {% with is_expanded=open_type_id|default:0 %}
+        <article
+            class="gw-lt-card {% if not lt.is_active %}is-inactive{% endif %} {% if is_expanded == lt.id %}is-open{% endif %}"
+            data-lt-card
+            data-lt-name="{{ lt.name|lower }}"
+            data-lt-code="{{ lt.code|lower }}"
+            data-lt-status="{% if lt.is_active %}active{% else %}inactive{% endif %}"
+        >
+            <div class="gw-lt-header">
+                <div class="d-flex align-items-start gap-3 flex-grow-1 min-w-0">
+                    <span class="gw-lt-code mt-1">{{ lt.code }}</span>
+                    <div class="min-w-0 flex-grow-1">
+                        <div class="d-flex align-items-center flex-wrap gap-2 mb-1">
+                            <h2 class="h6 fw-bold text-dark m-0">{{ lt.name }}</h2>
+                            <span class="status-badge {% if lt.is_active %}badge-approved{% else %}badge-draft{% endif %}">
+                                {% if lt.is_active %}Active{% else %}Inactive{% endif %}
+                            </span>
+                            {% if lt.is_paid %}
+                            <span class="gw-rule-chip gw-rule-chip--accent">Paid &middot; Uses balance</span>
+                            {% else %}
+                            <span class="gw-rule-chip">Unpaid</span>
+                            {% endif %}
+                            {% if lt.is_accrual_based %}
+                            <span class="gw-rule-chip">Earned by service</span>
+                            {% endif %}
+                            {% if lt.requires_attachment %}
+                            <span class="gw-rule-chip"><i class="bi bi-paperclip" aria-hidden="true"></i> Attachment required</span>
+                            {% endif %}
+                        </div>
+
+                        <!-- Plain-English Policy Summary -->
+                        <div class="small text-secondary">
+                            {% for p in lt.policies.all %}
+                            <div class="{% if not forloop.first %}mt-1{% endif %}">
+                                <span class="fw-semibold text-dark">{{ p.name }}:</span>
+                                {% if not p.is_active %}<span class="badge bg-light text-secondary border me-1">Paused</span>{% endif %}
+                                {% if p.accrual_frequency == 'MONTHLY' %}
+                                Credits <strong>{{ p.monthly_accrual_rate|floatformat:"-2" }}</strong> days/month ({{ p.yearly_entitlement|floatformat:"-2" }} days/year)
+                                {% elif p.accrual_frequency == 'YEARLY' %}
+                                Grants <strong>{{ p.yearly_entitlement|floatformat:"-2" }}</strong> days/year on 1 January
+                                {% else %}
+                                Fixed grant of <strong>{{ p.yearly_entitlement|floatformat:"-2" }}</strong> days/year
+                                {% endif %}
+                                &middot; Carry forward:
+                                {% if p.max_carry_forward > 0 %}up to <strong>{{ p.max_carry_forward|floatformat:"-2" }}</strong> days{% else %}none{% endif %}
+                                &middot; Probation:
+                                {% if p.probation_period_months > 0 %}<strong>{{ p.probation_period_months }}</strong> mo{% else %}none{% endif %}
+                            </div>
+                            {% empty %}
+                                {% if lt.is_paid %}
+                                <span class="gw-rule-chip gw-rule-chip--warn mt-1">
+                                    <i class="bi bi-exclamation-triangle-fill" aria-hidden="true"></i>
+                                    No entitlement policy configured yet &mdash; employees start with 0 days
+                                </span>
+                                {% else %}
+                                Unpaid leave does not track or deduct from an entitlement balance.
+                                {% endif %}
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex-shrink-0">
+                    <button
+                        type="button"
+                        class="btn btn-sm {% if is_expanded == lt.id %}btn-primary{% else %}btn-gw-secondary{% endif %} js-lt-toggle"
+                        aria-expanded="{% if is_expanded == lt.id %}true{% else %}false{% endif %}"
+                        aria-controls="lt-body-{{ lt.id }}"
+                    >
+                        <i class="bi {% if is_expanded == lt.id %}bi-chevron-up{% else %}bi-sliders{% endif %} me-1" aria-hidden="true"></i>
+                        <span class="js-lt-toggle-label">{% if is_expanded == lt.id %}Done{% else %}Configure{% endif %}</span>
+                    </button>
+                </div>
+            </div>
+
+            <div id="lt-body-{{ lt.id }}" class="gw-lt-body" {% if is_expanded != lt.id %}hidden{% endif %}>
+                <div class="row g-4">
+                    <!-- Column 1: Leave Type Rules -->
+                    <div class="col-lg-5">
+                        <form method="post" action="{% url 'portal_leave_settings' %}" class="gw-fieldset gw-settings-form h-100 d-flex flex-column">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="update_leave_type">
+                            <input type="hidden" name="leave_type_id" value="{{ lt.id }}">
+                            <input type="hidden" name="tab" value="types">
+                            <input type="hidden" name="year" value="{{ year }}">
+
+                            <fieldset class="border-0 p-0 m-0 flex-grow-1">
+                                <legend class="gw-fieldset-legend">
+                                    <i class="bi bi-tag text-primary" aria-hidden="true"></i>
+                                    <span>Leave Type Rules</span>
+                                </legend>
+
+                                <div class="row g-2 mb-3">
+                                    <div class="col-8">
+                                        <label class="form-label small fw-semibold mb-1" for="lt-name-{{ lt.id }}">
+                                            Display name <span class="text-danger" aria-hidden="true">*</span>
+                                        </label>
+                                        <input
+                                            id="lt-name-{{ lt.id }}"
+                                            type="text"
+                                            name="name"
+                                            value="{{ lt.name }}"
+                                            class="form-control form-control-sm"
+                                            required
+                                            maxlength="50"
+                                            aria-errormessage="lt-name-err-{{ lt.id }}"
+                                        >
+                                        <div id="lt-name-err-{{ lt.id }}" class="field-error-msg">
+                                            <i class="bi bi-exclamation-circle-fill" aria-hidden="true"></i>
+                                            <span>Display name cannot be empty.</span>
+                                        </div>
+                                    </div>
+                                    <div class="col-4">
+                                        <label class="form-label small fw-semibold mb-1" for="lt-code-ro-{{ lt.id }}">Code</label>
+                                        <input
+                                            id="lt-code-ro-{{ lt.id }}"
+                                            type="text"
+                                            value="{{ lt.code }}"
+                                            class="form-control form-control-sm font-monospace bg-light"
+                                            readonly
+                                            aria-describedby="lt-code-help-{{ lt.id }}"
+                                        >
+                                        <div id="lt-code-help-{{ lt.id }}" class="visually-hidden">Leave type codes are fixed to preserve ledger history.</div>
+                                    </div>
+                                </div>
+
+                                <div class="gw-switch-list mb-3">
+                                    <label class="gw-switch-row" for="paid{{ lt.id }}">
+                                        <span>
+                                            <span class="gw-switch-label-title">Paid leave (uses balance)</span>
+                                            <span class="gw-switch-label-hint">Deducts approved days from the employee's ledger balance.</span>
+                                        </span>
+                                        <input class="gw-native-switch" type="checkbox" switch name="is_paid" value="1" id="paid{{ lt.id }}" {% if lt.is_paid %}checked{% endif %}>
+                                    </label>
+
+                                    <label class="gw-switch-row" for="acc{{ lt.id }}">
+                                        <span>
+                                            <span class="gw-switch-label-title">Earned by service</span>
+                                            <span class="gw-switch-label-hint">Marks this category as accrued based on service tenure.</span>
+                                        </span>
+                                        <input class="gw-native-switch" type="checkbox" switch name="is_accrual_based" value="1" id="acc{{ lt.id }}" {% if lt.is_accrual_based %}checked{% endif %}>
+                                    </label>
+
+                                    <label class="gw-switch-row" for="att{{ lt.id }}">
+                                        <span>
+                                            <span class="gw-switch-label-title">Require supporting document</span>
+                                            <span class="gw-switch-label-hint">Employees must upload a file (e.g. medical certificate) when applying.</span>
+                                        </span>
+                                        <input class="gw-native-switch" type="checkbox" switch name="requires_attachment" value="1" id="att{{ lt.id }}" {% if lt.requires_attachment %}checked{% endif %}>
+                                    </label>
+
+                                    <label class="gw-switch-row" for="act{{ lt.id }}">
+                                        <span>
+                                            <span class="gw-switch-label-title">Active</span>
+                                            <span class="gw-switch-label-hint">Inactive leave types are hidden from new leave requests.</span>
+                                        </span>
+                                        <input class="gw-native-switch" type="checkbox" switch name="is_active" value="1" id="act{{ lt.id }}" {% if lt.is_active %}checked{% endif %}>
+                                    </label>
+                                </div>
+                            </fieldset>
+
+                            <div class="d-flex justify-content-end pt-2 border-top mt-auto">
+                                <button type="submit" class="btn btn-sm btn-outline-primary">
+                                    <i class="bi bi-check2 me-1" aria-hidden="true"></i>Save Leave Type
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+
+                    <!-- Column 2: Entitlement & Accrual Policies -->
+                    <div class="col-lg-7">
+                        {% for p in lt.policies.all %}
+                            {% include "portal/_leave_policy_form.html" with policy=p lt=lt year=year %}
+                        {% empty %}
+                            {% if lt.is_paid %}
+                                <div class="alert alert-warning border-0 shadow-sm small d-flex align-items-center gap-2 mb-3" style="border-radius: 10px;">
+                                    <i class="bi bi-info-circle-fill fs-5" aria-hidden="true"></i>
+                                    <div>No entitlement policy yet for <strong>{{ lt.name }}</strong>. Configure one below so balances can be granted or accrued.</div>
+                                </div>
+                                {% include "portal/_leave_policy_form.html" with policy=None lt=lt year=year %}
+                            {% else %}
+                                <div class="gw-fieldset mb-3">
+                                    <div class="d-flex align-items-center gap-2 text-secondary small mb-2">
+                                        <i class="bi bi-info-circle" aria-hidden="true"></i>
+                                        <span><strong>{{ lt.name }}</strong> is unpaid, so no entitlement policy is required.</span>
+                                    </div>
+                                    <details>
+                                        <summary class="small fw-semibold text-primary" style="cursor: pointer;">Add a policy anyway</summary>
+                                        <div class="mt-3">
+                                            {% include "portal/_leave_policy_form.html" with policy=None lt=lt year=year %}
+                                        </div>
+                                    </details>
+                                </div>
+                            {% endif %}
+                        {% endfor %}
+
+                        {% if lt.policies.all %}
+                        <details class="mt-2">
+                            <summary class="small fw-semibold text-primary" style="cursor: pointer;">
+                                <i class="bi bi-plus-circle me-1" aria-hidden="true"></i>Add another policy for {{ lt.name }}
+                            </summary>
+                            <div class="mt-3">
+                                {% include "portal/_leave_policy_form.html" with policy=None lt=lt year=year %}
+                            </div>
+                        </details>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </article>
+        {% endwith %}
+        {% empty %}
+        <div class="gw-card">
+            <div class="empty-state">
+                <div class="empty-state-icon"><i class="bi bi-calendar2-check" aria-hidden="true"></i></div>
+                <div class="empty-state-title">No leave types configured</div>
+                <div class="empty-state-desc">Create your first leave type (such as Earned Leave or Casual Leave) to start managing entitlements.</div>
+                <button type="button" class="btn btn-sm btn-gw-primary" commandfor="createLeaveTypeDialog" command="show-modal">
+                    <i class="bi bi-plus-lg" aria-hidden="true"></i> Add Leave Type
+                </button>
+            </div>
         </div>
         {% endfor %}
+    </div>
 
-        <div class="p-3 p-md-4 bg-light">
-            <form method="post" class="row g-2 align-items-end">
-                {% csrf_token %}
-                <input type="hidden" name="action" value="create_leave_type">
-                <div class="col-md-2"><label class="form-label small fw-bold m-0">Code</label><input name="code" class="form-control form-control-sm text-uppercase" required maxlength="20" placeholder="ML"></div>
-                <div class="col-md-3"><label class="form-label small fw-bold m-0">New leave type</label><input name="name" class="form-control form-control-sm" required placeholder="e.g. Maternity Leave"></div>
-                <div class="col-auto"><div class="form-check"><input class="form-check-input" type="checkbox" name="is_paid" value="1" id="newPaid" checked><label class="form-check-label small" for="newPaid">Paid</label></div></div>
-                <div class="col-auto"><div class="form-check"><input class="form-check-input" type="checkbox" name="is_accrual_based" value="1" id="newAcc"><label class="form-check-label small" for="newAcc">Earned by service</label></div></div>
-                <div class="col-auto"><div class="form-check"><input class="form-check-input" type="checkbox" name="requires_attachment" value="1" id="newAtt"><label class="form-check-label small" for="newAtt">Attachment required</label></div></div>
-                <div class="col-auto ms-auto"><button class="btn btn-sm btn-gw-primary">Add leave type</button></div>
-            </form>
+    <div id="ltEmptyState" class="gw-card mt-3" hidden>
+        <div class="empty-state">
+            <div class="empty-state-icon"><i class="bi bi-search" aria-hidden="true"></i></div>
+            <div class="empty-state-title">No matching leave types</div>
+            <div class="empty-state-desc">No leave types match your current search or status filter.</div>
+            <button type="button" class="btn btn-sm btn-gw-secondary" id="resetLtFiltersBtn">Reset filters</button>
         </div>
     </div>
-</div>
+</section>
 
-<div class="gw-card">
-    <div class="gw-card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
-        <h5 class="gw-card-title m-0"><i class="bi bi-calendar-event me-2"></i>Public holidays</h5>
-        <form method="get" class="d-flex gap-1">
-            {% for y in years %}<button name="year" value="{{ y }}" class="btn btn-sm {% if y == year %}btn-primary{% else %}btn-light{% endif %}">{{ y }}</button>{% endfor %}
-        </form>
-    </div>
-    <div class="gw-card-body p-0">
-        <div class="table-responsive">
-            <table class="table gw-table m-0">
-                <thead><tr><th>Date</th><th>Holiday</th><th>Applies to</th><th></th><th></th></tr></thead>
-                <tbody>
-                {% for h in holidays %}
-                <tr>
-                    <td class="text-nowrap">{{ h.date|date:"D, d M Y" }}</td>
-                    <td>{{ h.name }}</td>
-                    <td>{{ h.calendar.branch.name|default:"All branches" }}</td>
-                    <td>{% if h.is_optional %}<span class="badge bg-light text-secondary border">Optional</span>{% endif %}</td>
-                    <td class="text-end">
-                        <form method="post" onsubmit="return confirm('Remove {{ h.name|escapejs }}?');">
-                            {% csrf_token %}
-                            <input type="hidden" name="action" value="delete_holiday">
-                            <input type="hidden" name="holiday_id" value="{{ h.id }}">
-                            <button class="btn btn-sm btn-link text-danger p-0" aria-label="Remove {{ h.name }}"><i class="bi bi-trash"></i></button>
-                        </form>
-                    </td>
-                </tr>
-                {% empty %}
-                <tr><td colspan="5" class="text-center text-muted py-4">No holidays for {{ year }} yet.</td></tr>
-                {% endfor %}
-                </tbody>
-            </table>
-        </div>
-        <form method="post" class="row g-2 align-items-end p-3 p-md-4 bg-light m-0">
-            {% csrf_token %}
-            <input type="hidden" name="action" value="add_holiday">
-            <div class="col-md-2"><label class="form-label small fw-bold m-0">Date</label><input type="date" name="date" class="form-control form-control-sm" required></div>
-            <div class="col-md-4"><label class="form-label small fw-bold m-0">Holiday name</label><input name="name" class="form-control form-control-sm" required></div>
-            <div class="col-md-3"><label class="form-label small fw-bold m-0">Branch</label>
-                <select name="branch" class="form-select form-select-sm"><option value="">All branches</option>{% for b in branches %}<option value="{{ b.id }}">{{ b.name }}</option>{% endfor %}</select>
+<!-- ======================================================================
+     TAB 2: Public Holidays
+     ====================================================================== -->
+<section
+    id="panel-holidays"
+    role="tabpanel"
+    aria-labelledby="tab-btn-holidays"
+    {% if active_tab != 'holidays' %}hidden{% endif %}
+>
+    <div class="row g-4 align-items-start">
+        <!-- Left: Holiday Calendar List -->
+        <div class="col-lg-8">
+            <div class="gw-card mb-0">
+                <div class="gw-card-header">
+                    <div>
+                        <h2 id="holidays-table-title" class="gw-card-title">
+                            <i class="bi bi-calendar-event me-2 text-primary" aria-hidden="true"></i>Public Holidays &mdash; {{ year }}
+                        </h2>
+                        <div class="small text-muted mt-1">
+                            {{ mandatory_holidays_count }} mandatory public &middot; {{ optional_holidays_count }} optional
+                        </div>
+                    </div>
+                    <div class="d-flex gap-1" role="navigation" aria-label="Select holiday calendar year">
+                        {% for y in years %}
+                        <a
+                            href="?tab=holidays&amp;year={{ y }}"
+                            class="btn btn-sm {% if y == year %}btn-primary{% else %}btn-light border{% endif %}"
+                            {% if y == year %}aria-current="page"{% endif %}
+                        >{{ y }}</a>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <!-- Branch Filter Pills + Search -->
+                <div class="p-3 border-bottom bg-light bg-opacity-50 d-flex flex-wrap align-items-center justify-content-between gap-2">
+                    <div class="gw-pill-filter-group" role="group" aria-label="Filter holidays by branch">
+                        <button type="button" class="gw-pill-filter active js-holiday-branch-filter" data-branch="all">All</button>
+                        <button type="button" class="gw-pill-filter js-holiday-branch-filter" data-branch="org">All Branches (Org-wide)</button>
+                        {% for b in branches %}
+                        <button type="button" class="gw-pill-filter js-holiday-branch-filter" data-branch="{{ b.id }}">{{ b.name }}</button>
+                        {% endfor %}
+                    </div>
+                    <div style="min-width: min(220px, 100%);">
+                        <label for="holidaySearchInput" class="visually-hidden">Search holidays</label>
+                        <input
+                            id="holidaySearchInput"
+                            type="search"
+                            class="form-control form-control-sm rounded-pill px-3"
+                            placeholder="Filter holiday name..."
+                            autocorrect="off"
+                            autocapitalize="off"
+                            spellcheck="false"
+                        >
+                    </div>
+                </div>
+
+                <div class="gw-card-body p-0">
+                    <div tabindex="0" role="region" aria-labelledby="holidays-table-title" class="gw-holidays-table-wrap">
+                        <table class="table gw-table gw-holidays-table m-0">
+                            <thead>
+                                <tr>
+                                    <th scope="col">Date</th>
+                                    <th scope="col">Holiday</th>
+                                    <th scope="col">Applies To</th>
+                                    <th scope="col">Type</th>
+                                    <th scope="col" class="text-end">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="holidaysTableBody">
+                                {% for h in holidays %}
+                                <tr
+                                    data-holiday-row
+                                    data-branch-key="{{ h.calendar.branch_id|default:'org' }}"
+                                    data-holiday-name="{{ h.name|lower }}"
+                                >
+                                    <td data-label="Date">
+                                        <div class="d-flex align-items-center gap-2">
+                                            <div class="gw-date-badge" aria-hidden="true">
+                                                <div class="gw-date-badge-month">{{ h.date|date:"M" }}</div>
+                                                <div class="gw-date-badge-day">{{ h.date|date:"d" }}</div>
+                                            </div>
+                                            <div class="text-start">
+                                                <div class="fw-semibold text-dark text-nowrap">{{ h.date|date:"l" }}</div>
+                                                <div class="small text-muted text-nowrap">{{ h.date|date:"d M Y" }}</div>
+                                            </div>
+                                        </div>
+                                    </td>
+                                    <td data-label="Holiday">
+                                        <span class="fw-semibold text-dark">{{ h.name }}</span>
+                                        {% if year == today.year and h.date >= today %}
+                                        <span class="badge bg-primary-subtle text-primary ms-1">Upcoming</span>
+                                        {% endif %}
+                                    </td>
+                                    <td data-label="Applies To">
+                                        {% if h.calendar.branch %}
+                                        <span class="dept-pill dept-pill-cyan">{{ h.calendar.branch.name }}</span>
+                                        {% else %}
+                                        <span class="dept-pill">All branches</span>
+                                        {% endif %}
+                                    </td>
+                                    <td data-label="Type">
+                                        {% if h.is_optional %}
+                                        <span class="status-badge badge-draft">Optional</span>
+                                        {% else %}
+                                        <span class="status-badge badge-approved">Public Holiday</span>
+                                        {% endif %}
+                                    </td>
+                                    <td data-label="Actions" class="text-end text-nowrap">
+                                        <button
+                                            type="button"
+                                            class="btn btn-sm btn-light border me-1 js-edit-holiday-btn"
+                                            data-id="{{ h.id }}"
+                                            data-date="{{ h.date|date:'Y-m-d' }}"
+                                            data-name="{{ h.name }}"
+                                            data-branch="{{ h.calendar.branch_id|default:'' }}"
+                                            data-optional="{% if h.is_optional %}1{% else %}0{% endif %}"
+                                            aria-label="Edit {{ h.name }}"
+                                        >
+                                            <i class="bi bi-pencil" aria-hidden="true"></i>
+                                            <span class="d-none d-sm-inline ms-1">Edit</span>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            class="btn btn-sm btn-outline-danger js-delete-holiday-btn"
+                                            data-id="{{ h.id }}"
+                                            data-name="{{ h.name }}"
+                                            data-date-label="{{ h.date|date:'D, d M Y' }}"
+                                            data-branch-label="{{ h.calendar.branch.name|default:'All branches' }}"
+                                            aria-label="Remove {{ h.name }}"
+                                        >
+                                            <i class="bi bi-trash" aria-hidden="true"></i>
+                                        </button>
+                                    </td>
+                                </tr>
+                                {% empty %}
+                                <tr class="is-empty-row">
+                                    <td colspan="5">
+                                        <div class="empty-state">
+                                            <div class="empty-state-icon"><i class="bi bi-calendar-x" aria-hidden="true"></i></div>
+                                            <div class="empty-state-title">No holidays listed for {{ year }}</div>
+                                            <div class="empty-state-desc">Add organization-wide or branch-specific holidays using the form on the right.</div>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                                <tr id="holidayFilterEmpty" class="is-empty-row" hidden>
+                                    <td colspan="5">
+                                        <div class="empty-state">
+                                            <div class="empty-state-icon"><i class="bi bi-funnel" aria-hidden="true"></i></div>
+                                            <div class="empty-state-title">No holidays match this filter</div>
+                                            <div class="empty-state-desc">Try switching the branch filter or clearing your search.</div>
+                                            <button type="button" class="btn btn-sm btn-gw-secondary" id="resetHolidayFiltersBtn">Clear filters</button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
-            <div class="col-auto"><div class="form-check"><input class="form-check-input" type="checkbox" name="is_optional" value="1" id="hOpt"><label class="form-check-label small" for="hOpt">Optional</label></div></div>
-            <div class="col-auto ms-auto"><button class="btn btn-sm btn-gw-primary">Add holiday</button></div>
-        </form>
+        </div>
+
+        <!-- Right: Add Public Holiday Card -->
+        <div class="col-lg-4">
+            <div class="gw-card gw-sticky-panel mb-0">
+                <div class="gw-card-header">
+                    <h3 class="gw-card-title"><i class="bi bi-plus-circle me-2 text-primary" aria-hidden="true"></i>Add Public Holiday</h3>
+                </div>
+                <div class="gw-card-body">
+                    <form method="post" action="{% url 'portal_leave_settings' %}" class="gw-settings-form d-flex flex-column gap-3">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="add_holiday">
+                        <input type="hidden" name="tab" value="holidays">
+                        <input type="hidden" name="year" value="{{ year }}">
+
+                        <div>
+                            <label class="form-label small fw-semibold mb-1" for="addHolidayDate">
+                                Holiday date <span class="text-danger" aria-hidden="true">*</span>
+                            </label>
+                            <input
+                                id="addHolidayDate"
+                                type="date"
+                                name="date"
+                                class="form-control"
+                                required
+                                aria-errormessage="addHolidayDateErr"
+                            >
+                            <div id="addHolidayDateErr" class="field-error-msg">
+                                <i class="bi bi-exclamation-circle-fill" aria-hidden="true"></i>
+                                <span>Please pick a valid date.</span>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="form-label small fw-semibold mb-1" for="addHolidayName">
+                                Holiday name <span class="text-danger" aria-hidden="true">*</span>
+                            </label>
+                            <input
+                                id="addHolidayName"
+                                type="text"
+                                name="name"
+                                class="form-control"
+                                placeholder="e.g. UAE National Day"
+                                required
+                                maxlength="100"
+                                aria-errormessage="addHolidayNameErr"
+                            >
+                            <div id="addHolidayNameErr" class="field-error-msg">
+                                <i class="bi bi-exclamation-circle-fill" aria-hidden="true"></i>
+                                <span>Holiday name is required.</span>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="form-label small fw-semibold mb-1" for="addHolidayBranch">Applies to branch</label>
+                            <select id="addHolidayBranch" name="branch" class="form-select" aria-describedby="addHolidayBranchHelp">
+                                <option value="">All branches (Organization-wide)</option>
+                                {% for b in branches %}
+                                <option value="{{ b.id }}">{{ b.name }} ({{ b.code }})</option>
+                                {% endfor %}
+                            </select>
+                            <div id="addHolidayBranchHelp" class="form-text small">
+                                Branch holidays apply only to employees in that office.
+                            </div>
+                        </div>
+
+                        <label class="gw-switch-row" for="hOpt">
+                            <span>
+                                <span class="gw-switch-label-title">Optional / Restricted holiday</span>
+                                <span class="gw-switch-label-hint">Informational only &mdash; optional holidays still count as leave days unless marked mandatory.</span>
+                            </span>
+                            <input class="gw-native-switch" type="checkbox" switch name="is_optional" value="1" id="hOpt">
+                        </label>
+
+                        <button type="submit" class="btn btn-gw-primary justify-content-center mt-1">
+                            <i class="bi bi-calendar-plus" aria-hidden="true"></i>
+                            <span>Add Holiday</span>
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
     </div>
-</div>
-<p class="small text-muted mt-3"><i class="bi bi-info-circle me-1"></i>Non-optional holidays are not counted as leave days. Year-end carry-forward / reset runs with <code>python manage.py process_yearly_leave_reset</code> (scheduled on 1 January).</p>
+
+    <!-- Plain-English Operational Guide -->
+    <div class="gw-card mt-4 mb-0">
+        <div class="gw-card-body py-3 px-4 d-flex align-items-start gap-3">
+            <i class="bi bi-info-circle-fill text-primary fs-5 mt-1 flex-shrink-0" aria-hidden="true"></i>
+            <div class="small text-secondary">
+                <strong class="text-dark">How holidays &amp; annual resets work:</strong>
+                Mandatory public holidays are automatically skipped when counting leave days on employee requests
+                {% if weekend_days_label %}(along with configured weekly offs: <strong>{{ weekend_days_label }}</strong>){% endif %}.
+                Unused balances exceeding each policy's <em>Max carry forward</em> limit are reset automatically on <strong>1 January</strong>.
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ======================================================================
+     NATIVE MODAL DIALOGS
+     ====================================================================== -->
+
+<!-- 1. Create Leave Type Dialog -->
+<dialog id="createLeaveTypeDialog" class="gw-dialog" aria-labelledby="createLeaveTypeTitle">
+    <div class="gw-dialog-header">
+        <h2 id="createLeaveTypeTitle" class="gw-dialog-title">
+            <i class="bi bi-plus-circle me-2 text-primary" aria-hidden="true"></i>Add New Leave Type
+        </h2>
+        <button type="button" class="btn-close" commandfor="createLeaveTypeDialog" command="close" aria-label="Close"></button>
+    </div>
+    <form method="post" action="{% url 'portal_leave_settings' %}" class="gw-settings-form">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="create_leave_type">
+        <input type="hidden" name="tab" value="types">
+        <input type="hidden" name="year" value="{{ year }}">
+
+        <div class="gw-dialog-body d-flex flex-column gap-3">
+            <div class="row g-3">
+                <div class="col-sm-4">
+                    <label class="form-label small fw-semibold mb-1" for="newLtCode">
+                        Short code <span class="text-danger" aria-hidden="true">*</span>
+                    </label>
+                    <input
+                        id="newLtCode"
+                        name="code"
+                        type="text"
+                        class="form-control text-uppercase font-monospace"
+                        required
+                        maxlength="20"
+                        placeholder="ML"
+                        autocorrect="off"
+                        autocapitalize="characters"
+                        spellcheck="false"
+                        aria-describedby="newLtCodeHelp"
+                        aria-errormessage="newLtCodeErr"
+                    >
+                    <div id="newLtCodeErr" class="field-error-msg">
+                        <i class="bi bi-exclamation-circle-fill" aria-hidden="true"></i>
+                        <span>Enter a unique code (e.g. ML).</span>
+                    </div>
+                    <div id="newLtCodeHelp" class="form-text small">Unique ID, e.g. ML, PL.</div>
+                </div>
+                <div class="col-sm-8">
+                    <label class="form-label small fw-semibold mb-1" for="newLtName">
+                        Leave type name <span class="text-danger" aria-hidden="true">*</span>
+                    </label>
+                    <input
+                        id="newLtName"
+                        name="name"
+                        type="text"
+                        class="form-control"
+                        required
+                        maxlength="50"
+                        placeholder="e.g. Maternity Leave"
+                        aria-errormessage="newLtNameErr"
+                    >
+                    <div id="newLtNameErr" class="field-error-msg">
+                        <i class="bi bi-exclamation-circle-fill" aria-hidden="true"></i>
+                        <span>Leave type name is required.</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="gw-switch-list">
+                <label class="gw-switch-row" for="newPaid">
+                    <span>
+                        <span class="gw-switch-label-title">Paid leave (uses balance)</span>
+                        <span class="gw-switch-label-hint">Deducts approved days from an employee's leave balance.</span>
+                    </span>
+                    <input class="gw-native-switch" type="checkbox" switch name="is_paid" value="1" id="newPaid" checked>
+                </label>
+                <label class="gw-switch-row" for="newAcc">
+                    <span>
+                        <span class="gw-switch-label-title">Earned by service</span>
+                        <span class="gw-switch-label-hint">Balance is earned gradually each month of service.</span>
+                    </span>
+                    <input class="gw-native-switch" type="checkbox" switch name="is_accrual_based" value="1" id="newAcc">
+                </label>
+                <label class="gw-switch-row" for="newAtt">
+                    <span>
+                        <span class="gw-switch-label-title">Attachment required</span>
+                        <span class="gw-switch-label-hint">Employees must upload supporting proof when applying.</span>
+                    </span>
+                    <input class="gw-native-switch" type="checkbox" switch name="requires_attachment" value="1" id="newAtt">
+                </label>
+            </div>
+        </div>
+
+        <div class="gw-dialog-footer">
+            <button type="button" class="btn btn-sm btn-gw-secondary" commandfor="createLeaveTypeDialog" command="close">Cancel</button>
+            <button type="submit" class="btn btn-sm btn-gw-primary">
+                <i class="bi bi-plus-lg" aria-hidden="true"></i> Create Leave Type
+            </button>
+        </div>
+    </form>
+</dialog>
+
+<!-- 2. Edit Holiday Dialog -->
+<dialog id="editHolidayDialog" class="gw-dialog" aria-labelledby="editHolidayTitle">
+    <div class="gw-dialog-header">
+        <h2 id="editHolidayTitle" class="gw-dialog-title">
+            <i class="bi bi-pencil-square me-2 text-primary" aria-hidden="true"></i>Edit Holiday
+        </h2>
+        <button type="button" class="btn-close" commandfor="editHolidayDialog" command="close" aria-label="Close"></button>
+    </div>
+    <form method="post" action="{% url 'portal_leave_settings' %}" class="gw-settings-form">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="update_holiday">
+        <input type="hidden" name="holiday_id" id="editHolidayId">
+        <input type="hidden" name="tab" value="holidays">
+        <input type="hidden" name="year" value="{{ year }}">
+
+        <div class="gw-dialog-body d-flex flex-column gap-3">
+            <div>
+                <label class="form-label small fw-semibold mb-1" for="editHolidayDate">
+                    Holiday date <span class="text-danger" aria-hidden="true">*</span>
+                </label>
+                <input id="editHolidayDate" type="date" name="date" class="form-control" required aria-errormessage="editHolidayDateErr">
+                <div id="editHolidayDateErr" class="field-error-msg">
+                    <i class="bi bi-exclamation-circle-fill" aria-hidden="true"></i>
+                    <span>Please pick a valid date.</span>
+                </div>
+            </div>
+
+            <div>
+                <label class="form-label small fw-semibold mb-1" for="editHolidayName">
+                    Holiday name <span class="text-danger" aria-hidden="true">*</span>
+                </label>
+                <input id="editHolidayName" type="text" name="name" class="form-control" required maxlength="100" aria-errormessage="editHolidayNameErr">
+                <div id="editHolidayNameErr" class="field-error-msg">
+                    <i class="bi bi-exclamation-circle-fill" aria-hidden="true"></i>
+                    <span>Holiday name is required.</span>
+                </div>
+            </div>
+
+            <div>
+                <label class="form-label small fw-semibold mb-1" for="editHolidayBranch">Applies to branch</label>
+                <select id="editHolidayBranch" name="branch" class="form-select">
+                    <option value="">All branches (Organization-wide)</option>
+                    {% for b in branches %}
+                    <option value="{{ b.id }}">{{ b.name }} ({{ b.code }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <label class="gw-switch-row" for="editHolidayOptional">
+                <span>
+                    <span class="gw-switch-label-title">Optional / Restricted holiday</span>
+                    <span class="gw-switch-label-hint">Optional holidays are informational only and do not auto-exclude leave days.</span>
+                </span>
+                <input class="gw-native-switch" type="checkbox" switch name="is_optional" value="1" id="editHolidayOptional">
+            </label>
+        </div>
+
+        <div class="gw-dialog-footer">
+            <button type="button" class="btn btn-sm btn-gw-secondary" commandfor="editHolidayDialog" command="close">Cancel</button>
+            <button type="submit" class="btn btn-sm btn-gw-primary">Save Changes</button>
+        </div>
+    </form>
+</dialog>
+
+<!-- 3. Delete Holiday Confirmation Dialog -->
+<dialog id="deleteHolidayDialog" class="gw-dialog" aria-labelledby="deleteHolidayTitle">
+    <div class="gw-dialog-header">
+        <h2 id="deleteHolidayTitle" class="gw-dialog-title text-danger">
+            <i class="bi bi-trash me-2" aria-hidden="true"></i>Remove Holiday
+        </h2>
+        <button type="button" class="btn-close" commandfor="deleteHolidayDialog" command="close" aria-label="Close"></button>
+    </div>
+    <form method="post" action="{% url 'portal_leave_settings' %}">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="delete_holiday">
+        <input type="hidden" name="holiday_id" id="deleteHolidayId">
+        <input type="hidden" name="tab" value="holidays">
+        <input type="hidden" name="year" value="{{ year }}">
+
+        <div class="gw-dialog-body">
+            <p class="mb-2">Are you sure you want to remove <strong id="deleteHolidayNameLabel">this holiday</strong>?</p>
+            <div class="p-3 rounded-3 bg-light border small text-secondary">
+                <div><i class="bi bi-calendar3 me-2" aria-hidden="true"></i><span id="deleteHolidayDateLabel"></span></div>
+                <div class="mt-1"><i class="bi bi-building me-2" aria-hidden="true"></i><span id="deleteHolidayBranchLabel"></span></div>
+            </div>
+        </div>
+
+        <div class="gw-dialog-footer">
+            <button type="button" class="btn btn-sm btn-gw-secondary" commandfor="deleteHolidayDialog" command="close">Cancel</button>
+            <button type="submit" class="btn btn-sm btn-danger rounded-pill px-3">Remove Holiday</button>
+        </div>
+    </form>
+</dialog>
+
+<!-- 4. Run Monthly Accrual Confirmation Dialog -->
+<dialog id="runAccrualDialog" class="gw-dialog" aria-labelledby="runAccrualTitle">
+    <div class="gw-dialog-header">
+        <h2 id="runAccrualTitle" class="gw-dialog-title">
+            <i class="bi bi-arrow-repeat me-2 text-primary" aria-hidden="true"></i>Run Monthly Earned-Leave Accrual
+        </h2>
+        <button type="button" class="btn-close" commandfor="runAccrualDialog" command="close" aria-label="Close"></button>
+    </div>
+    <form method="post" action="{% url 'portal_leave_settings' %}">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="run_accrual">
+        <input type="hidden" name="tab" id="runAccrualTabInput" value="{{ active_tab }}">
+        <input type="hidden" name="year" value="{{ year }}">
+
+        <div class="gw-dialog-body">
+            <p class="mb-2">
+                Credit earned leave for <strong>{{ current_period_label }}</strong> (<code>{{ current_period_key }}</code>) across all active monthly accrual policies?
+            </p>
+            <ul class="small text-secondary mb-0 ps-3">
+                <li>Eligible active employees receive their monthly credit immediately.</li>
+                <li>Employees already credited for <strong>{{ current_period_label }}</strong>, still on probation, or not yet joined are safely skipped.</li>
+                {% if current_period_credited_count > 0 %}
+                <li class="text-dark fw-semibold mt-1">{{ current_period_credited_count }} credit(s) have already been recorded this month.</li>
+                {% endif %}
+            </ul>
+        </div>
+
+        <div class="gw-dialog-footer">
+            <button type="button" class="btn btn-sm btn-gw-secondary" commandfor="runAccrualDialog" command="close">Cancel</button>
+            <button type="submit" class="btn btn-sm btn-gw-primary">
+                <i class="bi bi-check2-circle me-1" aria-hidden="true"></i>Credit Earned Leave Now
+            </button>
+        </div>
+    </form>
+</dialog>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    // 0. Switch control fallback when native <input type="checkbox" switch> is unsupported
+    if (!('switch' in HTMLInputElement.prototype)) {
+        document.querySelectorAll('input[type="checkbox"][switch].gw-native-switch').forEach((el) => {
+            el.classList.add('is-switch-fallback');
+            el.setAttribute('role', 'switch');
+            el.setAttribute('aria-checked', String(el.checked));
+            el.addEventListener('change', () => el.setAttribute('aria-checked', String(el.checked)));
+        });
+    }
+
+    // 1. Invoker Commands fallback for older browsers (without external CDN dependency)
+    if (!('commandForElement' in HTMLButtonElement.prototype)) {
+        document.addEventListener('click', (e) => {
+            const btn = e.target.closest('button[commandfor]');
+            if (!btn) return;
+            const target = document.getElementById(btn.getAttribute('commandfor'));
+            const cmd = btn.getAttribute('command');
+            if (!target) return;
+            if (cmd === 'show-modal' && typeof target.showModal === 'function') {
+                target.showModal();
+            } else if (cmd === 'close' && typeof target.close === 'function') {
+                target.close();
+            }
+        });
+    }
+
+    // Light dismiss for <dialog> backdrop clicks
+    document.querySelectorAll('dialog.gw-dialog').forEach((dlg) => {
+        dlg.addEventListener('click', (e) => {
+            if (e.target === dlg) dlg.close();
+        });
+    });
+
+    // 2. Segmented Tab Switching (with URL sync & keyboard support)
+    const tabBtns = Array.from(document.querySelectorAll('[role="tab"][data-tab-target]'));
+    const panels = {
+        types: document.getElementById('panel-types'),
+        holidays: document.getElementById('panel-holidays'),
+    };
+    const runAccrualTabInput = document.getElementById('runAccrualTabInput');
+
+    const activateTab = (tabName, { updateUrl = true } = {}) => {
+        tabBtns.forEach((btn) => {
+            const isMatch = btn.dataset.tabTarget === tabName;
+            btn.classList.toggle('active', isMatch);
+            btn.setAttribute('aria-selected', String(isMatch));
+        });
+        Object.entries(panels).forEach(([name, panel]) => {
+            if (panel) panel.hidden = (name !== tabName);
+        });
+        if (runAccrualTabInput) runAccrualTabInput.value = tabName;
+        if (updateUrl && window.history?.replaceState) {
+            const url = new URL(window.location.href);
+            url.searchParams.set('tab', tabName);
+            url.searchParams.delete('open_type');
+            window.history.replaceState({}, '', url);
+        }
+    };
+
+    tabBtns.forEach((btn, idx) => {
+        btn.addEventListener('click', () => activateTab(btn.dataset.tabTarget));
+        btn.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+                e.preventDefault();
+                const dir = e.key === 'ArrowRight' ? 1 : -1;
+                const nextBtn = tabBtns[(idx + dir + tabBtns.length) % tabBtns.length];
+                nextBtn.focus();
+                activateTab(nextBtn.dataset.tabTarget);
+            }
+        });
+    });
+
+    // 3. Leave Type Card Expand / Collapse + Expand All
+    const setCardExpanded = (card, expand) => {
+        const btn = card.querySelector('.js-lt-toggle');
+        const body = document.getElementById(btn?.getAttribute('aria-controls') || '');
+        const label = btn?.querySelector('.js-lt-toggle-label');
+        const icon = btn?.querySelector('i');
+        if (!btn || !body) return;
+        body.hidden = !expand;
+        card.classList.toggle('is-open', expand);
+        btn.setAttribute('aria-expanded', String(expand));
+        btn.classList.toggle('btn-primary', expand);
+        btn.classList.toggle('btn-gw-secondary', !expand);
+        if (label) label.textContent = expand ? 'Done' : 'Configure';
+        if (icon) icon.className = `bi ${expand ? 'bi-chevron-up' : 'bi-sliders'} me-1`;
+    };
+
+    document.querySelectorAll('.js-lt-toggle').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const card = btn.closest('[data-lt-card]');
+            const isExpanded = btn.getAttribute('aria-expanded') === 'true';
+            setCardExpanded(card, !isExpanded);
+        });
+    });
+
+    const toggleAllBtn = document.getElementById('toggleAllLeaveTypesBtn');
+    if (toggleAllBtn) {
+        toggleAllBtn.addEventListener('click', () => {
+            const visibleCards = Array.from(document.querySelectorAll('[data-lt-card]')).filter((c) => !c.hidden);
+            const shouldExpand = toggleAllBtn.getAttribute('aria-pressed') !== 'true';
+            visibleCards.forEach((c) => setCardExpanded(c, shouldExpand));
+            toggleAllBtn.setAttribute('aria-pressed', String(shouldExpand));
+            toggleAllBtn.querySelector('span').textContent = shouldExpand ? 'Collapse all' : 'Expand all';
+            toggleAllBtn.querySelector('i').className = `bi ${shouldExpand ? 'bi-arrows-collapse' : 'bi-arrows-expand'}`;
+        });
+    }
+
+    // 4. Leave Types Live Search + Status Filter
+    const ltSearchInput = document.getElementById('ltSearchInput');
+    const ltStatusBtns = document.querySelectorAll('.js-lt-status-filter');
+    const ltCards = Array.from(document.querySelectorAll('[data-lt-card]'));
+    const ltEmptyState = document.getElementById('ltEmptyState');
+    let activeLtStatus = 'all';
+
+    const filterLeaveTypes = () => {
+        const query = (ltSearchInput?.value || '').trim().toLowerCase();
+        let shown = 0;
+        ltCards.forEach((card) => {
+            const matchesText = !query || card.dataset.ltName.includes(query) || card.dataset.ltCode.includes(query);
+            const matchesStatus = activeLtStatus === 'all' || card.dataset.ltStatus === activeLtStatus;
+            const visible = matchesText && matchesStatus;
+            card.hidden = !visible;
+            if (visible) shown++;
+        });
+        if (ltEmptyState) ltEmptyState.hidden = (ltCards.length === 0 || shown > 0);
+    };
+
+    ltSearchInput?.addEventListener('input', filterLeaveTypes);
+    ltStatusBtns.forEach((btn) => {
+        btn.addEventListener('click', () => {
+            activeLtStatus = btn.dataset.status;
+            ltStatusBtns.forEach((b) => b.classList.toggle('active', b === btn));
+            filterLeaveTypes();
+        });
+    });
+    document.getElementById('resetLtFiltersBtn')?.addEventListener('click', () => {
+        if (ltSearchInput) ltSearchInput.value = '';
+        activeLtStatus = 'all';
+        ltStatusBtns.forEach((b) => b.classList.toggle('active', b.dataset.status === 'all'));
+        filterLeaveTypes();
+    });
+
+    // 5. Policy Form Dynamic Accrual Math & Monthly Rate State
+    const syncPolicyForm = (form) => {
+        const checkedFreq = form.querySelector('.js-freq-radio:checked')?.value || 'MONTHLY';
+        const monthlyGroup = form.querySelector('.js-monthly-rate-group');
+        const monthlyInput = form.querySelector('.js-monthly-input');
+        const yearlyInput = form.querySelector('.js-yearly-input');
+        const hintEl = form.querySelector('.js-monthly-calc-hint');
+        if (!monthlyGroup || !monthlyInput || !hintEl) return;
+
+        const isMonthly = checkedFreq === 'MONTHLY';
+        monthlyInput.readOnly = !isMonthly;
+        monthlyGroup.classList.toggle('opacity-50', !isMonthly);
+
+        if (isMonthly) {
+            const rate = parseFloat(monthlyInput.value || '0');
+            if (!Number.isNaN(rate) && rate > 0) {
+                const annualized = (rate * 12).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
+                hintEl.textContent = `${rate} days/mo × 12 months = ${annualized} days/year`;
+            } else {
+                hintEl.textContent = 'Enter monthly credit rate (e.g. 1.5 days/month).';
+            }
+        } else {
+            hintEl.textContent = 'Not used when leave is granted once per year.';
+        }
+    };
+
+    document.querySelectorAll('.js-policy-form').forEach((form) => {
+        syncPolicyForm(form);
+        form.addEventListener('change', (e) => {
+            if (e.target.matches('.js-freq-radio')) syncPolicyForm(form);
+        });
+        form.addEventListener('input', (e) => {
+            if (e.target.matches('.js-monthly-input, .js-yearly-input')) syncPolicyForm(form);
+        });
+    });
+
+    // 6. Public Holidays Live Branch Filter + Search
+    const holidayRows = Array.from(document.querySelectorAll('[data-holiday-row]'));
+    const holidayBranchBtns = document.querySelectorAll('.js-holiday-branch-filter');
+    const holidaySearchInput = document.getElementById('holidaySearchInput');
+    const holidayFilterEmpty = document.getElementById('holidayFilterEmpty');
+    let activeBranchFilter = 'all';
+
+    const filterHolidays = () => {
+        const query = (holidaySearchInput?.value || '').trim().toLowerCase();
+        let shown = 0;
+        holidayRows.forEach((row) => {
+            const matchesBranch = activeBranchFilter === 'all' || row.dataset.branchKey === activeBranchFilter;
+            const matchesQuery = !query || row.dataset.holidayName.includes(query);
+            const visible = matchesBranch && matchesQuery;
+            row.hidden = !visible;
+            if (visible) shown++;
+        });
+        if (holidayFilterEmpty) holidayFilterEmpty.hidden = (holidayRows.length === 0 || shown > 0);
+    };
+
+    holidayBranchBtns.forEach((btn) => {
+        btn.addEventListener('click', () => {
+            activeBranchFilter = btn.dataset.branch;
+            holidayBranchBtns.forEach((b) => b.classList.toggle('active', b === btn));
+            filterHolidays();
+        });
+    });
+    holidaySearchInput?.addEventListener('input', filterHolidays);
+    document.getElementById('resetHolidayFiltersBtn')?.addEventListener('click', () => {
+        if (holidaySearchInput) holidaySearchInput.value = '';
+        activeBranchFilter = 'all';
+        holidayBranchBtns.forEach((b) => b.classList.toggle('active', b.dataset.branch === 'all'));
+        filterHolidays();
+    });
+
+    // 7. Edit & Delete Holiday Native Modals
+    const editDialog = document.getElementById('editHolidayDialog');
+    document.querySelectorAll('.js-edit-holiday-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            document.getElementById('editHolidayId').value = btn.dataset.id;
+            document.getElementById('editHolidayDate').value = btn.dataset.date;
+            document.getElementById('editHolidayName').value = btn.dataset.name;
+            document.getElementById('editHolidayBranch').value = btn.dataset.branch || '';
+            const optEl = document.getElementById('editHolidayOptional');
+            optEl.checked = (btn.dataset.optional === '1');
+            if (optEl.hasAttribute('aria-checked')) optEl.setAttribute('aria-checked', String(optEl.checked));
+            editDialog?.showModal();
+        });
+    });
+
+    const deleteDialog = document.getElementById('deleteHolidayDialog');
+    document.querySelectorAll('.js-delete-holiday-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            document.getElementById('deleteHolidayId').value = btn.dataset.id;
+            document.getElementById('deleteHolidayNameLabel').textContent = btn.dataset.name;
+            document.getElementById('deleteHolidayDateLabel').textContent = btn.dataset.dateLabel;
+            document.getElementById('deleteHolidayBranchLabel').textContent = btn.dataset.branchLabel;
+            deleteDialog?.showModal();
+        });
+    });
+
+    // 8. Required Field Feedback: Sync aria-invalid with :user-invalid + fallback for older browsers
+    const supportsUserInvalid = CSS.supports('selector(:user-invalid)');
+    const dirtyState = new WeakMap();
+
+    const syncAriaInvalid = (field) => {
+        if (!field || !field.matches('input, select, textarea')) return;
+        const isInvalid = !field.checkValidity();
+        if (!supportsUserInvalid) {
+            field.classList.toggle('user-invalid-fallback', isInvalid);
+        }
+        if (isInvalid) {
+            field.setAttribute('aria-invalid', 'true');
+        } else {
+            field.removeAttribute('aria-invalid');
+        }
+    };
+
+    document.querySelectorAll('form.gw-settings-form').forEach((form) => {
+        form.addEventListener('blur', (e) => {
+            if (e.target.matches('input[required], select[required]')) {
+                dirtyState.set(e.target, true);
+                syncAriaInvalid(e.target);
+            }
+        }, true);
+
+        form.addEventListener('input', (e) => {
+            if (e.target.matches('input, select')) {
+                if (e.target.checkValidity()) {
+                    e.target.removeAttribute('aria-invalid');
+                    e.target.classList.remove('user-invalid-fallback');
+                } else if (!supportsUserInvalid && dirtyState.get(e.target)) {
+                    syncAriaInvalid(e.target);
+                }
+            }
+        });
+
+        form.addEventListener('submit', () => {
+            form.querySelectorAll('input[required], select[required]').forEach((field) => {
+                dirtyState.set(field, true);
+                syncAriaInvalid(field);
+            });
+        });
+    });
+});
+</script>
 {% endblock %}

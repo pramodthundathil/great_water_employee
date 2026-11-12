@@ -6,7 +6,9 @@ HR recording leave on behalf of employees, and password change.
 """
 from datetime import datetime, date
 from decimal import Decimal, InvalidOperation
+from urllib.parse import urlencode
 
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import update_session_auth_hash
 from django.contrib.auth.decorators import login_required
@@ -14,11 +16,12 @@ from django.contrib.auth.forms import PasswordChangeForm
 from django.core.exceptions import ValidationError
 from django.db.models import Q
 from django.shortcuts import render, redirect, get_object_or_404
+from django.urls import reverse
 
 from accounts.models import User, RoleChoices, EmployeeProfile
 from organization.models import Organization, Department
 from expenses.models import ExpenseClaim, ExpenseCategory, ExpenseAttachment, ExpenseClaimStatus
-from leaves.models import LeaveType, LeavePolicy, HolidayCalendar, Holiday
+from leaves.models import LeaveType, LeavePolicy, LeaveAccrualRun, HolidayCalendar, Holiday
 from leaves.services import (
     record_leave_on_behalf, LeaveRequestError, run_batch_monthly_accrual,
 )
@@ -296,6 +299,27 @@ def expense_categories_view(request):
 # Leave settings (HR Coordinator)
 # ---------------------------------------------------------------------------
 
+def _redirect_leave_settings(tab="types", year=None, open_type=None):
+    url = reverse("portal_leave_settings")
+    params = {}
+    if tab in ("types", "holidays"):
+        params["tab"] = tab
+    if year:
+        params["year"] = str(year)
+    if open_type:
+        params["open_type"] = str(open_type)
+    if params:
+        return redirect(f"{url}?{urlencode(params)}")
+    return redirect(url)
+
+
+def _safe_int(value, default=None):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 @login_required
 def leave_settings_view(request):
     user = request.user
@@ -307,22 +331,31 @@ def leave_settings_view(request):
 
     if request.method == "POST":
         action = request.POST.get("action")
+        posted_tab = request.POST.get("tab")
+        posted_year = _safe_int(request.POST.get("year"))
 
         if action == "create_leave_type":
             name = request.POST.get("name", "").strip()
             code = request.POST.get("code", "").strip().upper()
             if not name or not code:
                 messages.error(request, "Leave type name and code are required.")
+                return _redirect_leave_settings(tab="types", year=posted_year)
             elif LeaveType.objects.filter(code=code).exists():
                 messages.error(request, f"Leave type code {code} already exists.")
+                return _redirect_leave_settings(tab="types", year=posted_year)
             else:
-                LeaveType.objects.create(
+                new_lt = LeaveType.objects.create(
                     organization=org, name=name, code=code,
                     is_paid=request.POST.get("is_paid") == "1",
                     is_accrual_based=request.POST.get("is_accrual_based") == "1",
                     requires_attachment=request.POST.get("requires_attachment") == "1",
                 )
-                messages.success(request, f"Leave type '{name}' created. Add an entitlement policy for it below.")
+                messages.success(
+                    request,
+                    f"Leave type '{name}' ({code}) created."
+                    + (" Add an entitlement policy below." if new_lt.is_paid else ""),
+                )
+                return _redirect_leave_settings(tab="types", year=posted_year, open_type=new_lt.id)
 
         elif action == "update_leave_type":
             lt = get_object_or_404(LeaveType, pk=request.POST.get("leave_type_id"))
@@ -333,6 +366,7 @@ def leave_settings_view(request):
             lt.is_active = request.POST.get("is_active") == "1"
             lt.save()
             messages.success(request, f"Leave type '{lt.name}' updated.")
+            return _redirect_leave_settings(tab="types", year=posted_year, open_type=lt.id)
 
         elif action == "save_policy":
             policy_id = request.POST.get("policy_id")
@@ -345,7 +379,7 @@ def leave_settings_view(request):
             }
             if any(v is None or v < 0 for v in values.values()):
                 messages.error(request, "Entitlement, accrual rate and carry-forward must be non-negative numbers.")
-                return redirect("portal_leave_settings")
+                return _redirect_leave_settings(tab="types", year=posted_year, open_type=lt.id)
             frequency = request.POST.get("accrual_frequency", "MONTHLY")
             if frequency not in ("MONTHLY", "YEARLY", "NONE"):
                 frequency = "MONTHLY"
@@ -355,13 +389,11 @@ def leave_settings_view(request):
             policy.yearly_entitlement = values["yearly_entitlement"]
             policy.monthly_accrual_rate = values["monthly_accrual_rate"]
             policy.max_carry_forward = values["max_carry_forward"]
-            try:
-                policy.probation_period_months = max(0, int(request.POST.get("probation_period_months") or 0))
-            except ValueError:
-                policy.probation_period_months = 0
+            policy.probation_period_months = max(0, _safe_int(request.POST.get("probation_period_months"), 0))
             policy.is_active = request.POST.get("is_active", "1") == "1"
             policy.save()
             messages.success(request, f"Policy '{policy.name}' saved.")
+            return _redirect_leave_settings(tab="types", year=posted_year, open_type=lt.id)
 
         elif action == "add_holiday":
             hdate = _parse_date(request.POST.get("date"))
@@ -369,21 +401,68 @@ def leave_settings_view(request):
             branch_id = request.POST.get("branch") or None
             if not hdate or not name:
                 messages.error(request, "Holiday date and name are required.")
-            else:
-                branch = user.get_accessible_branches().filter(id=branch_id).first() if branch_id else None
-                calendar, _ = HolidayCalendar.objects.get_or_create(
-                    organization=org, branch=branch, year=hdate.year,
-                    defaults={"name": f"{branch.name if branch else 'All Branches'} Holidays {hdate.year}"},
-                )
-                Holiday.objects.get_or_create(
-                    calendar=calendar, date=hdate,
-                    defaults={"name": name, "is_optional": request.POST.get("is_optional") == "1"},
-                )
+                return _redirect_leave_settings(tab="holidays", year=posted_year)
+            branch = user.get_accessible_branches().filter(id=branch_id).first() if branch_id else None
+            calendar, _ = HolidayCalendar.objects.get_or_create(
+                organization=org, branch=branch, year=hdate.year,
+                defaults={"name": f"{branch.name if branch else 'All Branches'} Holidays {hdate.year}"},
+            )
+            holiday, created = Holiday.objects.get_or_create(
+                calendar=calendar, date=hdate,
+                defaults={"name": name, "is_optional": request.POST.get("is_optional") == "1"},
+            )
+            if created:
                 messages.success(request, f"Holiday '{name}' on {hdate:%d %b %Y} added.")
+            else:
+                messages.warning(
+                    request,
+                    f"A holiday already exists on {hdate:%d %b %Y} for {branch.name if branch else 'All Branches'} ('{holiday.name}'). Edit it instead.",
+                )
+            return _redirect_leave_settings(tab="holidays", year=hdate.year)
+
+        elif action == "update_holiday":
+            holiday = get_object_or_404(
+                Holiday.objects.select_related("calendar"),
+                pk=request.POST.get("holiday_id"),
+                calendar__organization=org,
+            )
+            hdate = _parse_date(request.POST.get("date"))
+            name = request.POST.get("name", "").strip()
+            branch_id = request.POST.get("branch") or None
+            if not hdate or not name:
+                messages.error(request, "Holiday date and name are required.")
+                return _redirect_leave_settings(tab="holidays", year=posted_year or holiday.date.year)
+            branch = user.get_accessible_branches().filter(id=branch_id).first() if branch_id else None
+            target_calendar, _ = HolidayCalendar.objects.get_or_create(
+                organization=org, branch=branch, year=hdate.year,
+                defaults={"name": f"{branch.name if branch else 'All Branches'} Holidays {hdate.year}"},
+            )
+            duplicate = Holiday.objects.filter(calendar=target_calendar, date=hdate).exclude(pk=holiday.pk).first()
+            if duplicate:
+                messages.error(
+                    request,
+                    f"Cannot move holiday: '{duplicate.name}' is already set on {hdate:%d %b %Y} for {branch.name if branch else 'All Branches'}.",
+                )
+                return _redirect_leave_settings(tab="holidays", year=holiday.date.year)
+            holiday.calendar = target_calendar
+            holiday.date = hdate
+            holiday.name = name
+            holiday.is_optional = request.POST.get("is_optional") == "1"
+            holiday.save()
+            messages.success(request, f"Holiday '{holiday.name}' updated.")
+            return _redirect_leave_settings(tab="holidays", year=hdate.year)
 
         elif action == "delete_holiday":
-            Holiday.objects.filter(pk=request.POST.get("holiday_id")).delete()
-            messages.info(request, "Holiday removed.")
+            holiday = Holiday.objects.filter(
+                pk=request.POST.get("holiday_id"),
+                calendar__organization=org,
+            ).first()
+            target_year = holiday.date.year if holiday else posted_year
+            if holiday:
+                holiday_name = holiday.name
+                holiday.delete()
+                messages.info(request, f"Holiday '{holiday_name}' removed.")
+            return _redirect_leave_settings(tab="holidays", year=target_year)
 
         elif action == "run_accrual":
             res = run_batch_monthly_accrual()
@@ -392,25 +471,60 @@ def leave_settings_view(request):
                 f"Earned-leave accrual for {res['period_key']}: {res['credited']} credited, "
                 f"{res['skipped']} skipped (already credited, on probation, or not yet joined).",
             )
+            return _redirect_leave_settings(tab=posted_tab or "types", year=posted_year)
 
-        return redirect("portal_leave_settings")
+        return _redirect_leave_settings(tab=posted_tab or "types", year=posted_year)
 
-    year = int(request.GET.get("year") or date.today().year)
-    holidays = (
+    today = date.today()
+    year = _safe_int(request.GET.get("year"), today.year)
+    active_tab = "holidays" if request.GET.get("tab") == "holidays" else "types"
+    open_type_id = _safe_int(request.GET.get("open_type"))
+
+    holidays = list(
         Holiday.objects.filter(calendar__year=year, calendar__organization=org)
         .filter(Q(calendar__branch__isnull=True) | Q(calendar__branch__in=user.get_accessible_branches()))
         .select_related("calendar__branch")
         .order_by("date")
     )
-    leave_types = LeaveType.objects.all().prefetch_related("policies").order_by("-is_active", "name")
+    leave_types = list(LeaveType.objects.all().prefetch_related("policies").order_by("-is_active", "name"))
+    branches = list(user.get_accessible_branches())
+
+    current_period_key = today.strftime("%Y-%m")
+    current_period_credited_count = LeaveAccrualRun.objects.filter(period_key=current_period_key).count()
+    active_leave_types_count = sum(1 for lt in leave_types if lt.is_active)
+    all_policies = [p for lt in leave_types for p in lt.policies.all()]
+    active_policies_count = sum(1 for p in all_policies if p.is_active)
+    monthly_accrual_policies_count = sum(
+        1 for p in all_policies if p.is_active and p.accrual_frequency == "MONTHLY"
+    )
+    mandatory_holidays_count = sum(1 for h in holidays if not h.is_optional)
+    optional_holidays_count = sum(1 for h in holidays if h.is_optional)
+
+    weekday_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    configured_weekends = getattr(settings, "LEAVE_WEEKEND_DAYS", [])
+    weekend_days_label = ", ".join(
+        weekday_names[d] for d in configured_weekends if 0 <= d < 7
+    )
 
     context = {
         "active_nav": "leave_settings",
+        "active_tab": active_tab,
+        "open_type_id": open_type_id,
         "leave_types": leave_types,
         "holidays": holidays,
+        "today": today,
         "year": year,
         "years": [year - 1, year, year + 1],
-        "branches": user.get_accessible_branches(),
+        "branches": branches,
+        "current_period_key": current_period_key,
+        "current_period_label": today.strftime("%B %Y"),
+        "current_period_credited_count": current_period_credited_count,
+        "active_leave_types_count": active_leave_types_count,
+        "active_policies_count": active_policies_count,
+        "monthly_accrual_policies_count": monthly_accrual_policies_count,
+        "mandatory_holidays_count": mandatory_holidays_count,
+        "optional_holidays_count": optional_holidays_count,
+        "weekend_days_label": weekend_days_label,
     }
     return render(request, "portal/leave_settings.html", context)
 

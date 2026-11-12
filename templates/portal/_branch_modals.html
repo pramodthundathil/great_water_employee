@@ -1,0 +1,190 @@
+<!-- Shared Branch Edit / Toggle / Delete Dialogs -->
+<dialog id="editBranchDialog" class="gw-dialog" aria-labelledby="editBranchTitle">
+    <div class="gw-dialog-header">
+        <h2 id="editBranchTitle" class="gw-dialog-title">
+            <i class="bi bi-pencil-square me-2 text-primary" aria-hidden="true"></i>Edit Branch
+        </h2>
+        <button type="button" class="btn-close" commandfor="editBranchDialog" command="close" aria-label="Close"></button>
+    </div>
+    <form method="post" action="{{ form_action }}" class="gw-settings-form">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="update">
+        <input type="hidden" name="branch_id" id="editBranchId">
+
+        <div class="gw-dialog-body d-flex flex-column gap-3">
+            <div class="row g-3">
+                <div class="col-sm-4">
+                    <label class="form-label small fw-semibold mb-1" for="editBranchCode">
+                        Branch code <span class="text-danger" aria-hidden="true">*</span>
+                    </label>
+                    <input
+                        id="editBranchCode"
+                        name="code"
+                        type="text"
+                        class="form-control text-uppercase font-monospace"
+                        required
+                        maxlength="20"
+                        autocorrect="off"
+                        autocapitalize="characters"
+                        spellcheck="false"
+                        aria-errormessage="editBranchCodeErr"
+                    >
+                    <div id="editBranchCodeErr" class="field-error-msg">
+                        <i class="bi bi-exclamation-circle-fill" aria-hidden="true"></i>
+                        <span>Branch code is required.</span>
+                    </div>
+                </div>
+                <div class="col-sm-8">
+                    <label class="form-label small fw-semibold mb-1" for="editBranchName">
+                        Office / branch name <span class="text-danger" aria-hidden="true">*</span>
+                    </label>
+                    <input
+                        id="editBranchName"
+                        name="name"
+                        type="text"
+                        class="form-control"
+                        required
+                        maxlength="255"
+                        aria-errormessage="editBranchNameErr"
+                    >
+                    <div id="editBranchNameErr" class="field-error-msg">
+                        <i class="bi bi-exclamation-circle-fill" aria-hidden="true"></i>
+                        <span>Branch name is required.</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row g-3">
+                <div class="col-sm-6">
+                    <label class="form-label small fw-semibold mb-1" for="editBranchCity">City</label>
+                    <input id="editBranchCity" name="city" type="text" class="form-control" maxlength="100" placeholder="e.g. Dubai">
+                </div>
+                <div class="col-sm-6">
+                    <label class="form-label small fw-semibold mb-1" for="editBranchCountry">Country</label>
+                    <input id="editBranchCountry" name="country" type="text" class="form-control" maxlength="100" placeholder="e.g. UAE">
+                </div>
+            </div>
+
+            <div>
+                <label class="form-label small fw-semibold mb-1" for="editBranchPhone">Telephone</label>
+                <input id="editBranchPhone" name="phone" type="tel" class="form-control" maxlength="50" autocomplete="tel" placeholder="+971 4 000 0000">
+            </div>
+
+            <div>
+                <label class="form-label small fw-semibold mb-1" for="editBranchAddress">Street address</label>
+                <textarea id="editBranchAddress" name="address" class="form-control" rows="2" placeholder="Building, street, or port zone..."></textarea>
+            </div>
+
+            <label class="gw-switch-row" for="editBranchActive">
+                <span>
+                    <span class="gw-switch-label-title">Active office</span>
+                    <span class="gw-switch-label-hint">Inactive offices are hidden from employee branch selectors and new claims.</span>
+                </span>
+                <input class="gw-native-switch" type="checkbox" switch name="is_active" value="1" id="editBranchActive">
+            </label>
+        </div>
+
+        <div class="gw-dialog-footer">
+            <button type="button" class="btn btn-sm btn-gw-secondary" commandfor="editBranchDialog" command="close">Cancel</button>
+            <button type="submit" class="btn btn-sm btn-gw-primary">
+                <i class="bi bi-check2-circle me-1" aria-hidden="true"></i>Save Changes
+            </button>
+        </div>
+    </form>
+</dialog>
+
+<dialog id="toggleBranchDialog" class="gw-dialog" aria-labelledby="toggleBranchTitle">
+    <div class="gw-dialog-header">
+        <h2 id="toggleBranchTitle" class="gw-dialog-title">Update Branch Status</h2>
+        <button type="button" class="btn-close" commandfor="toggleBranchDialog" command="close" aria-label="Close"></button>
+    </div>
+    <form method="post" action="{{ form_action }}">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="toggle_active">
+        <input type="hidden" name="branch_id" id="toggleBranchId">
+
+        <div class="gw-dialog-body">
+            <p class="mb-2"><span id="toggleBranchActionVerb"></span> <strong id="toggleBranchNameLabel"></strong>?</p>
+            <p class="small text-secondary mb-0" id="toggleBranchHint"></p>
+        </div>
+
+        <div class="gw-dialog-footer">
+            <button type="button" class="btn btn-sm btn-gw-secondary" commandfor="toggleBranchDialog" command="close">Cancel</button>
+            <button type="submit" class="btn btn-sm btn-gw-primary" id="toggleBranchSubmitBtn">Confirm</button>
+        </div>
+    </form>
+</dialog>
+
+<dialog id="deleteBranchDialog" class="gw-dialog" aria-labelledby="deleteBranchTitle">
+    <div class="gw-dialog-header">
+        <h2 id="deleteBranchTitle" class="gw-dialog-title text-danger">
+            <i class="bi bi-trash me-2" aria-hidden="true"></i>Delete Branch
+        </h2>
+        <button type="button" class="btn-close" commandfor="deleteBranchDialog" command="close" aria-label="Close"></button>
+    </div>
+    <form method="post" action="{{ form_action }}">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="delete">
+        <input type="hidden" name="branch_id" id="deleteBranchId">
+
+        <div class="gw-dialog-body">
+            <p class="mb-2">Permanently delete <strong id="deleteBranchNameLabel">this branch</strong>?</p>
+            <p class="small text-secondary mb-0" id="deleteBranchHint">
+                This permanently removes the branch record. Only branches with no staff, expense claims, leave requests, or holiday calendars can be deleted.
+            </p>
+        </div>
+
+        <div class="gw-dialog-footer">
+            <button type="button" class="btn btn-sm btn-gw-secondary" commandfor="deleteBranchDialog" command="close">Cancel</button>
+            <button type="submit" class="btn btn-sm btn-danger rounded-pill px-3" id="deleteBranchSubmitBtn">Delete Branch</button>
+        </div>
+    </form>
+</dialog>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const editDialog = document.getElementById('editBranchDialog');
+    document.querySelectorAll('.js-edit-branch-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            document.getElementById('editBranchId').value = btn.dataset.id;
+            document.getElementById('editBranchCode').value = btn.dataset.code;
+            document.getElementById('editBranchName').value = btn.dataset.name;
+            document.getElementById('editBranchCity').value = btn.dataset.city || '';
+            document.getElementById('editBranchCountry').value = btn.dataset.country || '';
+            document.getElementById('editBranchPhone').value = btn.dataset.phone || '';
+            document.getElementById('editBranchAddress').value = btn.dataset.address || '';
+            const activeEl = document.getElementById('editBranchActive');
+            activeEl.checked = (btn.dataset.active === '1');
+            if (activeEl.hasAttribute('aria-checked')) activeEl.setAttribute('aria-checked', String(activeEl.checked));
+            editDialog?.showModal();
+        });
+    });
+
+    const toggleDialog = document.getElementById('toggleBranchDialog');
+    document.querySelectorAll('.js-toggle-branch-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const isCurrentlyActive = btn.dataset.active === '1';
+            document.getElementById('toggleBranchId').value = btn.dataset.id;
+            document.getElementById('toggleBranchTitle').textContent = isCurrentlyActive ? 'Deactivate Branch' : 'Activate Branch';
+            document.getElementById('toggleBranchActionVerb').textContent = isCurrentlyActive ? 'Deactivate' : 'Re-activate';
+            document.getElementById('toggleBranchNameLabel').textContent = btn.dataset.name;
+            document.getElementById('toggleBranchHint').textContent = isCurrentlyActive
+                ? 'Deactivating hides this office from branch selectors and new requests while preserving all historical staff, claims, and leave records.'
+                : 'Activating restores this office to branch selectors and employee assignments.';
+            const submitBtn = document.getElementById('toggleBranchSubmitBtn');
+            submitBtn.textContent = isCurrentlyActive ? 'Deactivate Branch' : 'Activate Branch';
+            submitBtn.className = `btn btn-sm rounded-pill px-3 ${isCurrentlyActive ? 'btn-warning' : 'btn-success'}`;
+            toggleDialog?.showModal();
+        });
+    });
+
+    const deleteDialog = document.getElementById('deleteBranchDialog');
+    document.querySelectorAll('.js-delete-branch-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            document.getElementById('deleteBranchId').value = btn.dataset.id;
+            document.getElementById('deleteBranchNameLabel').textContent = btn.dataset.name;
+            deleteDialog?.showModal();
+        });
+    });
+});
+</script>

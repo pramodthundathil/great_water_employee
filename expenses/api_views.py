@@ -82,6 +82,9 @@ class ExpenseClaimListCreateView(APIView):
     @transaction.atomic
     def post(self, request):
         user = request.user
+        if user.is_director:
+            return Response({"detail": "Directors approve expense claims; they cannot raise their own."},
+                            status=status.HTTP_403_FORBIDDEN)
         branch = user.primary_branch
         if not branch:
             return Response({"detail": "User has no primary branch assigned."}, status=status.HTTP_400_BAD_REQUEST)

@@ -1,52 +1,388 @@
 {% extends "base.html" %}
 {% load static %}
 
-{% block title %}Offices & Branches — Great Waters{% endblock %}
+{% block title %}Offices &amp; Branches — Great Waters{% endblock %}
 
 {% block content %}
 <div class="page-title-box">
-    <div>
-        <h1 class="page-title">Offices & Branches</h1>
-        <p class="page-subtitle">Multi-office organization master, geographic access scopes, and branch staff distribution.</p>
+    <div class="page-title-meta">
+        <h1 class="page-title">Offices &amp; Branches</h1>
+        <p class="page-subtitle">Multi-office organization master, contact details, geographic scopes, and branch staff distribution.</p>
+    </div>
+    {% if can_manage_branches %}
+    <div class="d-flex flex-wrap gap-2 dashboard-quick-actions">
+        <button type="button" class="btn btn-gw-primary" commandfor="createBranchDialog" command="show-modal">
+            <i class="bi bi-plus-lg" aria-hidden="true"></i>
+            <span>Add Branch</span>
+        </button>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Overview KPI Strip -->
+<div class="row g-3 mb-4">
+    <div class="col-6 col-xl-3">
+        <div class="kpi-card kpi-card-compact">
+            <div class="kpi-icon-wrapper" style="background: var(--gw-primary-light); color: var(--gw-primary);">
+                <i class="bi bi-building" aria-hidden="true"></i>
+            </div>
+            <div class="min-w-0">
+                <div class="kpi-label">Total Offices</div>
+                <div class="kpi-value">{{ branches|length }}</div>
+                <div class="kpi-meta mt-0">In your directory</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-xl-3">
+        <div class="kpi-card kpi-card-compact">
+            <div class="kpi-icon-wrapper" style="background: #ECFDF5; color: #059669;">
+                <i class="bi bi-check-circle" aria-hidden="true"></i>
+            </div>
+            <div class="min-w-0">
+                <div class="kpi-label">Active Offices</div>
+                <div class="kpi-value">{{ active_branches_count }}</div>
+                <div class="kpi-meta mt-0">Operational locations</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-xl-3">
+        <div class="kpi-card kpi-card-compact">
+            <div class="kpi-icon-wrapper" style="background: #F1F5F9; color: #475569;">
+                <i class="bi bi-pause-circle" aria-hidden="true"></i>
+            </div>
+            <div class="min-w-0">
+                <div class="kpi-label">Inactive Offices</div>
+                <div class="kpi-value">{{ inactive_branches_count }}</div>
+                <div class="kpi-meta mt-0">Archived / paused</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-xl-3">
+        <div class="kpi-card kpi-card-compact">
+            <div class="kpi-icon-wrapper" style="background: #E0F2FE; color: #0284C7;">
+                <i class="bi bi-people" aria-hidden="true"></i>
+            </div>
+            <div class="min-w-0">
+                <div class="kpi-label">Active Staff</div>
+                <div class="kpi-value">{{ total_staff_count }}</div>
+                <div class="kpi-meta mt-0">Assigned across offices</div>
+            </div>
+        </div>
     </div>
 </div>
 
-<div class="row g-4 mb-4">
+<!-- Search & Filter Toolbar -->
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-3 mb-4">
+    <div class="d-flex align-items-center flex-wrap gap-2 flex-grow-1">
+        <div class="panel-search-box" style="min-width: min(280px, 100%);">
+            <i class="bi bi-search panel-search-icon" aria-hidden="true"></i>
+            <label for="branchSearchInput" class="visually-hidden">Search branches</label>
+            <input
+                id="branchSearchInput"
+                type="search"
+                class="form-control form-control-sm rounded-pill ps-5"
+                style="background-color: #FFFFFF; min-height: 38px;"
+                placeholder="Search by name, code, city, or country..."
+                autocorrect="off"
+                autocapitalize="off"
+                spellcheck="false"
+            >
+        </div>
+        {% if can_manage_branches %}
+        <div class="gw-pill-filter-group" role="group" aria-label="Filter branches by status">
+            <button type="button" class="gw-pill-filter active js-branch-status-filter" data-status="all">All ({{ branches|length }})</button>
+            <button type="button" class="gw-pill-filter js-branch-status-filter" data-status="active">Active ({{ active_branches_count }})</button>
+            <button type="button" class="gw-pill-filter js-branch-status-filter" data-status="inactive">Inactive ({{ inactive_branches_count }})</button>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Branch Cards Grid -->
+<div class="row g-4 mb-4" id="branchesGrid">
     {% for b in branches %}
-    <div class="col-md-4">
-        <div class="gw-card h-100">
-            <div class="gw-card-body">
-                <div class="d-flex justify-content-between align-items-center mb-3">
-                    <span class="badge bg-primary text-white fs-6 font-monospace">{{ b.code }}</span>
-                    {% if b.is_active %}
-                    <span class="badge bg-success-subtle text-success">Active Office</span>
+    <div
+        class="col-md-6 col-xl-4"
+        data-branch-card
+        data-branch-status="{% if b.is_active %}active{% else %}inactive{% endif %}"
+        data-branch-search="{{ b.name|lower }} {{ b.code|lower }} {{ b.city|lower }} {{ b.country|lower }}"
+    >
+        <article class="gw-card gw-branch-card h-100 mb-0 d-flex flex-column {% if not b.is_active %}is-inactive{% endif %}">
+            <div class="gw-card-body d-flex flex-column flex-grow-1">
+                <div class="d-flex justify-content-between align-items-center gap-2 mb-3">
+                    <span class="gw-lt-code">{{ b.code }}</span>
+                    <span class="status-badge {% if b.is_active %}badge-approved{% else %}badge-draft{% endif %}">
+                        {% if b.is_active %}Active Office{% else %}Inactive{% endif %}
+                    </span>
+                </div>
+
+                <h2 class="h5 fw-bold text-dark mb-1">
+                    <a href="{% url 'portal_branch_detail' b.id %}" class="text-decoration-none text-dark stretched-link-title">
+                        {{ b.name }}
+                    </a>
+                </h2>
+                <div class="text-secondary small mb-2">
+                    <i class="bi bi-geo-alt me-1" aria-hidden="true"></i>
+                    {% if b.city or b.country %}
+                        {{ b.city }}{% if b.city and b.country %}, {% endif %}{{ b.country }}
                     {% else %}
-                    <span class="badge bg-danger-subtle text-danger">Inactive</span>
+                        Location not specified
                     {% endif %}
                 </div>
-                <h4 class="fw-bold text-dark mb-1">{{ b.name }}</h4>
-                <div class="text-secondary small mb-3"><i class="bi bi-geo-alt me-1"></i>{{ b.city }}, {{ b.country }}</div>
-                
-                <div class="p-3 bg-light rounded-3 mb-3">
-                    <div class="d-flex justify-content-between mb-1 small">
-                        <span class="text-muted">Telephone:</span>
-                        <span class="fw-semibold">{{ b.phone|default:"N/A" }}</span>
+                {% if b.address %}
+                <p class="small text-muted mb-3 text-truncate" title="{{ b.address }}">{{ b.address }}</p>
+                {% else %}
+                <p class="small text-muted mb-3">No street address recorded</p>
+                {% endif %}
+
+                <div class="gw-branch-stat-grid mb-3">
+                    <div class="gw-branch-stat-item">
+                        <div class="gw-branch-stat-value text-primary">{{ b.employee_count }}</div>
+                        <div class="gw-branch-stat-label">Active Staff</div>
                     </div>
-                    <div class="d-flex justify-content-between mb-1 small">
-                        <span class="text-muted">Total Staff:</span>
-                        <span class="fw-bold text-primary">{{ b.employee_count }} employees</span>
+                    <div class="gw-branch-stat-item">
+                        <div class="gw-branch-stat-value">{{ b.claims_count }}</div>
+                        <div class="gw-branch-stat-label">Claims</div>
+                    </div>
+                    <div class="gw-branch-stat-item">
+                        <div class="gw-branch-stat-value">{{ b.leaves_count }}</div>
+                        <div class="gw-branch-stat-label">Leaves</div>
                     </div>
                 </div>
 
-                <div class="d-flex justify-content-between align-items-center small text-muted">
-                    <span>Created: {{ b.created_at|date:"M Y" }}</span>
-                    <a href="{% url 'portal_employees' %}?selected_branch={{ b.id }}" class="text-primary text-decoration-none fw-semibold">
-                        View Staff <i class="bi bi-arrow-right"></i>
-                    </a>
+                <div class="small text-muted mb-3 d-flex justify-content-between flex-wrap gap-1">
+                    <span><i class="bi bi-telephone me-1" aria-hidden="true"></i>{{ b.phone|default:"No phone" }}</span>
+                    <span>Since {{ b.created_at|date:"M Y" }}</span>
                 </div>
+
+                <div class="mt-auto pt-3 border-top d-flex align-items-center justify-content-between flex-wrap gap-2">
+                    <div class="d-flex align-items-center gap-2">
+                        <a href="{% url 'portal_branch_detail' b.id %}" class="btn btn-sm btn-gw-primary">
+                            <i class="bi bi-eye" aria-hidden="true"></i>
+                            <span>View Office</span>
+                        </a>
+                        <a href="{% url 'portal_employees' %}?branch={{ b.id }}" class="btn btn-sm btn-light border">
+                            Staff
+                        </a>
+                    </div>
+
+                    {% if can_manage_branches %}
+                    <div class="d-flex align-items-center gap-1">
+                        <button
+                            type="button"
+                            class="btn btn-sm btn-light border js-edit-branch-btn"
+                            data-id="{{ b.id }}"
+                            data-code="{{ b.code }}"
+                            data-name="{{ b.name }}"
+                            data-city="{{ b.city }}"
+                            data-country="{{ b.country }}"
+                            data-phone="{{ b.phone }}"
+                            data-address="{{ b.address }}"
+                            data-active="{% if b.is_active %}1{% else %}0{% endif %}"
+                            aria-label="Edit {{ b.name }}"
+                            title="Edit branch"
+                        >
+                            <i class="bi bi-pencil" aria-hidden="true"></i>
+                        </button>
+                        <button
+                            type="button"
+                            class="btn btn-sm btn-light border js-toggle-branch-btn"
+                            data-id="{{ b.id }}"
+                            data-name="{{ b.name }}"
+                            data-active="{% if b.is_active %}1{% else %}0{% endif %}"
+                            aria-label="{% if b.is_active %}Deactivate{% else %}Activate{% endif %} {{ b.name }}"
+                            title="{% if b.is_active %}Deactivate branch{% else %}Activate branch{% endif %}"
+                        >
+                            <i class="bi {% if b.is_active %}bi-pause-circle text-warning{% else %}bi-play-circle text-success{% endif %}" aria-hidden="true"></i>
+                        </button>
+                        {% if b.can_delete %}
+                        <button
+                            type="button"
+                            class="btn btn-sm btn-outline-danger js-delete-branch-btn"
+                            data-id="{{ b.id }}"
+                            data-name="{{ b.name }}"
+                            aria-label="Delete {{ b.name }}"
+                            title="Delete branch"
+                        >
+                            <i class="bi bi-trash" aria-hidden="true"></i>
+                        </button>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </article>
+    </div>
+    {% empty %}
+    <div class="col-12">
+        <div class="gw-card">
+            <div class="empty-state">
+                <div class="empty-state-icon"><i class="bi bi-building" aria-hidden="true"></i></div>
+                <div class="empty-state-title">No offices or branches found</div>
+                <div class="empty-state-desc">Add your first office branch to start assigning employees and managing branch operations.</div>
+                {% if can_manage_branches %}
+                <button type="button" class="btn btn-sm btn-gw-primary" commandfor="createBranchDialog" command="show-modal">
+                    <i class="bi bi-plus-lg" aria-hidden="true"></i> Add Branch
+                </button>
+                {% endif %}
             </div>
         </div>
     </div>
     {% endfor %}
 </div>
+
+<div id="branchFilterEmpty" class="gw-card mb-4" hidden>
+    <div class="empty-state">
+        <div class="empty-state-icon"><i class="bi bi-search" aria-hidden="true"></i></div>
+        <div class="empty-state-title">No matching branches</div>
+        <div class="empty-state-desc">Try clearing your search query or switching the status filter.</div>
+        <button type="button" class="btn btn-sm btn-gw-secondary" id="resetBranchFiltersBtn">Reset filters</button>
+    </div>
+</div>
+
+{% if can_manage_branches %}
+<!-- Create Branch Native Dialog -->
+<dialog id="createBranchDialog" class="gw-dialog" aria-labelledby="createBranchTitle">
+    <div class="gw-dialog-header">
+        <h2 id="createBranchTitle" class="gw-dialog-title">
+            <i class="bi bi-building-add me-2 text-primary" aria-hidden="true"></i>Add New Branch
+        </h2>
+        <button type="button" class="btn-close" commandfor="createBranchDialog" command="close" aria-label="Close"></button>
+    </div>
+    <form method="post" action="{% url 'portal_branches' %}" class="gw-settings-form">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="create">
+
+        <div class="gw-dialog-body d-flex flex-column gap-3">
+            <div class="row g-3">
+                <div class="col-sm-4">
+                    <label class="form-label small fw-semibold mb-1" for="newBranchCode">
+                        Branch code <span class="text-danger" aria-hidden="true">*</span>
+                    </label>
+                    <input
+                        id="newBranchCode"
+                        name="code"
+                        type="text"
+                        class="form-control text-uppercase font-monospace"
+                        required
+                        maxlength="20"
+                        placeholder="GW-SGP"
+                        autocorrect="off"
+                        autocapitalize="characters"
+                        spellcheck="false"
+                        aria-describedby="newBranchCodeHelp"
+                        aria-errormessage="newBranchCodeErr"
+                    >
+                    <div id="newBranchCodeErr" class="field-error-msg">
+                        <i class="bi bi-exclamation-circle-fill" aria-hidden="true"></i>
+                        <span>Enter a unique branch code.</span>
+                    </div>
+                    <div id="newBranchCodeHelp" class="form-text small">Unique code, e.g. GW-SGP.</div>
+                </div>
+                <div class="col-sm-8">
+                    <label class="form-label small fw-semibold mb-1" for="newBranchName">
+                        Office / branch name <span class="text-danger" aria-hidden="true">*</span>
+                    </label>
+                    <input
+                        id="newBranchName"
+                        name="name"
+                        type="text"
+                        class="form-control"
+                        required
+                        maxlength="255"
+                        placeholder="e.g. Singapore Maritime Hub"
+                        aria-errormessage="newBranchNameErr"
+                    >
+                    <div id="newBranchNameErr" class="field-error-msg">
+                        <i class="bi bi-exclamation-circle-fill" aria-hidden="true"></i>
+                        <span>Branch name is required.</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row g-3">
+                <div class="col-sm-6">
+                    <label class="form-label small fw-semibold mb-1" for="newBranchCity">City</label>
+                    <input id="newBranchCity" name="city" type="text" class="form-control" maxlength="100" placeholder="e.g. Singapore">
+                </div>
+                <div class="col-sm-6">
+                    <label class="form-label small fw-semibold mb-1" for="newBranchCountry">Country</label>
+                    <input id="newBranchCountry" name="country" type="text" class="form-control" maxlength="100" placeholder="e.g. Singapore">
+                </div>
+            </div>
+
+            <div>
+                <label class="form-label small fw-semibold mb-1" for="newBranchPhone">Telephone</label>
+                <input id="newBranchPhone" name="phone" type="tel" class="form-control" maxlength="50" autocomplete="tel" placeholder="+65 6000 0000">
+            </div>
+
+            <div>
+                <label class="form-label small fw-semibold mb-1" for="newBranchAddress">Street address</label>
+                <textarea id="newBranchAddress" name="address" class="form-control" rows="2" placeholder="Building, street, or port zone..."></textarea>
+            </div>
+
+            <label class="gw-switch-row" for="newBranchActive">
+                <span>
+                    <span class="gw-switch-label-title">Active office</span>
+                    <span class="gw-switch-label-hint">Make this office immediately available for employee assignments and claims.</span>
+                </span>
+                <input class="gw-native-switch" type="checkbox" switch name="is_active" value="1" id="newBranchActive" checked>
+            </label>
+        </div>
+
+        <div class="gw-dialog-footer">
+            <button type="button" class="btn btn-sm btn-gw-secondary" commandfor="createBranchDialog" command="close">Cancel</button>
+            <button type="submit" name="open_after_create" value="1" class="btn btn-sm btn-outline-primary rounded-pill px-3">
+                Create &amp; View
+            </button>
+            <button type="submit" class="btn btn-sm btn-gw-primary">
+                <i class="bi bi-plus-lg" aria-hidden="true"></i> Create Branch
+            </button>
+        </div>
+    </form>
+</dialog>
+
+{% url 'portal_branches' as branches_action_url %}
+{% include "portal/_branch_modals.html" with form_action=branches_action_url %}
+{% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const searchInput = document.getElementById('branchSearchInput');
+    const statusBtns = document.querySelectorAll('.js-branch-status-filter');
+    const branchCards = Array.from(document.querySelectorAll('[data-branch-card]'));
+    const emptyState = document.getElementById('branchFilterEmpty');
+    let activeStatus = 'all';
+
+    const filterBranches = () => {
+        const q = (searchInput?.value || '').trim().toLowerCase();
+        let visible = 0;
+        branchCards.forEach((card) => {
+            const matchesText = !q || card.dataset.branchSearch.includes(q);
+            const matchesStatus = activeStatus === 'all' || card.dataset.branchStatus === activeStatus;
+            const show = matchesText && matchesStatus;
+            card.hidden = !show;
+            if (show) visible++;
+        });
+        if (emptyState) emptyState.hidden = (branchCards.length === 0 || visible > 0);
+    };
+
+    searchInput?.addEventListener('input', filterBranches);
+    statusBtns.forEach((btn) => {
+        btn.addEventListener('click', () => {
+            activeStatus = btn.dataset.status;
+            statusBtns.forEach((b) => b.classList.toggle('active', b === btn));
+            filterBranches();
+        });
+    });
+    document.getElementById('resetBranchFiltersBtn')?.addEventListener('click', () => {
+        if (searchInput) searchInput.value = '';
+        activeStatus = 'all';
+        statusBtns.forEach((b) => b.classList.toggle('active', b.dataset.status === 'all'));
+        filterBranches();
+    });
+});
+</script>
 {% endblock %}

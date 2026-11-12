@@ -1,22 +1,192 @@
-<form method="post" class="row g-2 align-items-end bg-light rounded p-2 mb-2">
+{% with pid=policy.id|default:"new" %}
+<form method="post" action="{% url 'portal_leave_settings' %}" class="gw-fieldset gw-settings-form js-policy-form mb-3" data-lt-id="{{ lt.id }}">
     {% csrf_token %}
     <input type="hidden" name="action" value="save_policy">
     <input type="hidden" name="leave_type_id" value="{{ lt.id }}">
+    <input type="hidden" name="tab" value="types">
+    <input type="hidden" name="year" value="{{ year }}">
     {% if policy %}<input type="hidden" name="policy_id" value="{{ policy.id }}">{% endif %}
-    <div class="col-md-3"><label class="form-label small m-0">Policy name</label><input name="name" value="{{ policy.name|default:'' }}" class="form-control form-control-sm" placeholder="{{ lt.name }} Policy"></div>
-    <div class="col-6 col-md-2"><label class="form-label small m-0">Credited</label>
-        <select name="accrual_frequency" class="form-select form-select-sm">
-            <option value="MONTHLY" {% if policy.accrual_frequency == 'MONTHLY' %}selected{% endif %}>Monthly (by service)</option>
-            <option value="YEARLY" {% if policy.accrual_frequency == 'YEARLY' %}selected{% endif %}>Yearly (1 Jan)</option>
-            <option value="NONE" {% if policy.accrual_frequency == 'NONE' %}selected{% endif %}>Yearly grant (fixed)</option>
-        </select>
-    </div>
-    <div class="col-6 col-md-1"><label class="form-label small m-0">Days / year</label><input type="number" step="0.5" min="0" name="yearly_entitlement" value="{{ policy.yearly_entitlement|default:'0' }}" class="form-control form-control-sm"></div>
-    <div class="col-6 col-md-1"><label class="form-label small m-0">Days / month</label><input type="number" step="0.25" min="0" name="monthly_accrual_rate" value="{{ policy.monthly_accrual_rate|default:'0' }}" class="form-control form-control-sm"></div>
-    <div class="col-6 col-md-1"><label class="form-label small m-0">Max carry fwd</label><input type="number" step="0.5" min="0" name="max_carry_forward" value="{{ policy.max_carry_forward|default:'0' }}" class="form-control form-control-sm"></div>
-    <div class="col-6 col-md-1"><label class="form-label small m-0">Probation (mo)</label><input type="number" min="0" name="probation_period_months" value="{{ policy.probation_period_months|default:'0' }}" class="form-control form-control-sm"></div>
-    <div class="col-6 col-md-1"><label class="form-label small m-0">Status</label>
-        <select name="is_active" class="form-select form-select-sm"><option value="1" {% if not policy or policy.is_active %}selected{% endif %}>Active</option><option value="0" {% if policy and not policy.is_active %}selected{% endif %}>Inactive</option></select>
-    </div>
-    <div class="col-auto ms-auto"><button class="btn btn-sm btn-outline-primary">Save policy</button></div>
+
+    <fieldset class="border-0 p-0 m-0">
+        <legend class="gw-fieldset-legend justify-content-between w-100">
+            <span>
+                <i class="bi bi-sliders2 me-1 text-primary" aria-hidden="true"></i>
+                {% if policy %}{{ policy.name }}{% else %}New Entitlement Policy{% endif %}
+            </span>
+            {% if policy %}
+            <span class="status-badge {% if policy.is_active %}badge-approved{% else %}badge-draft{% endif %}">
+                {% if policy.is_active %}Active{% else %}Inactive{% endif %}
+            </span>
+            {% endif %}
+        </legend>
+
+        <div class="row g-3 mb-3">
+            <div class="col-md-8">
+                <label class="form-label small fw-semibold mb-1" for="pol-name-{{ lt.id }}-{{ pid }}">Policy name</label>
+                <input
+                    id="pol-name-{{ lt.id }}-{{ pid }}"
+                    type="text"
+                    name="name"
+                    value="{{ policy.name|default:'' }}"
+                    class="form-control form-control-sm"
+                    placeholder="{{ lt.name }} Policy"
+                    maxlength="100"
+                >
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small fw-semibold mb-1" for="pol-status-{{ lt.id }}-{{ pid }}">Policy status</label>
+                <select id="pol-status-{{ lt.id }}-{{ pid }}" name="is_active" class="form-select form-select-sm">
+                    <option value="1" {% if not policy or policy.is_active %}selected{% endif %}>Active</option>
+                    <option value="0" {% if policy and not policy.is_active %}selected{% endif %}>Inactive</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="mb-3">
+            <div class="form-label small fw-semibold mb-2">How leave is credited</div>
+            <div class="gw-radio-grid">
+                <label class="gw-radio-card" for="freq-monthly-{{ lt.id }}-{{ pid }}">
+                    <input
+                        class="js-freq-radio"
+                        type="radio"
+                        name="accrual_frequency"
+                        id="freq-monthly-{{ lt.id }}-{{ pid }}"
+                        value="MONTHLY"
+                        {% if policy and policy.accrual_frequency == 'MONTHLY' %}checked{% elif not policy and lt.is_accrual_based %}checked{% endif %}
+                    >
+                    <span>
+                        <span class="gw-radio-title">Monthly accrual</span>
+                        <span class="gw-radio-desc">Credits days each month by service</span>
+                    </span>
+                </label>
+
+                <label class="gw-radio-card" for="freq-yearly-{{ lt.id }}-{{ pid }}">
+                    <input
+                        class="js-freq-radio"
+                        type="radio"
+                        name="accrual_frequency"
+                        id="freq-yearly-{{ lt.id }}-{{ pid }}"
+                        value="YEARLY"
+                        {% if policy and policy.accrual_frequency == 'YEARLY' %}checked{% endif %}
+                    >
+                    <span>
+                        <span class="gw-radio-title">Yearly (1 Jan)</span>
+                        <span class="gw-radio-desc">Full allowance granted on 1 January</span>
+                    </span>
+                </label>
+
+                <label class="gw-radio-card" for="freq-none-{{ lt.id }}-{{ pid }}">
+                    <input
+                        class="js-freq-radio"
+                        type="radio"
+                        name="accrual_frequency"
+                        id="freq-none-{{ lt.id }}-{{ pid }}"
+                        value="NONE"
+                        {% if policy and policy.accrual_frequency == 'NONE' %}checked{% elif not policy and not lt.is_accrual_based %}checked{% endif %}
+                    >
+                    <span>
+                        <span class="gw-radio-title">Fixed yearly grant</span>
+                        <span class="gw-radio-desc">Static annual grant at year start</span>
+                    </span>
+                </label>
+            </div>
+        </div>
+
+        <div class="row g-3">
+            <div class="col-sm-6">
+                <label class="form-label small fw-semibold mb-1" for="pol-yearly-{{ lt.id }}-{{ pid }}">
+                    Days per year <span class="text-danger" aria-hidden="true">*</span>
+                </label>
+                <input
+                    id="pol-yearly-{{ lt.id }}-{{ pid }}"
+                    type="number"
+                    step="0.5"
+                    min="0"
+                    name="yearly_entitlement"
+                    value="{{ policy.yearly_entitlement|default:'12' }}"
+                    class="form-control form-control-sm js-yearly-input"
+                    required
+                    aria-describedby="pol-yearly-help-{{ lt.id }}-{{ pid }}"
+                    aria-errormessage="pol-yearly-err-{{ lt.id }}-{{ pid }}"
+                >
+                <div id="pol-yearly-err-{{ lt.id }}-{{ pid }}" class="field-error-msg">
+                    <i class="bi bi-exclamation-circle-fill" aria-hidden="true"></i>
+                    <span>Enter 0 or a positive number of days.</span>
+                </div>
+                <div id="pol-yearly-help-{{ lt.id }}-{{ pid }}" class="form-text small">
+                    Annual entitlement benchmark for employees.
+                </div>
+            </div>
+
+            <div class="col-sm-6 js-monthly-rate-group">
+                <label class="form-label small fw-semibold mb-1" for="pol-monthly-{{ lt.id }}-{{ pid }}">
+                    Days credited per month
+                </label>
+                <input
+                    id="pol-monthly-{{ lt.id }}-{{ pid }}"
+                    type="number"
+                    step="0.25"
+                    min="0"
+                    name="monthly_accrual_rate"
+                    value="{{ policy.monthly_accrual_rate|default:'0' }}"
+                    class="form-control form-control-sm js-monthly-input"
+                    aria-describedby="pol-monthly-help-{{ lt.id }}-{{ pid }}"
+                    aria-errormessage="pol-monthly-err-{{ lt.id }}-{{ pid }}"
+                >
+                <div id="pol-monthly-err-{{ lt.id }}-{{ pid }}" class="field-error-msg">
+                    <i class="bi bi-exclamation-circle-fill" aria-hidden="true"></i>
+                    <span>Enter 0 or a positive accrual rate.</span>
+                </div>
+                <div id="pol-monthly-help-{{ lt.id }}-{{ pid }}" class="form-text small js-monthly-calc-hint">
+                    Used when "Monthly accrual" is selected.
+                </div>
+            </div>
+
+            <div class="col-sm-6">
+                <label class="form-label small fw-semibold mb-1" for="pol-cf-{{ lt.id }}-{{ pid }}">
+                    Max carry forward (days)
+                </label>
+                <input
+                    id="pol-cf-{{ lt.id }}-{{ pid }}"
+                    type="number"
+                    step="0.5"
+                    min="0"
+                    name="max_carry_forward"
+                    value="{{ policy.max_carry_forward|default:'0' }}"
+                    class="form-control form-control-sm"
+                    aria-describedby="pol-cf-help-{{ lt.id }}-{{ pid }}"
+                >
+                <div id="pol-cf-help-{{ lt.id }}-{{ pid }}" class="form-text small">
+                    0 means unused days expire on 31 December.
+                </div>
+            </div>
+
+            <div class="col-sm-6">
+                <label class="form-label small fw-semibold mb-1" for="pol-prob-{{ lt.id }}-{{ pid }}">
+                    Probation wait (months)
+                </label>
+                <input
+                    id="pol-prob-{{ lt.id }}-{{ pid }}"
+                    type="number"
+                    min="0"
+                    step="1"
+                    name="probation_period_months"
+                    value="{{ policy.probation_period_months|default:'0' }}"
+                    class="form-control form-control-sm"
+                    aria-describedby="pol-prob-help-{{ lt.id }}-{{ pid }}"
+                >
+                <div id="pol-prob-help-{{ lt.id }}-{{ pid }}" class="form-text small">
+                    0 means eligible immediately from joining date.
+                </div>
+            </div>
+        </div>
+
+        <div class="d-flex justify-content-end mt-3 pt-2 border-top">
+            <button type="submit" class="btn btn-sm btn-gw-primary">
+                <i class="bi bi-check2-circle me-1" aria-hidden="true"></i>
+                {% if policy %}Save Policy{% else %}Create Policy{% endif %}
+            </button>
+        </div>
+    </fieldset>
 </form>
+{% endwith %}

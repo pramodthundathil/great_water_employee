@@ -181,4 +181,68 @@ document.addEventListener('DOMContentLoaded', () => {
 
         desktopMq.addEventListener('change', () => setSidebarState(false));
     }
+
+    // 6. Native <input switch> fallback when unsupported
+    if (!('switch' in HTMLInputElement.prototype)) {
+        document.querySelectorAll('input[type="checkbox"][switch].gw-native-switch').forEach((el) => {
+            el.classList.add('is-switch-fallback');
+            el.setAttribute('role', 'switch');
+            el.setAttribute('aria-checked', String(el.checked));
+            el.addEventListener('change', () => el.setAttribute('aria-checked', String(el.checked)));
+        });
+    }
+
+    // 7. Declarative Invoker Commands fallback & <dialog> light dismiss
+    if (!('commandForElement' in HTMLButtonElement.prototype)) {
+        document.addEventListener('click', (e) => {
+            const btn = e.target.closest('button[commandfor]');
+            if (!btn) return;
+            const target = document.getElementById(btn.getAttribute('commandfor'));
+            const cmd = btn.getAttribute('command');
+            if (!target) return;
+            if (cmd === 'show-modal' && typeof target.showModal === 'function') target.showModal();
+            else if (cmd === 'close' && typeof target.close === 'function') target.close();
+        });
+    }
+
+    document.querySelectorAll('dialog.gw-dialog').forEach((dlg) => {
+        dlg.addEventListener('click', (e) => {
+            if (e.target === dlg) dlg.close();
+        });
+    });
+
+    // 8. Required field validation bridge (:user-invalid + aria-invalid)
+    const supportsUserInvalid = CSS.supports('selector(:user-invalid)');
+    const dirtyState = new WeakMap();
+    const syncAriaInvalid = (field) => {
+        if (!field || !field.matches('input, select, textarea')) return;
+        const isInvalid = !field.checkValidity();
+        if (!supportsUserInvalid) field.classList.toggle('user-invalid-fallback', isInvalid);
+        if (isInvalid) field.setAttribute('aria-invalid', 'true');
+        else field.removeAttribute('aria-invalid');
+    };
+    document.querySelectorAll('form.gw-settings-form').forEach((form) => {
+        form.addEventListener('blur', (e) => {
+            if (e.target.matches('input[required], select[required]')) {
+                dirtyState.set(e.target, true);
+                syncAriaInvalid(e.target);
+            }
+        }, true);
+        form.addEventListener('input', (e) => {
+            if (e.target.matches('input, select')) {
+                if (e.target.checkValidity()) {
+                    e.target.removeAttribute('aria-invalid');
+                    e.target.classList.remove('user-invalid-fallback');
+                } else if (!supportsUserInvalid && dirtyState.get(e.target)) {
+                    syncAriaInvalid(e.target);
+                }
+            }
+        });
+        form.addEventListener('submit', () => {
+            form.querySelectorAll('input[required], select[required]').forEach((field) => {
+                dirtyState.set(field, true);
+                syncAriaInvalid(field);
+            });
+        });
+    });
 });

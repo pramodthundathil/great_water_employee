@@ -2,21 +2,21 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth import login, logout, authenticate
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
-from django.db.models import Sum, Count, Q
+from django.db.models import Sum, Count, Q, ProtectedError
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 from datetime import datetime, date, timedelta
 from decimal import Decimal
 
-from accounts.models import User, RoleChoices, EmployeeProfile
-from organization.models import Branch, Department
+from accounts.models import User, RoleChoices, EmployeeProfile, UserBranchScope
+from organization.models import Organization, Branch, Department
 from expenses.models import (
     ExpenseClaim, ExpenseCategory, ExpenseAttachment,
     ExpenseClaimStatus, ReimbursementPayment
 )
 from leaves.models import (
     LeaveApplication, LeaveType, LeavePolicy, LeaveLedgerEntry,
-    LeaveApplicationStatus, HolidayCalendar
+    LeaveApplicationStatus, HolidayCalendar, Holiday
 )
 from leaves.services import (
     get_employee_leave_balances, record_manual_leave_adjustment,
@@ -803,15 +803,230 @@ def leave_ledger_view(request):
     return render(request, "portal/leave_ledger.html", context)
 
 
+def _can_manage_branches(user):
+    """Return True when the user is authorized to create, edit, or deactivate branches."""
+    return (
+        user.is_superuser
+        or user.role == RoleChoices.DIRECTOR
+        or (
+            user.is_global_scope
+            and user.role in [RoleChoices.ADMIN_MANAGER, RoleChoices.HR_COORDINATOR]
+        )
+    )
+
+
+def _branch_dependencies(branch):
+    """Return human-readable dependency labels preventing hard deletion of a branch."""
+    deps = []
+    emp_count = branch.primary_employees.count()
+    claim_count = branch.expense_claims.count()
+    leave_count = branch.leave_applications.count()
+    cal_count = branch.holiday_calendars.count()
+    if emp_count:
+        deps.append(f"{emp_count} assigned employee(s)")
+    if claim_count:
+        deps.append(f"{claim_count} expense claim(s)")
+    if leave_count:
+        deps.append(f"{leave_count} leave request(s)")
+    if cal_count:
+        deps.append(f"{cal_count} holiday calendar(s)")
+    return deps
+
+
+def _extract_branch_fields(post_data):
+    """Normalize branch form fields from a POST payload."""
+    return {
+        "code": post_data.get("code", "").strip().upper(),
+        "name": post_data.get("name", "").strip(),
+        "city": post_data.get("city", "").strip(),
+        "country": post_data.get("country", "").strip(),
+        "phone": post_data.get("phone", "").strip(),
+        "address": post_data.get("address", "").strip(),
+        "is_active": post_data.get("is_active") == "1",
+    }
+
+
+def _handle_branch_action(request, user, redirect_response, target_branch=None):
+    """Execute create, update, toggle_active, or delete actions for branches."""
+    if not _can_manage_branches(user):
+        messages.error(request, "You do not have permission to manage branches.")
+        return redirect("portal_branches")
+
+    action = request.POST.get("action")
+
+    if action == "create":
+        fields = _extract_branch_fields(request.POST)
+        if not fields["code"] or not fields["name"]:
+            messages.error(request, "Branch code and name are required.")
+            return redirect_response
+        if Branch.objects.filter(code=fields["code"]).exists():
+            messages.error(request, f"A branch with code '{fields['code']}' already exists.")
+            return redirect_response
+        org = Organization.objects.first()
+        if org is None:
+            org = Organization.objects.create(name="Great Waters", code="GW")
+        branch = Branch.objects.create(organization=org, **fields)
+        messages.success(request, f"Branch '{branch.name}' ({branch.code}) created.")
+        if request.POST.get("open_after_create") == "1":
+            return redirect("portal_branch_detail", pk=branch.id)
+        return redirect_response
+
+    branch = target_branch or get_object_or_404(Branch, pk=request.POST.get("branch_id"))
+
+    if action == "update":
+        fields = _extract_branch_fields(request.POST)
+        if not fields["code"] or not fields["name"]:
+            messages.error(request, "Branch code and name are required.")
+            return redirect_response
+        if Branch.objects.filter(code=fields["code"]).exclude(pk=branch.pk).exists():
+            messages.error(request, f"Another branch already uses code '{fields['code']}'.")
+            return redirect_response
+        for key, value in fields.items():
+            setattr(branch, key, value)
+        branch.save()
+        messages.success(request, f"Branch '{branch.name}' updated.")
+        return redirect_response
+
+    if action == "toggle_active":
+        branch.is_active = not branch.is_active
+        branch.save(update_fields=["is_active", "updated_at"])
+        state_label = "active" if branch.is_active else "inactive"
+        messages.success(request, f"Branch '{branch.name}' is now {state_label}.")
+        return redirect_response
+
+    if action == "delete":
+        deps = _branch_dependencies(branch)
+        if deps:
+            messages.error(
+                request,
+                f"Cannot delete '{branch.name}' because it has {', '.join(deps)}. "
+                "Deactivate it instead so historical records stay intact.",
+            )
+            return redirect_response
+        branch_label = f"{branch.name} ({branch.code})"
+        try:
+            branch.delete()
+            messages.info(request, f"Branch '{branch_label}' permanently deleted.")
+            return redirect("portal_branches")
+        except ProtectedError:
+            messages.error(
+                request,
+                f"Cannot delete '{branch.name}' because it is referenced by existing records. Deactivate it instead.",
+            )
+            return redirect_response
+
+    return redirect_response
+
+
 @login_required
 def branches_view(request):
     user = request.user
-    branches = user.get_accessible_branches().annotate(employee_count=Count("primary_employees"))
+    can_manage = _can_manage_branches(user)
+
+    if request.method == "POST":
+        return _handle_branch_action(request, user, redirect("portal_branches"))
+
+    base_qs = Branch.objects.all() if can_manage else user.get_accessible_branches()
+    branches = list(
+        base_qs.annotate(
+            employee_count=Count("primary_employees", filter=Q(primary_employees__is_active=True), distinct=True),
+            total_employee_count=Count("primary_employees", distinct=True),
+            claims_count=Count("expense_claims", distinct=True),
+            leaves_count=Count("leave_applications", distinct=True),
+            calendars_count=Count("holiday_calendars", distinct=True),
+        ).order_by("-is_active", "code")
+    )
+    for b in branches:
+        b.can_delete = (
+            b.total_employee_count == 0
+            and b.claims_count == 0
+            and b.leaves_count == 0
+            and b.calendars_count == 0
+        )
+
+    active_branches_count = sum(1 for b in branches if b.is_active)
+    inactive_branches_count = len(branches) - active_branches_count
+    total_staff_count = sum(b.employee_count for b in branches)
+
     context = {
         "active_nav": "branches",
         "branches": branches,
+        "can_manage_branches": can_manage,
+        "active_branches_count": active_branches_count,
+        "inactive_branches_count": inactive_branches_count,
+        "total_staff_count": total_staff_count,
     }
     return render(request, "portal/branches.html", context)
+
+
+@login_required
+def branch_detail_view(request, pk):
+    user = request.user
+    branch = get_object_or_404(Branch, pk=pk)
+    can_manage = _can_manage_branches(user)
+
+    if not can_manage and not user.can_access_branch(branch):
+        messages.error(request, "You do not have permission to view that branch.")
+        return redirect("portal_branches")
+
+    if request.method == "POST":
+        return _handle_branch_action(
+            request,
+            user,
+            redirect("portal_branch_detail", pk=branch.pk),
+            target_branch=branch,
+        )
+
+    employees = list(
+        User.objects.filter(primary_branch=branch)
+        .select_related("profile__department", "profile__reporting_lead")
+        .order_by("-is_active", "first_name", "employee_id")
+    )
+    active_employees_count = sum(1 for e in employees if e.is_active)
+    scoped_users = list(
+        UserBranchScope.objects.filter(branch=branch, is_active=True)
+        .select_related("user")
+        .order_by("user__first_name", "user__employee_id")
+    )
+
+    claims_qs = ExpenseClaim.objects.filter(branch=branch).select_related("employee", "category")
+    claims_count = claims_qs.count()
+    pending_claims_count = claims_qs.filter(status__in=PENDING_EXPENSE_STATUSES).count()
+    recent_claims = list(claims_qs.order_by("-created_at")[:8])
+
+    leaves_qs = LeaveApplication.objects.filter(branch=branch).select_related("employee", "leave_type")
+    leaves_count = leaves_qs.count()
+    pending_leaves_count = leaves_qs.filter(status__in=PENDING_LEAVE_STATUSES).count()
+    recent_leaves = list(leaves_qs.order_by("-submitted_at")[:8])
+
+    current_year = date.today().year
+    holidays = list(
+        Holiday.objects.filter(calendar__branch=branch, calendar__year=current_year)
+        .select_related("calendar")
+        .order_by("date")
+    )
+    deps = _branch_dependencies(branch)
+
+    context = {
+        "active_nav": "branches",
+        "branch": branch,
+        "can_manage_branches": can_manage,
+        "can_manage_employees": can_manage_users(user),
+        "employees": employees,
+        "active_employees_count": active_employees_count,
+        "scoped_users": scoped_users,
+        "claims_count": claims_count,
+        "pending_claims_count": pending_claims_count,
+        "recent_claims": recent_claims,
+        "leaves_count": leaves_count,
+        "pending_leaves_count": pending_leaves_count,
+        "recent_leaves": recent_leaves,
+        "holidays": holidays,
+        "current_year": current_year,
+        "can_delete": len(deps) == 0,
+        "delete_block_reasons": ", ".join(deps),
+    }
+    return render(request, "portal/branch_detail.html", context)
 
 
 @login_required

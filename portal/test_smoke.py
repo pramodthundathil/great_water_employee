@@ -11,6 +11,7 @@ from rest_framework.test import APIClient
 from accounts.models import User
 from expenses.models import ExpenseClaim
 from leaves.models import LeaveApplication
+from organization.models import Branch
 
 ROLES = ["GW-DIR-001", "GW-ADM-001", "GW-HRC-001", "GW-ENG-001", "GW-EMP-001"]
 PAGES = [
@@ -42,10 +43,11 @@ class PortalSmokeTests(TestCase):
     def test_every_page_renders_for_every_role(self):
         claim = ExpenseClaim.objects.first()
         leave = LeaveApplication.objects.first()
+        branch = Branch.objects.first()
         for emp_id in ROLES:
             user = User.objects.get(employee_id=emp_id)
             self.client.force_login(user)
-            pages = PAGES + [f"/expenses/{claim.id}/", f"/leaves/{leave.id}/"]
+            pages = PAGES + [f"/expenses/{claim.id}/", f"/leaves/{leave.id}/", f"/branches/{branch.id}/"]
             for url in pages:
                 resp = self.client.get(url)
                 self.assertIn(resp.status_code, (200, 302), f"{emp_id} {url} -> {resp.status_code}")

@@ -40,7 +40,7 @@ class UserDetailSerializer(serializers.ModelSerializer):
         model = User
         fields = [
             "id", "employee_id", "email", "username", "first_name", "last_name",
-            "role", "is_global_scope", "primary_branch", "phone", "avatar",
+            "role", "is_global_scope", "is_superuser", "primary_branch", "phone", "avatar",
             "profile", "accessible_branches"
         ]
 
