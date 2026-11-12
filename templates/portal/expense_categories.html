@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Expense Categories{% endblock %}
+{% block content %}
+<div class="page-title-box">
+    <div>
+        <h1 class="page-title">Expense Categories</h1>
+        <p class="page-subtitle">Categories employees choose from when submitting a claim. Disabled categories stay on existing claims.</p>
+    </div>
+</div>
+<div class="row g-4">
+    <div class="col-lg-8">
+        <div class="gw-card">
+            <div class="table-responsive">
+                <table class="table gw-table m-0">
+                    <thead><tr><th>Code</th><th>Name &amp; description</th><th>Status</th><th class="text-end">Actions</th></tr></thead>
+                    <tbody>
+                    {% for c in categories %}
+                    <tr>
+                        <td><code>{{ c.code }}</code></td>
+                        <td>
+                            <form method="post" class="d-flex flex-column gap-1" id="cat{{ c.id }}">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="update">
+                                <input type="hidden" name="category_id" value="{{ c.id }}">
+                                <input type="text" name="name" value="{{ c.name }}" class="form-control form-control-sm fw-semibold" aria-label="Name">
+                                <input type="text" name="description" value="{{ c.description }}" class="form-control form-control-sm" placeholder="Description" aria-label="Description">
+                            </form>
+                        </td>
+                        <td><span class="status-badge {% if c.is_active %}badge-approved{% else %}badge-draft{% endif %}">{% if c.is_active %}Active{% else %}Disabled{% endif %}</span></td>
+                        <td class="text-end text-nowrap">
+                            <button form="cat{{ c.id }}" class="btn btn-sm btn-outline-primary">Save</button>
+                            <form method="post" class="d-inline">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="toggle">
+                                <input type="hidden" name="category_id" value="{{ c.id }}">
+                                <button class="btn btn-sm btn-light">{% if c.is_active %}Disable{% else %}Enable{% endif %}</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-4">
+        <div class="gw-card">
+            <div class="gw-card-header"><h5 class="gw-card-title"><i class="bi bi-plus-circle me-2"></i>Add category</h5></div>
+            <div class="gw-card-body p-4">
+                <form method="post" class="d-flex flex-column gap-2">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="create">
+                    <label class="form-label small fw-bold m-0">Code</label>
+                    <input type="text" name="code" class="form-control text-uppercase" placeholder="e.g. PARKING" required maxlength="50">
+                    <label class="form-label small fw-bold m-0">Name</label>
+                    <input type="text" name="name" class="form-control" placeholder="e.g. Parking &amp; Tolls" required>
+                    <label class="form-label small fw-bold m-0">Description</label>
+                    <input type="text" name="description" class="form-control">
+                    <button class="btn btn-gw-primary mt-2">Add category</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

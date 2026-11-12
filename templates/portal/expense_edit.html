@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Edit {{ claim.claim_number }}{% endblock %}
+{% block content %}
+<div class="page-title-box">
+    <div>
+        <div class="d-flex align-items-center gap-2 mb-1">
+            <a href="{% url 'portal_expense_detail' claim.pk %}" class="btn btn-sm btn-light py-0 px-2" aria-label="Back"><i class="bi bi-arrow-left"></i></a>
+            <h1 class="page-title m-0">Edit claim {{ claim.claim_number }}</h1>
+            <span class="status-badge badge-draft">{{ claim.get_status_display }}</span>
+        </div>
+        <p class="page-subtitle">You can edit a claim until the Admin Manager reviews it.</p>
+    </div>
+</div>
+
+<div class="row g-4">
+    <div class="col-lg-8">
+        <div class="gw-card">
+            <div class="gw-card-body p-4">
+                <form method="post" enctype="multipart/form-data" class="row g-3">
+                    {% csrf_token %}
+                    <div class="col-md-6">
+                        <label class="form-label small fw-bold">Category</label>
+                        <select name="category" class="form-select" required>
+                            {% for c in categories %}<option value="{{ c.id }}" {% if c.id == claim.category_id %}selected{% endif %}>{{ c.name }}</option>{% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small fw-bold">Expense date</label>
+                        <input type="date" name="expense_date" class="form-control" value="{{ claim.expense_date|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small fw-bold">Amount (USD)</label>
+                        <div class="input-group"><span class="input-group-text">$</span>
+                        <input type="number" step="0.01" min="0.01" name="amount" class="form-control" value="{{ claim.amount }}" required></div>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small fw-bold">Project / department reference</label>
+                        <input type="text" name="project_reference" class="form-control" value="{{ claim.project_reference }}">
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label small fw-bold">Description</label>
+                        <textarea name="description" class="form-control" rows="3" required>{{ claim.description }}</textarea>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label small fw-bold">Add more proofs</label>
+                        <input type="file" name="receipts" class="form-control" multiple accept="image/*,application/pdf">
+                    </div>
+                    <div class="col-12 d-flex gap-2 justify-content-end">
+                        <button type="submit" name="action" value="save" class="btn btn-outline-primary">Save</button>
+                        {% if claim.status != 'UNDER_ADMIN_REVIEW' %}
+                        <button type="submit" name="action" value="save_submit" class="btn btn-gw-primary"><i class="bi bi-send me-1"></i>Save &amp; submit</button>
+                        {% endif %}
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-4">
+        <div class="gw-card">
+            <div class="gw-card-header"><h5 class="gw-card-title"><i class="bi bi-paperclip me-2"></i>Current proofs ({{ attachments|length }})</h5></div>
+            <div class="gw-card-body">
+                {% for a in attachments %}
+                <div class="d-flex align-items-center justify-content-between border-bottom py-2">
+                    <a href="{{ a.file.url }}" target="_blank" class="small text-truncate me-2">{{ a.original_filename }}</a>
+                    <form method="post" onsubmit="return confirm('Remove this file?');">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="delete_attachment">
+                        <input type="hidden" name="attachment_id" value="{{ a.id }}">
+                        <button class="btn btn-sm btn-link text-danger p-0" aria-label="Remove {{ a.original_filename }}"><i class="bi bi-trash"></i></button>
+                    </form>
+                </div>
+                {% empty %}
+                <p class="small text-danger mb-0">No proof uploaded yet. At least one is required to submit.</p>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Leave Ledger & Balances — Great Waters{% endblock %}
+
+{% block content %}
+<div class="page-title-box">
+    <div>
+        <h1 class="page-title">Leave Ledger Statement</h1>
+        <p class="page-subtitle">Auditable, immutable transaction history for leave accruals, manual adjustments, and approved deductions.</p>
+    </div>
+    <div class="d-flex gap-2">
+        {% if user.is_hr_coordinator or user.is_superuser %}
+        <button class="btn btn-gw-primary" data-bs-toggle="modal" data-bs-target="#manualAdjustmentModal">
+            <i class="bi bi-sliders me-1"></i> Manual Balance Adjustment
+        </button>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Employee Filter for HR and Managers -->
+{% if accessible_employees %}
+<div class="gw-card mb-4">
+    <div class="gw-card-body py-3">
+        <form method="get" class="row g-2 align-items-center">
+            <div class="col-md-5">
+                <div class="input-group input-group-sm">
+                    <span class="input-group-text bg-light text-muted"><i class="bi bi-person"></i> Employee Statement:</span>
+                    <select name="emp_id" class="form-select" onchange="this.form.submit()">
+                        {% for emp in accessible_employees %}
+                        <option value="{{ emp.id }}" {% if target_emp.id == emp.id %}selected{% endif %}>
+                            {{ emp.full_name }} ({{ emp.employee_id }}) &bull; {{ emp.primary_branch.code }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+            <div class="col-md-auto ms-auto">
+                <span class="badge bg-light text-secondary border">Viewing: <strong>{{ target_emp.full_name }}</strong></span>
+            </div>
+        </form>
+    </div>
+</div>
+{% endif %}
+
+<!-- Live Balance Breakdown -->
+<div class="row g-3 mb-4">
+    {% for b in balances %}
+    <div class="col-xl-3 col-md-6">
+        <div class="kpi-card">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+                <span class="badge bg-primary text-white">{{ b.leave_type.code }}</span>
+                <small class="text-muted">{{ b.leave_type.name }}</small>
+            </div>
+            <div class="kpi-value text-success">{{ b.available_balance|floatformat:1 }} <span class="fs-6 text-muted fw-normal">days</span></div>
+            <div class="kpi-label">Available Official Balance</div>
+            <div class="border-top pt-2 mt-2 small text-muted d-flex justify-content-between">
+                <span>Credited: <strong>{{ b.earned_days|floatformat:1 }}</strong></span>
+                <span>Taken: <strong class="text-danger">{{ b.taken_days|floatformat:1 }}</strong></span>
+                <span>Pending: <strong class="text-warning">{{ b.pending_days|floatformat:1 }}</strong></span>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- Ledger Transactions Table -->
+<div class="gw-card">
+    <div class="gw-card-header">
+        <h5 class="gw-card-title"><i class="bi bi-journal-text text-primary me-2"></i>Immutable Ledger Transactions ({{ entries.count }})</h5>
+    </div>
+    <div class="gw-card-body p-0">
+        <div class="table-responsive">
+            <table class="table gw-table m-0">
+                <thead>
+                    <tr>
+                        <th>Date & Time</th>
+                        <th>Leave Type</th>
+                        <th>Transaction Type</th>
+                        <th class="text-center">Days</th>
+                        <th class="text-center">Balance After</th>
+                        <th>Reference / Audit Note</th>
+                        <th>Actor</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for e in entries %}
+                    <tr>
+                        <td>
+                            <div class="fw-semibold">{{ e.created_at|date:"M d, Y" }}</div>
+                            <small class="text-muted">{{ e.created_at|date:"H:i:s" }}</small>
+                        </td>
+                        <td><span class="badge bg-light text-dark border">{{ e.leave_type.code }}</span></td>
+                        <td>
+                            <span class="fw-semibold {% if 'ACCRUAL' in e.entry_type %}text-primary{% elif 'DEDUCTION' in e.entry_type %}text-danger{% elif 'MANUAL' in e.entry_type %}text-warning{% else %}text-secondary{% endif %}">
+                                {{ e.get_entry_type_display }}
+                            </span>
+                        </td>
+                        <td class="text-center">
+                            {% if e.transaction_days > 0 %}
+                            <span class="badge bg-success-subtle text-success fs-6 fw-bold">+{{ e.transaction_days|floatformat:1 }}</span>
+                            {% else %}
+                            <span class="badge bg-danger-subtle text-danger fs-6 fw-bold">{{ e.transaction_days|floatformat:1 }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-center">
+                            <span class="fs-6 fw-bold text-dark">{{ e.balance_after|floatformat:1 }} days</span>
+                        </td>
+                        <td style="max-width: 320px;">
+                            <span class="small">{{ e.reference_note }}</span>
+                        </td>
+                        <td>
+                            <small class="text-muted">{{ e.created_by.full_name|default:"System Engine" }}</small>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="7" class="text-center text-muted py-4">No ledger transactions recorded for this employee.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: HR Manual Balance Adjustment -->
+{% if user.is_hr_coordinator or user.is_superuser %}
+<div class="modal fade" id="manualAdjustmentModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow">
+            <div class="modal-header bg-light">
+                <h5 class="modal-title fw-bold"><i class="bi bi-sliders text-warning me-2"></i>Authorize Leave Adjustment</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="post" action="{% url 'portal_leave_ledger' %}?emp_id={{ target_emp.id }}">
+                {% csrf_token %}
+                <div class="modal-body p-4">
+                    <div class="alert alert-warning py-2 small mb-3">
+                        <i class="bi bi-exclamation-triangle-fill me-1"></i> Manual adjustments directly modify official ledger balances and require mandatory justification remarks.
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Employee</label>
+                        <input type="text" class="form-control bg-light" value="{{ target_emp.full_name }} ({{ target_emp.employee_id }})" readonly>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Leave Type <span class="text-danger">*</span></label>
+                        <select name="leave_type_id" class="form-select" required>
+                            {% for lt in leave_types %}
+                            <option value="{{ lt.id }}">{{ lt.name }} ({{ lt.code }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Adjustment Days (+ to credit, - to debit) <span class="text-danger">*</span></label>
+                        <input type="number" step="0.5" name="days" class="form-control" placeholder="e.g. 2.0 or -1.5" required>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Mandatory Justification Remarks <span class="text-danger">*</span></label>
+                        <textarea name="remarks" class="form-control" rows="3" placeholder="Provide complete audit reason (e.g. Compensatory credit for client dock deployment or correction)..." required></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer bg-light">
+                    <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-warning px-4">Post Adjustment</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

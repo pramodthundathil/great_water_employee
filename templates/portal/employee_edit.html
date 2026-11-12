@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}Edit {{ emp.employee_id }}{% endblock %}
+{% block content %}
+<div class="page-title-box">
+    <div>
+        <div class="d-flex align-items-center gap-2 mb-1">
+            <a href="{% url 'portal_employees' %}" class="btn btn-sm btn-light py-0 px-2" aria-label="Back"><i class="bi bi-arrow-left"></i></a>
+            <h1 class="page-title m-0">{{ emp.full_name }}</h1>
+            <span class="status-badge {% if emp.is_active %}badge-approved{% else %}badge-rejected{% endif %}">{% if emp.is_active %}Active{% else %}Deactivated{% endif %}</span>
+        </div>
+        <p class="page-subtitle"><code>{{ emp.employee_id }}</code> · {{ emp.get_role_display }}</p>
+    </div>
+</div>
+
+<div class="row g-4">
+    <div class="col-lg-8">
+        <div class="gw-card">
+            <div class="gw-card-header"><h5 class="gw-card-title"><i class="bi bi-person-vcard me-2"></i>Employee Master</h5></div>
+            <div class="gw-card-body p-4">
+                <form method="post" class="row g-3">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="save">
+                    <div class="col-md-6">
+                        <label class="form-label small fw-bold">First name</label>
+                        <input type="text" name="first_name" class="form-control" value="{{ emp.first_name }}" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small fw-bold">Last name</label>
+                        <input type="text" name="last_name" class="form-control" value="{{ emp.last_name }}">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small fw-bold">E-mail</label>
+                        <input type="email" name="email" class="form-control" value="{{ emp.email }}" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small fw-bold">Phone</label>
+                        <input type="text" name="phone" class="form-control" value="{{ emp.phone }}">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small fw-bold">Role</label>
+                        <select name="role" class="form-select">
+                            {% for v, l in all_roles %}<option value="{{ v }}" {% if emp.role == v %}selected{% endif %}>{{ l }}</option>{% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small fw-bold">Branch</label>
+                        <select name="primary_branch" class="form-select">
+                            {% for b in all_branches %}<option value="{{ b.id }}" {% if emp.primary_branch_id == b.id %}selected{% endif %}>{{ b.name }} ({{ b.code }})</option>{% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small fw-bold">Department</label>
+                        <select name="department" class="form-select">
+                            <option value="">—</option>
+                            {% for d in all_departments %}<option value="{{ d.id }}" {% if profile.department_id == d.id %}selected{% endif %}>{{ d.name }}</option>{% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small fw-bold">Designation</label>
+                        <input type="text" name="designation" class="form-control" value="{{ profile.designation }}">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small fw-bold">Reporting Lead / Manager</label>
+                        <select name="reporting_lead" class="form-select">
+                            <option value="">— None (goes straight to HR) —</option>
+                            {% for l in all_leads %}<option value="{{ l.id }}" {% if profile.reporting_lead_id == l.id %}selected{% endif %}>{{ l.full_name }} ({{ l.employee_id }}) · {{ l.get_role_display }}</option>{% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small fw-bold">Date of joining</label>
+                        <input type="date" name="date_of_joining" class="form-control" value="{{ profile.date_of_joining|date:'Y-m-d' }}" required>
+                        <small class="text-muted">Used for earned-leave accrual and probation.</small>
+                    </div>
+                    {% if can_set_scope %}
+                    <div class="col-12">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" name="is_global_scope" value="1" id="globalScope" {% if emp.is_global_scope %}checked{% endif %}>
+                            <label class="form-check-label small" for="globalScope">Organisation-wide access (all branches) — for Director / Admin Manager / HR Coordinator roles</label>
+                        </div>
+                    </div>
+                    {% endif %}
+                    <div class="col-12 text-end">
+                        <button type="submit" class="btn btn-gw-primary px-4">Save changes</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-4">
+        <div class="gw-card mb-4">
+            <div class="gw-card-header"><h5 class="gw-card-title"><i class="bi bi-power me-2"></i>Account status</h5></div>
+            <div class="gw-card-body p-4">
+                <p class="small text-muted">Deactivated employees cannot sign in to the portal or mobile app. Their records and history are kept.</p>
+                <form method="post" onsubmit="return confirm('{% if emp.is_active %}Deactivate{% else %}Re-activate{% endif %} {{ emp.full_name|escapejs }}?');">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="toggle_active">
+                    <button type="submit" class="btn {% if emp.is_active %}btn-outline-danger{% else %}btn-outline-success{% endif %} w-100" {% if emp == user %}disabled{% endif %}>
+                        {% if emp.is_active %}Deactivate account{% else %}Re-activate account{% endif %}
+                    </button>
+                </form>
+            </div>
+        </div>
+        <div class="gw-card">
+            <div class="gw-card-header"><h5 class="gw-card-title"><i class="bi bi-key me-2"></i>Set temporary password</h5></div>
+            <div class="gw-card-body p-4">
+                <form method="post">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="reset_password">
+                    <input type="text" name="new_password" class="form-control mb-2" minlength="8" placeholder="At least 8 characters" required autocomplete="off">
+                    <button type="submit" class="btn btn-outline-primary w-100">Set password</button>
+                </form>
+                <p class="small text-muted mt-2 mb-0">Employees can also use “Forgot password” on the sign-in page.</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

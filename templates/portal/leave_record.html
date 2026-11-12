@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Record Leave{% endblock %}
+{% block content %}
+<div class="page-title-box">
+    <div>
+        <h1 class="page-title">Record Leave on Behalf of an Employee</h1>
+        <p class="page-subtitle">A single entry by HR. The leave is recorded as approved and the balance updates immediately.</p>
+    </div>
+</div>
+<div class="row"><div class="col-lg-8">
+<div class="gw-card">
+    <div class="gw-card-body p-4">
+        <form method="post" enctype="multipart/form-data" class="row g-3">
+            {% csrf_token %}
+            <div class="col-md-6">
+                <label class="form-label small fw-bold">Employee</label>
+                <select name="employee" class="form-select" required>
+                    <option value="">Select employee…</option>
+                    {% for e in employees %}<option value="{{ e.id }}">{{ e.full_name }} ({{ e.employee_id }})</option>{% endfor %}
+                </select>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label small fw-bold">Leave type</label>
+                <select name="leave_type" class="form-select" required>
+                    {% for lt in leave_types %}<option value="{{ lt.id }}">{{ lt.name }}</option>{% endfor %}
+                </select>
+            </div>
+            <div class="col-12">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" name="is_half_day" value="1" id="halfDay" onchange="document.getElementById('endWrap').classList.toggle('d-none', this.checked); document.getElementById('periodWrap').classList.toggle('d-none', !this.checked);">
+                    <label class="form-check-label small" for="halfDay">Half day</label>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label small fw-bold">Start date</label>
+                <input type="date" name="start_date" class="form-control" value="{{ today|date:'Y-m-d' }}" required>
+            </div>
+            <div class="col-md-6" id="endWrap">
+                <label class="form-label small fw-bold">End date</label>
+                <input type="date" name="end_date" class="form-control" value="{{ today|date:'Y-m-d' }}">
+            </div>
+            <div class="col-md-6 d-none" id="periodWrap">
+                <label class="form-label small fw-bold">Half</label>
+                <select name="half_day_period" class="form-select"><option value="FIRST_HALF">First half (morning)</option><option value="SECOND_HALF">Second half (afternoon)</option></select>
+            </div>
+            <div class="col-12">
+                <label class="form-label small fw-bold">Reason / remark</label>
+                <textarea name="reason" class="form-control" rows="2" required placeholder="e.g. Informed by phone — fever"></textarea>
+            </div>
+            <div class="col-12">
+                <label class="form-label small fw-bold">Attachment (optional)</label>
+                <input type="file" name="attachment" class="form-control" accept="image/*,application/pdf">
+            </div>
+            <div class="col-12 text-end"><button class="btn btn-gw-primary px-4">Record leave</button></div>
+        </form>
+    </div>
+</div>
+</div></div>
+{% endblock %}

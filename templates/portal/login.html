@@ -1,0 +1,92 @@
+{% extends "auth_base.html" %}
+{% load static %}
+
+{% block title %}Sign In — Great Waters{% endblock %}
+
+{% block content %}
+<!-- Left Hero Side -->
+<div class="auth-hero">
+    <div>
+        <div class="d-flex align-items-center gap-3 mb-4">
+            <img src="{% static 'img/logo.png' %}" alt="Great Waters Logo" style="height: 54px; background: white; border-radius: 8px; padding: 4px;">
+            <div class="fs-3 fw-bold tracking-tight">GREAT<span style="color: #00A3E0;">WATERS</span></div>
+        </div>
+        <span class="badge bg-primary bg-opacity-25 text-info px-3 py-2 rounded-pill mb-3">Enterprise Workforce Portal</span>
+        <h1 class="display-5 fw-extrabold text-white mb-3">Employee Expense & Leave Management</h1>
+        <p class="text-light opacity-75 fs-6" style="max-width: 500px;">
+            Streamlined multi-branch expense claims, automated earned-leave accrual, hierarchical approval workflows, and executive analytics.
+        </p>
+    </div>
+    <div class="border-top border-secondary pt-3 text-white-50 small">
+        &copy; 2026 Great Waters Maritime & Engineering. All rights reserved.
+    </div>
+</div>
+
+<!-- Right Form Side -->
+<div class="auth-form-side">
+    <div class="mb-4">
+        <h2 class="fw-bold text-dark mb-1">Welcome back</h2>
+        <p class="text-muted small">Sign in to your Great Waters employee account</p>
+    </div>
+
+    {% if messages %}
+        {% for message in messages %}
+        <div class="alert alert-{{ message.tags|default:'danger' }} alert-dismissible fade show small" role="alert">
+            <i class="bi bi-info-circle-fill me-2"></i>{{ message }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+        {% endfor %}
+    {% endif %}
+
+    <form method="post" action="{% url 'portal_login' %}" id="loginForm">
+        {% csrf_token %}
+        <div class="mb-3">
+            <label class="form-label small fw-semibold text-secondary">Employee ID or Corporate Email</label>
+            <div class="input-group">
+                <span class="input-group-text bg-light border-end-0 text-muted"><i class="bi bi-person"></i></span>
+                <input type="text" name="username" id="usernameInput" class="form-control bg-light border-start-0" placeholder="e.g. GW-001 or name@greatwaters.com" required autofocus>
+            </div>
+        </div>
+
+        <div class="mb-4">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+                <label class="form-label small fw-semibold text-secondary m-0">Password</label>
+                <a href="{% url 'password_reset' %}" class="small text-decoration-none">Forgot password?</a>
+            </div>
+            <div class="input-group">
+                <span class="input-group-text bg-light border-end-0 text-muted"><i class="bi bi-shield-lock"></i></span>
+                <input type="password" name="password" id="passwordInput" class="form-control bg-light border-start-0" placeholder="••••••••••••" required>
+            </div>
+        </div>
+
+        <button type="submit" class="btn btn-gw-primary w-100 py-2 mb-3">
+            Sign In to Portal <i class="bi bi-arrow-right ms-2"></i>
+        </button>
+    </form>
+
+    <!-- Quick Role Switcher for Testing/Review (shown only when DEBUG=True) -->
+    {% if show_demo_logins %}
+    <div class="border-top pt-3 mt-2">
+        <div class="small fw-bold text-muted mb-2 text-uppercase" style="font-size: 0.7rem; letter-spacing: 0.05em;">
+            ⚡ Quick-fill Demo Roles (Password: Password@123):
+        </div>
+        <div class="d-flex flex-wrap gap-2">
+            <button type="button" class="btn btn-sm btn-outline-primary" onclick="fillCreds('GW-DIR-001', 'Password@123')">Director (Global)</button>
+            <button type="button" class="btn btn-sm btn-outline-info" onclick="fillCreds('GW-ADM-001', 'Password@123')">Admin Manager</button>
+            <button type="button" class="btn btn-sm btn-outline-warning" onclick="fillCreds('GW-HRC-001', 'Password@123')">HR Coordinator</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="fillCreds('GW-ENG-001', 'Password@123')">Lead Manager</button>
+            <button type="button" class="btn btn-sm btn-outline-success" onclick="fillCreds('GW-EMP-001', 'Password@123')">Employee</button>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    function fillCreds(id, pwd) {
+        document.getElementById('usernameInput').value = id;
+        document.getElementById('passwordInput').value = pwd;
+    }
+</script>
+{% endblock %}

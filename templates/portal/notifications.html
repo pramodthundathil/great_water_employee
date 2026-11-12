@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Notifications — Great Waters{% endblock %}
+
+{% block content %}
+<div class="page-title-box">
+    <div>
+        <h1 class="page-title">Notification Center</h1>
+        <p class="page-subtitle">Real-time alerts for claim status transitions, leave recommendations, and reimbursements.</p>
+    </div>
+    {% if notifications %}
+    <div>
+        <form method="post" action="{% url 'portal_notifications' %}">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="mark_all_read">
+            <button type="submit" class="btn btn-sm btn-light border">
+                <i class="bi bi-check2-all me-1"></i> Mark All as Read
+            </button>
+        </form>
+    </div>
+    {% endif %}
+</div>
+
+<div class="gw-card">
+    <div class="gw-card-body p-0">
+        <div class="list-group list-group-flush">
+            {% for n in notifications %}
+            <div class="list-group-item p-3 d-flex align-items-start gap-3 {% if not n.is_read %}bg-light bg-opacity-75{% endif %}">
+                <div class="p-2 rounded-circle {% if not n.is_read %}bg-primary text-white{% else %}bg-secondary-subtle text-secondary{% endif %}" style="width: 38px; height: 38px; display: flex; align-items: center; justify-content: center;">
+                    <i class="bi {% if 'EXPENSE' in n.event_type %}bi-receipt{% elif 'LEAVE' in n.event_type %}bi-calendar-event{% else %}bi-bell{% endif %}"></i>
+                </div>
+                <div style="flex: 1;">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <h6 class="mb-0 fw-bold {% if not n.is_read %}text-dark{% else %}text-secondary{% endif %}">{{ n.title }}</h6>
+                        <small class="text-muted">{{ n.created_at|date:"M d, H:i" }}</small>
+                    </div>
+                    <p class="mb-2 text-secondary small">{{ n.message }}</p>
+                    <div class="d-flex gap-2">
+                        {% if n.link_url %}
+                        <a href="{{ n.link_url }}" class="btn btn-xs btn-outline-primary py-0 px-2" style="font-size: 0.75rem;">
+                            View Record <i class="bi bi-arrow-right"></i>
+                        </a>
+                        {% endif %}
+                        {% if not n.is_read %}
+                        <form method="post" action="{% url 'portal_notifications' %}" class="d-inline">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="mark_read">
+                            <input type="hidden" name="notification_id" value="{{ n.id }}">
+                            <button type="submit" class="btn btn-xs btn-link text-decoration-none text-muted py-0 px-1" style="font-size: 0.75rem;">
+                                Mark read
+                            </button>
+                        </form>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            {% empty %}
+            <div class="empty-state py-5">
+                <i class="bi bi-bell-slash empty-state-icon"></i>
+                <div class="empty-state-title">No Notifications</div>
+                <p class="empty-state-desc">You are all caught up! When expenses or leaves require your attention, alerts will appear here.</p>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endblock %}

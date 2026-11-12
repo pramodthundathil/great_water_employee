@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Offices & Branches — Great Waters{% endblock %}
+
+{% block content %}
+<div class="page-title-box">
+    <div>
+        <h1 class="page-title">Offices & Branches</h1>
+        <p class="page-subtitle">Multi-office organization master, geographic access scopes, and branch staff distribution.</p>
+    </div>
+</div>
+
+<div class="row g-4 mb-4">
+    {% for b in branches %}
+    <div class="col-md-4">
+        <div class="gw-card h-100">
+            <div class="gw-card-body">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <span class="badge bg-primary text-white fs-6 font-monospace">{{ b.code }}</span>
+                    {% if b.is_active %}
+                    <span class="badge bg-success-subtle text-success">Active Office</span>
+                    {% else %}
+                    <span class="badge bg-danger-subtle text-danger">Inactive</span>
+                    {% endif %}
+                </div>
+                <h4 class="fw-bold text-dark mb-1">{{ b.name }}</h4>
+                <div class="text-secondary small mb-3"><i class="bi bi-geo-alt me-1"></i>{{ b.city }}, {{ b.country }}</div>
+                
+                <div class="p-3 bg-light rounded-3 mb-3">
+                    <div class="d-flex justify-content-between mb-1 small">
+                        <span class="text-muted">Telephone:</span>
+                        <span class="fw-semibold">{{ b.phone|default:"N/A" }}</span>
+                    </div>
+                    <div class="d-flex justify-content-between mb-1 small">
+                        <span class="text-muted">Total Staff:</span>
+                        <span class="fw-bold text-primary">{{ b.employee_count }} employees</span>
+                    </div>
+                </div>
+
+                <div class="d-flex justify-content-between align-items-center small text-muted">
+                    <span>Created: {{ b.created_at|date:"M Y" }}</span>
+                    <a href="{% url 'portal_employees' %}?selected_branch={{ b.id }}" class="text-primary text-decoration-none fw-semibold">
+                        View Staff <i class="bi bi-arrow-right"></i>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endblock %}

@@ -1,0 +1,1069 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Dashboard — Great Waters{% endblock %}
+
+{% block content %}
+<!-- Page Title and Header -->
+<div class="page-title-box">
+    <div class="page-title-meta">
+        <h1 class="page-title">{% if is_director_dashboard %}Director Executive Dashboard{% else %}Executive Dashboard{% endif %}</h1>
+        <p class="page-subtitle">Welcome back, <strong>{{ user.full_name }}</strong> ({{ user.employee_id }}) — {{ user.get_role_display }}</p>
+    </div>
+    <div class="d-flex flex-wrap gap-2 dashboard-quick-actions">
+        {% if is_director_dashboard %}
+        <a href="{% url 'portal_expense_approvals' %}" class="btn btn-gw-primary">
+            <i class="bi bi-check2-circle me-1"></i> Expense Approvals
+            {% if pipeline_summary.director_expense_pending > 0 %}
+            <span class="badge bg-white text-primary rounded-pill ms-1">{{ pipeline_summary.director_expense_pending }}</span>
+            {% endif %}
+        </a>
+        <a href="{% url 'portal_leave_approvals' %}" class="btn btn-gw-secondary">
+            <i class="bi bi-person-check me-1"></i> Leave Approvals
+            {% if pipeline_summary.director_leave_pending > 0 %}
+            <span class="badge bg-primary text-white rounded-pill ms-1">{{ pipeline_summary.director_leave_pending }}</span>
+            {% endif %}
+        </a>
+        <a href="{% url 'portal_reports' %}" class="btn btn-gw-secondary">
+            <i class="bi bi-bar-chart-line me-1"></i> Reports
+        </a>
+        {% else %}
+        <a href="{% url 'portal_expenses' %}" class="btn btn-gw-primary">
+            <i class="bi bi-plus-circle me-1"></i> New Expense Claim
+        </a>
+        <a href="{% url 'portal_leaves' %}" class="btn btn-gw-secondary">
+            <i class="bi bi-calendar-plus me-1"></i> Apply for Leave
+        </a>
+        {% endif %}
+    </div>
+</div>
+
+{% if is_director_dashboard %}
+<!-- Director Executive KPI Cards -->
+<div class="row g-3 mb-4">
+    <div class="col-12 col-sm-6 col-xl-3">
+        <div class="kpi-card">
+            <div class="kpi-icon-wrapper" style="background: rgba(91, 69, 224, 0.1); color: var(--gw-primary);">
+                <i class="bi bi-people-fill"></i>
+            </div>
+            <div class="kpi-value">{{ total_active_employees }}</div>
+            <div class="kpi-label">Active Staff in Scope</div>
+            <div class="kpi-meta">Workforce across active branch scope</div>
+        </div>
+    </div>
+
+    <div class="col-12 col-sm-6 col-xl-3">
+        <a href="#directorWorkspaceCard" class="text-decoration-none d-block h-100">
+            <div class="kpi-card {% if pipeline_summary.director_action_total > 0 %}kpi-card-attention{% endif %}">
+                <div class="kpi-icon-wrapper" style="background: rgba(217, 119, 6, 0.12); color: #D97706;">
+                    <i class="bi bi-clipboard2-check-fill"></i>
+                </div>
+                <div class="kpi-value">{{ pipeline_summary.director_action_total }}</div>
+                <div class="kpi-label">Awaiting Your Approval</div>
+                <div class="kpi-meta">{{ pipeline_summary.director_expense_pending }} expense &bull; {{ pipeline_summary.director_leave_pending }} leave</div>
+            </div>
+        </a>
+    </div>
+
+    <div class="col-12 col-sm-6 col-xl-3">
+        <div class="kpi-card">
+            <div class="kpi-icon-wrapper" style="background: rgba(239, 68, 68, 0.1); color: #DC2626;">
+                <i class="bi bi-bell-fill"></i>
+            </div>
+            <div class="kpi-value">{{ pipeline_summary.upstream_pending_total }}</div>
+            <div class="kpi-label">Upstream Approver Queue</div>
+            <div class="kpi-meta">
+                {% if approver_reminders.overdue_count > 0 %}
+                <span class="text-danger fw-semibold">{{ approver_reminders.overdue_count }} overdue (&gt;48h)</span>
+                {% else %}
+                All upstream queues within SLA
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12 col-sm-6 col-xl-3">
+        <div class="kpi-card">
+            <div class="kpi-icon-wrapper" style="background: rgba(0, 210, 132, 0.12); color: #059669;">
+                <i class="bi bi-cash-stack"></i>
+            </div>
+            <div class="kpi-value">${{ total_paid_expenses|floatformat:2 }}</div>
+            <div class="kpi-label">Total Reimbursed YTD</div>
+            <div class="kpi-meta">${{ pipeline_summary.approved_awaiting_payment_amount|floatformat:2 }} awaiting payout</div>
+        </div>
+    </div>
+</div>
+
+<!-- Approver Process Needed Pipeline -->
+<div class="row g-4 mb-4">
+    <div class="col-xl-6">
+        <div class="gw-card h-100 mb-0">
+            <div class="gw-card-header">
+                <h5 class="gw-card-title"><i class="bi bi-diagram-3 text-primary me-2"></i>Expense Approval Process Needed</h5>
+                <a href="{% url 'portal_expense_approvals' %}" class="small text-decoration-none gw-header-link">Open Queue <i class="bi bi-arrow-right"></i></a>
+            </div>
+            <div class="gw-card-body">
+                <div class="d-flex flex-column gap-2">
+                    {% for st in pipeline_summary.expense_stages %}
+                    <div class="pipeline-stage-item {% if st.is_director and st.count > 0 %}pipeline-stage-highlight{% endif %}">
+                        <div class="d-flex align-items-center gap-3 min-w-0">
+                            <span class="pipeline-step-num">{{ forloop.counter }}</span>
+                            <div class="min-w-0">
+                                <div class="fw-bold text-dark small">{{ st.stage }}</div>
+                                <div class="text-muted" style="font-size: 0.78rem;">Owner: {{ st.owner }} &bull; <strong class="text-dark">${{ st.metric|floatformat:2 }}</strong></div>
+                            </div>
+                        </div>
+                        <div class="d-flex align-items-center gap-2 flex-shrink-0">
+                            <span class="badge rounded-pill {% if st.count > 0 %}{% if st.is_director %}bg-primary{% else %}bg-warning text-dark{% endif %}{% else %}bg-light text-secondary border{% endif %}">
+                                {{ st.count }} pending
+                            </span>
+                            <a href="{% url st.url_name %}" class="btn btn-sm btn-light border rounded-circle d-inline-flex align-items-center justify-content-center" style="width: 30px; height: 30px;" title="Open {{ st.stage }}">
+                                <i class="bi bi-chevron-right"></i>
+                            </a>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-6">
+        <div class="gw-card h-100 mb-0">
+            <div class="gw-card-header">
+                <h5 class="gw-card-title"><i class="bi bi-diagram-3-fill text-primary me-2"></i>Leave Approval Process Needed</h5>
+                <a href="{% url 'portal_leave_approvals' %}" class="small text-decoration-none gw-header-link">Open Queue <i class="bi bi-arrow-right"></i></a>
+            </div>
+            <div class="gw-card-body">
+                <div class="d-flex flex-column gap-2">
+                    {% for st in pipeline_summary.leave_stages %}
+                    <div class="pipeline-stage-item {% if st.is_director and st.count > 0 %}pipeline-stage-highlight{% endif %}">
+                        <div class="d-flex align-items-center gap-3 min-w-0">
+                            <span class="pipeline-step-num">{{ forloop.counter }}</span>
+                            <div class="min-w-0">
+                                <div class="fw-bold text-dark small">{{ st.stage }}</div>
+                                <div class="text-muted" style="font-size: 0.78rem;">Owner: {{ st.owner }} &bull; <strong class="text-dark">{{ st.metric|floatformat:1 }} days</strong></div>
+                            </div>
+                        </div>
+                        <div class="d-flex align-items-center gap-2 flex-shrink-0">
+                            <span class="badge rounded-pill {% if st.count > 0 %}{% if st.is_director %}bg-primary{% else %}bg-warning text-dark{% endif %}{% else %}bg-light text-secondary border{% endif %}">
+                                {{ st.count }} pending
+                            </span>
+                            <a href="{% url st.url_name %}" class="btn btn-sm btn-light border rounded-circle d-inline-flex align-items-center justify-content-center" style="width: 30px; height: 30px;" title="Open {{ st.stage }}">
+                                <i class="bi bi-chevron-right"></i>
+                            </a>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Unified Executive Action & Approver Reminders Workspace -->
+<div class="gw-card mb-4" id="directorWorkspaceCard">
+    <div class="gw-card-header">
+        <div>
+            <h5 class="gw-card-title"><i class="bi bi-lightning-charge-fill text-primary me-2"></i>Executive Action &amp; Reminders Center</h5>
+            <small class="text-muted">Approve final-stage requests or monitor and nudge pending upstream approvers.</small>
+        </div>
+        <div class="gw-segmented-tabs" role="tablist" aria-label="Director action views">
+            <button type="button" class="gw-segmented-tab active" id="tab-director-approvals-btn" data-bs-toggle="pill" data-bs-target="#tab-director-approvals" role="tab" aria-controls="tab-director-approvals" aria-selected="true" data-tab-key="approvals">
+                <i class="bi bi-check2-square"></i>
+                <span>Final Approvals</span>
+                <span class="gw-tab-count">{{ pipeline_summary.director_action_total }}</span>
+            </button>
+            <button type="button" class="gw-segmented-tab" id="tab-approver-reminders-btn" data-bs-toggle="pill" data-bs-target="#tab-approver-reminders" role="tab" aria-controls="tab-approver-reminders" aria-selected="false" data-tab-key="reminders">
+                <i class="bi bi-bell"></i>
+                <span>Approver Reminders</span>
+                <span class="gw-tab-count">{{ approver_reminders.items|length }}</span>
+            </button>
+        </div>
+    </div>
+
+    <div class="tab-content">
+        <!-- Tab 1: Final Approvals Awaiting Director -->
+        <div class="tab-pane fade show active" id="tab-director-approvals" role="tabpanel" aria-labelledby="tab-director-approvals-btn">
+            <div class="row g-0">
+                <!-- Expenses Sub-Queue -->
+                <div class="col-xl-6 director-subqueue-divider">
+                    <div class="px-3 py-2 bg-light border-bottom d-flex justify-content-between align-items-center">
+                        <span class="small fw-bold text-dark"><i class="bi bi-receipt-cutoff text-primary me-1"></i> Expenses Awaiting Final Approval ({{ director_expense_queue.count }})</span>
+                        <a href="{% url 'portal_expense_approvals' %}" class="small text-decoration-none">View Full Queue</a>
+                    </div>
+                    <div class="table-responsive gw-table-scroll-lg">
+                        <table class="table gw-table m-0">
+                            <thead>
+                                <tr>
+                                    <th>Claim &amp; Staff</th>
+                                    <th>Amount</th>
+                                    <th class="text-end">Decision</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for c in director_expense_queue %}
+                                <tr>
+                                    <td>
+                                        <div class="d-flex align-items-center gap-2">
+                                            <div class="avatar-circle avatar-gradient-2" style="width: 32px; height: 32px; font-size: 0.72rem;">
+                                                {{ c.employee.first_name|default:c.employee.employee_id|slice:":1"|upper }}
+                                            </div>
+                                            <div>
+                                                <a href="{% url 'portal_expense_detail' c.pk %}" class="fw-bold text-decoration-none text-primary">{{ c.claim_number }}</a>
+                                                <div class="small text-dark fw-semibold">{{ c.employee.full_name }} <span class="text-muted fw-normal">&bull; {{ c.branch.code }}</span></div>
+                                                <div class="small text-muted">{{ c.category.name }}</div>
+                                            </div>
+                                        </div>
+                                    </td>
+                                    <td class="fw-bold text-dark text-nowrap">${{ c.amount|floatformat:2 }}</td>
+                                    <td class="text-end text-nowrap">
+                                        <button type="button" class="btn-gw-approve me-1" onclick="openDirectorModal('expense', '{{ c.id }}', '{{ c.claim_number|escapejs }}', 'APPROVED')">
+                                            <i class="bi bi-check-lg"></i> Approve
+                                        </button>
+                                        <button type="button" class="btn-gw-reject" onclick="openDirectorModal('expense', '{{ c.id }}', '{{ c.claim_number|escapejs }}', 'REJECTED')" title="Reject Claim">
+                                            <i class="bi bi-x-lg"></i>
+                                        </button>
+                                    </td>
+                                </tr>
+                                {% empty %}
+                                <tr>
+                                    <td colspan="3" class="p-0">
+                                        <div class="empty-state">
+                                            <div class="empty-state-icon"><i class="bi bi-check2-all text-success"></i></div>
+                                            <div class="empty-state-title">All Caught Up</div>
+                                            <p class="empty-state-desc mb-0">No expense claims awaiting your final approval.</p>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Leaves Sub-Queue -->
+                <div class="col-xl-6">
+                    <div class="px-3 py-2 bg-light border-bottom d-flex justify-content-between align-items-center">
+                        <span class="small fw-bold text-dark"><i class="bi bi-calendar2-check text-primary me-1"></i> Leaves Awaiting Final Approval ({{ director_leave_queue.count }})</span>
+                        <a href="{% url 'portal_leave_approvals' %}" class="small text-decoration-none">View Full Queue</a>
+                    </div>
+                    <div class="table-responsive gw-table-scroll-lg">
+                        <table class="table gw-table m-0">
+                            <thead>
+                                <tr>
+                                    <th>Application &amp; Staff</th>
+                                    <th>Duration</th>
+                                    <th class="text-end">Decision</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for a in director_leave_queue %}
+                                <tr>
+                                    <td>
+                                        <div class="d-flex align-items-center gap-2">
+                                            <div class="avatar-circle avatar-gradient-3" style="width: 32px; height: 32px; font-size: 0.72rem;">
+                                                {{ a.employee.first_name|default:a.employee.employee_id|slice:":1"|upper }}
+                                            </div>
+                                            <div>
+                                                <a href="{% url 'portal_leave_detail' a.pk %}" class="fw-bold text-decoration-none text-primary">{{ a.application_number }}</a>
+                                                <div class="small text-dark fw-semibold">{{ a.employee.full_name }} <span class="text-muted fw-normal">&bull; {{ a.branch.code }}</span></div>
+                                                <div class="small text-muted">{{ a.leave_type.name }}</div>
+                                            </div>
+                                        </div>
+                                    </td>
+                                    <td class="text-nowrap">
+                                        <span class="fw-bold text-dark">{{ a.number_of_days|floatformat:1 }} days</span>
+                                        <div class="small text-muted">{{ a.start_date|date:"M d" }} - {{ a.end_date|date:"M d" }}</div>
+                                    </td>
+                                    <td class="text-end text-nowrap">
+                                        <button type="button" class="btn-gw-approve me-1" onclick="openDirectorModal('leave', '{{ a.id }}', '{{ a.application_number|escapejs }}', 'APPROVED')">
+                                            <i class="bi bi-check-lg"></i> Approve
+                                        </button>
+                                        <button type="button" class="btn-gw-reject" onclick="openDirectorModal('leave', '{{ a.id }}', '{{ a.application_number|escapejs }}', 'REJECTED')" title="Reject Leave">
+                                            <i class="bi bi-x-lg"></i>
+                                        </button>
+                                    </td>
+                                </tr>
+                                {% empty %}
+                                <tr>
+                                    <td colspan="3" class="p-0">
+                                        <div class="empty-state">
+                                            <div class="empty-state-icon"><i class="bi bi-calendar-check text-success"></i></div>
+                                            <div class="empty-state-title">All Caught Up</div>
+                                            <p class="empty-state-desc mb-0">No leave applications awaiting your final approval.</p>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab 2: Approver Reminders & SLA Status -->
+        <div class="tab-pane fade" id="tab-approver-reminders" role="tabpanel" aria-labelledby="tab-approver-reminders-btn">
+            <div class="px-3 py-2 bg-light border-bottom d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <div class="gw-pill-filter-group" role="group" aria-label="Filter reminders">
+                    <button type="button" class="gw-pill-filter active" data-reminder-filter="all">All ({{ approver_reminders.items|length }})</button>
+                    <button type="button" class="gw-pill-filter" data-reminder-filter="overdue">Overdue &gt;48h ({{ approver_reminders.overdue_count }})</button>
+                    <button type="button" class="gw-pill-filter" data-reminder-filter="unread">Unread Alerts ({{ approver_reminders.unread_alert_count }})</button>
+                </div>
+                {% if approver_reminders.upstream_reminded_eligible_count > 0 %}
+                <form method="post" action="{% url 'portal_dashboard' %}" class="m-0">
+                    {% csrf_token %}
+                    <input type="hidden" name="action_scope" value="remind_all_pending">
+                    <button type="submit" class="btn btn-sm btn-gw-primary py-1 px-3">
+                        <i class="bi bi-send me-1"></i> Remind All Pending Approvers
+                    </button>
+                </form>
+                {% endif %}
+            </div>
+            <div class="table-responsive gw-table-scroll-lg">
+                <table class="table gw-table m-0" id="approverRemindersTable">
+                    <thead>
+                        <tr>
+                            <th>Request</th>
+                            <th>Staff &amp; Branch</th>
+                            <th>Process Needed</th>
+                            <th>Assigned Approver</th>
+                            <th>Wait / SLA</th>
+                            <th>Reminder &amp; Read Status</th>
+                            <th class="text-end">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for r in approver_reminders.items %}
+                        <tr class="reminder-row" data-sla="{{ r.sla_status }}" data-read="{{ r.read_state }}">
+                            <td>
+                                <a href="{{ r.portal_url }}" class="fw-bold text-decoration-none text-primary">{{ r.ref_number }}</a>
+                                <div class="small text-muted">{{ r.summary_text }}</div>
+                            </td>
+                            <td>
+                                <div class="fw-semibold">{{ r.employee.full_name }}</div>
+                                <small class="text-muted">{{ r.employee.employee_id }} &bull; {{ r.branch.code }}</small>
+                            </td>
+                            <td>
+                                <span class="status-badge {% if r.is_director_stage %}badge-approved{% else %}badge-pending{% endif %}">
+                                    {{ r.stage_label }}
+                                </span>
+                            </td>
+                            <td>
+                                <div class="fw-semibold text-dark">{{ r.approvers_label }}</div>
+                            </td>
+                            <td>
+                                <span class="status-badge {% if r.sla_status == 'overdue' %}badge-rejected{% elif r.sla_status == 'due' %}badge-pending{% else %}badge-paid{% endif %}">
+                                    {{ r.sla_label }}
+                                </span>
+                            </td>
+                            <td>
+                                <div>
+                                    {% if r.read_state == 'read' %}
+                                    <span class="badge bg-success-subtle text-success"><i class="bi bi-check2-all me-1"></i>{{ r.read_label }}</span>
+                                    {% elif r.read_state == 'unread' %}
+                                    <span class="badge bg-warning-subtle text-warning-emphasis"><i class="bi bi-envelope-exclamation me-1"></i>{{ r.read_label }}</span>
+                                    {% else %}
+                                    <span class="badge bg-light text-secondary border">{{ r.read_label }}</span>
+                                    {% endif %}
+                                </div>
+                                <small class="text-muted d-block mt-1">
+                                    {% if r.reminder_count > 0 %}
+                                    {{ r.reminder_count }} reminder{{ r.reminder_count|pluralize }} &bull; {{ r.last_reminded_at|timesince }} ago
+                                    {% elif r.last_notified_at %}
+                                    Alerted {{ r.last_notified_at|timesince }} ago
+                                    {% else %}
+                                    Waiting for alert
+                                    {% endif %}
+                                </small>
+                            </td>
+                            <td class="text-end text-nowrap">
+                                {% if r.is_director_stage %}
+                                <a href="{{ r.approval_url }}" class="btn btn-sm btn-gw-primary py-1 px-3">
+                                    <i class="bi bi-check2-square me-1"></i> Review
+                                </a>
+                                {% else %}
+                                <form method="post" action="{% url 'portal_dashboard' %}" class="d-inline">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="action_scope" value="send_reminder">
+                                    <input type="hidden" name="item_type" value="{{ r.item_type }}">
+                                    <input type="hidden" name="item_id" value="{{ r.item_id }}">
+                                    <button type="submit" class="btn-gw-remind" {% if not r.has_approver %}disabled title="No active approver assigned"{% endif %}>
+                                        <i class="bi bi-bell"></i> Send Reminder
+                                    </button>
+                                </form>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="7" class="p-0">
+                                <div class="empty-state">
+                                    <div class="empty-state-icon"><i class="bi bi-check-circle text-success"></i></div>
+                                    <div class="empty-state-title">Zero Pending Bottlenecks</div>
+                                    <p class="empty-state-desc mb-0">All expense and leave workflows are completely up to date.</p>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Analytics Charts of All Staff -->
+<div class="row g-4 mb-4">
+    <div class="col-xl-8 col-lg-7">
+        <div class="gw-card h-100 mb-0">
+            <div class="gw-card-header">
+                <h5 class="gw-card-title"><i class="bi bi-graph-up text-primary me-2"></i>All-Staff Monthly Expense Submissions &amp; Reimbursements</h5>
+                <span class="badge bg-light text-secondary border">Last 6 Months</span>
+            </div>
+            <div class="gw-card-body">
+                <div class="chart-canvas-wrap chart-canvas-wrap--line">
+                    <canvas id="expenseChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-4 col-lg-5">
+        <div class="gw-card h-100 mb-0">
+            <div class="gw-card-header">
+                <h5 class="gw-card-title"><i class="bi bi-pie-chart text-primary me-2"></i>All-Staff Leave Utilization</h5>
+            </div>
+            <div class="gw-card-body d-flex flex-column justify-content-center">
+                {% if leave_chart_data.has_data %}
+                <div class="chart-canvas-wrap chart-canvas-wrap--doughnut">
+                    <canvas id="leavePieChart"></canvas>
+                </div>
+                {% else %}
+                <div class="empty-state py-4">
+                    <div class="empty-state-icon"><i class="bi bi-pie-chart"></i></div>
+                    <div class="empty-state-title">No Approved Leaves Yet</div>
+                    <p class="empty-state-desc mb-0">Leave utilization across staff will appear here once applications are approved.</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Unified All-Staff & Branch Analytics Card -->
+<div class="gw-card">
+    <div class="gw-card-header">
+        <div class="d-flex align-items-center gap-3 flex-wrap">
+            <h5 class="gw-card-title"><i class="bi bi-bar-chart-fill text-primary me-2"></i>All-Staff Expense &amp; Leave Analytics</h5>
+            {% if staff_analytics.branch_rows|length > 1 %}
+            <div class="gw-segmented-tabs" role="tablist" aria-label="Staff analytics breakdown">
+                <button type="button" class="gw-segmented-tab active" id="tab-all-staff-btn" data-bs-toggle="pill" data-bs-target="#tab-all-staff" role="tab" aria-controls="tab-all-staff" aria-selected="true">
+                    <span>All Staff</span>
+                    <span class="gw-tab-count">{{ staff_analytics.staff_rows|length }}</span>
+                </button>
+                <button type="button" class="gw-segmented-tab" id="tab-by-branch-btn" data-bs-toggle="pill" data-bs-target="#tab-by-branch" role="tab" aria-controls="tab-by-branch" aria-selected="false">
+                    <span>By Branch</span>
+                    <span class="gw-tab-count">{{ staff_analytics.branch_rows|length }}</span>
+                </button>
+            </div>
+            {% else %}
+            <span class="panel-count-badge">{{ staff_analytics.staff_rows|length }}</span>
+            {% endif %}
+        </div>
+        <div class="panel-search-box staff-analytics-search">
+            <i class="bi bi-search panel-search-icon"></i>
+            <input type="text" id="staffAnalyticsSearch" class="panel-search-input" placeholder="Search staff, ID, dept, branch..." autocomplete="off">
+        </div>
+    </div>
+
+    <div class="tab-content">
+        <div class="tab-pane fade show active" id="tab-all-staff" role="tabpanel" aria-labelledby="tab-all-staff-btn">
+            <div class="table-responsive gw-table-scroll-lg">
+                <table class="table gw-table m-0" id="staffAnalyticsTable">
+                    <thead>
+                        <tr>
+                            <th>Staff Member</th>
+                            <th>Branch &amp; Dept</th>
+                            <th class="text-end">Claims / Amount</th>
+                            <th class="text-end">Reimbursed</th>
+                            <th class="text-center">Leave Taken</th>
+                            <th class="text-center">Pending</th>
+                            <th class="text-end">Available Leave Balance</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for s in staff_analytics.staff_rows %}
+                        <tr class="staff-analytics-row">
+                            <td>
+                                <div class="employee-cell">
+                                    <div class="avatar-circle {% cycle 'avatar-gradient-1' 'avatar-gradient-2' 'avatar-gradient-3' 'avatar-gradient-4' 'avatar-gradient-5' 'avatar-gradient-6' %}" style="width: 34px; height: 34px; font-size: 0.76rem;">
+                                        {{ s.user.first_name|default:s.user.employee_id|slice:":1"|upper }}{{ s.user.last_name|slice:":1"|upper }}
+                                    </div>
+                                    <div>
+                                        <div class="fw-bold text-dark">{{ s.user.full_name }}</div>
+                                        <small class="text-muted">{{ s.user.employee_id }} &bull; {{ s.designation }}</small>
+                                    </div>
+                                </div>
+                            </td>
+                            <td>
+                                <span class="badge bg-light text-dark border">{{ s.user.primary_branch.code|default:"—" }}</span>
+                                <div class="small text-muted mt-1">{{ s.department }}</div>
+                            </td>
+                            <td class="text-end text-nowrap">
+                                <div class="fw-semibold">${{ s.expense_claimed|floatformat:2 }}</div>
+                                <small class="text-muted">{{ s.expense_count }} claim{{ s.expense_count|pluralize }}</small>
+                            </td>
+                            <td class="text-end fw-bold text-success text-nowrap">${{ s.expense_paid|floatformat:2 }}</td>
+                            <td class="text-center text-nowrap">
+                                <span class="fw-semibold">{{ s.leave_approved_days|floatformat:1 }} days</span>
+                                <div class="small text-muted">{{ s.leave_approved_count }} req</div>
+                            </td>
+                            <td class="text-center text-nowrap">
+                                {% if s.pending_total > 0 %}
+                                <span class="badge bg-warning text-dark">{{ s.pending_total }} open</span>
+                                <div class="small text-muted">{{ s.expense_pending }} exp &bull; {{ s.leave_pending_count }} lv</div>
+                                {% else %}
+                                <span class="text-muted">0</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-end">
+                                <span class="fw-bold text-primary text-nowrap">{{ s.available_leave_total|floatformat:1 }} days</span>
+                                <div class="small text-muted">{{ s.balances_summary }}</div>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="7" class="p-0">
+                                <div class="empty-state">
+                                    <div class="empty-state-icon"><i class="bi bi-people"></i></div>
+                                    <div class="empty-state-title">No Staff in Scope</div>
+                                    <p class="empty-state-desc mb-0">No active staff members found in the selected branch.</p>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        {% if staff_analytics.branch_rows|length > 1 %}
+        <div class="tab-pane fade" id="tab-by-branch" role="tabpanel" aria-labelledby="tab-by-branch-btn">
+            <div class="table-responsive">
+                <table class="table gw-table m-0">
+                    <thead>
+                        <tr>
+                            <th>Branch</th>
+                            <th class="text-center">Active Staff</th>
+                            <th class="text-end">Total Claimed</th>
+                            <th class="text-end">Total Reimbursed</th>
+                            <th class="text-center">Approved Leave Days</th>
+                            <th class="text-center">Open Pending</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for b in staff_analytics.branch_rows %}
+                        <tr>
+                            <td>
+                                <div class="fw-bold text-dark">{{ b.branch.name }}</div>
+                                <small class="text-muted">{{ b.branch.code }}{% if b.branch.city %} &bull; {{ b.branch.city }}{% endif %}</small>
+                            </td>
+                            <td class="text-center fw-semibold">{{ b.staff_count }}</td>
+                            <td class="text-end fw-semibold">${{ b.claimed_total|floatformat:2 }}</td>
+                            <td class="text-end fw-bold text-success">${{ b.paid_total|floatformat:2 }}</td>
+                            <td class="text-center fw-semibold">{{ b.approved_leave_days|floatformat:1 }} days</td>
+                            <td class="text-center">
+                                {% if b.pending_items > 0 %}
+                                <span class="badge bg-warning text-dark">{{ b.pending_items }}</span>
+                                {% else %}
+                                <span class="text-muted">0</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Director Final Decision Modal -->
+<div class="modal fade" id="directorDecisionModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content gw-modal-glass">
+            <div class="modal-header border-0 pb-0">
+                <h5 class="modal-title fw-bold" id="directorDecisionTitle">Final Approval Decision</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="post" action="{% url 'portal_dashboard' %}">
+                {% csrf_token %}
+                <input type="hidden" name="action_scope" id="dirActionScope">
+                <input type="hidden" name="claim_id" id="dirClaimId">
+                <input type="hidden" name="app_id" id="dirAppId">
+                <input type="hidden" name="action" id="dirAction">
+                <div class="modal-body">
+                    <p class="small text-secondary mb-3" id="dirDecisionPrompt"></p>
+                    <div class="mb-2">
+                        <label class="form-label small fw-bold" id="dirRemarksLabel">Remarks</label>
+                        <textarea name="remarks" id="dirRemarks" class="form-control" rows="3" placeholder="Enter remarks..."></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer border-0 pt-0">
+                    <button type="button" class="btn btn-sm btn-light rounded-pill px-3" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-sm rounded-pill px-3" id="dirSubmitBtn">Confirm</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+{% else %}
+<!-- Standard Staff / Manager / HR KPI Cards Grid -->
+<div class="row g-3 mb-4">
+    {% if user.role != 'EMPLOYEE' %}
+    <div class="col-12 col-sm-6 col-xl-3">
+        <div class="kpi-card">
+            <div class="kpi-icon-wrapper" style="background: rgba(21, 107, 158, 0.1); color: var(--gw-primary);">
+                <i class="bi bi-people-fill"></i>
+            </div>
+            <div class="kpi-value">{{ total_active_employees }}</div>
+            <div class="kpi-label">Active Staff in Scope</div>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="col-12 col-sm-6 col-xl-3">
+        <div class="kpi-card">
+            <div class="kpi-icon-wrapper" style="background: rgba(217, 119, 6, 0.1); color: #D97706;">
+                <i class="bi bi-receipt-cutoff"></i>
+            </div>
+            <div class="kpi-value">{{ pending_expense_claims }}</div>
+            <div class="kpi-label">Expenses Awaiting Review</div>
+        </div>
+    </div>
+
+    <div class="col-12 col-sm-6 col-xl-3">
+        <div class="kpi-card">
+            <div class="kpi-icon-wrapper" style="background: rgba(13, 148, 136, 0.1); color: #0D9488;">
+                <i class="bi bi-cash-stack"></i>
+            </div>
+            <div class="kpi-value">{{ approved_awaiting_payment }}</div>
+            <div class="kpi-label">Approved Ready for Payment</div>
+        </div>
+    </div>
+
+    <div class="col-12 col-sm-6 col-xl-3">
+        <div class="kpi-card">
+            <div class="kpi-icon-wrapper" style="background: rgba(79, 70, 229, 0.1); color: #4F46E5;">
+                <i class="bi bi-calendar-check"></i>
+            </div>
+            <div class="kpi-value">{{ pending_leaves_count }}</div>
+            <div class="kpi-label">Leaves Pending Approval</div>
+        </div>
+    </div>
+
+    {% if user.role == 'EMPLOYEE' %}
+    <div class="col-12 col-sm-6 col-xl-3">
+        <div class="kpi-card">
+            <div class="kpi-icon-wrapper" style="background: rgba(5, 150, 105, 0.1); color: #059669;">
+                <i class="bi bi-wallet2"></i>
+            </div>
+            <div class="kpi-value">${{ total_paid_expenses|floatformat:2 }}</div>
+            <div class="kpi-label">Total Reimbursed YTD</div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Personal Live Leave Balances Row (Hidden for Director) -->
+<div class="gw-card mb-4">
+    <div class="gw-card-header">
+        <h5 class="gw-card-title"><i class="bi bi-shield-check text-primary me-2"></i>My Leave Entitlements &amp; Balances</h5>
+        <a href="{% url 'portal_leave_ledger' %}" class="btn btn-sm btn-link text-decoration-none gw-header-link">View Detailed Ledger <i class="bi bi-arrow-right"></i></a>
+    </div>
+    <div class="gw-card-body p-0">
+        <div class="table-responsive">
+            <table class="table gw-table m-0">
+                <thead>
+                    <tr>
+                        <th>Leave Type</th>
+                        <th class="text-center">Earned / Credited</th>
+                        <th class="text-center">Taken (Approved)</th>
+                        <th class="text-center">Pending Review</th>
+                        <th class="text-end">Available Balance</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for b in leave_balances %}
+                    <tr>
+                        <td>
+                            <div class="fw-bold">{{ b.leave_type.name }}</div>
+                            <small class="text-muted">{{ b.leave_type.code }} {% if b.leave_type.is_accrual_based %}(Accrual Based){% endif %}</small>
+                        </td>
+                        <td class="text-center fw-semibold text-secondary text-nowrap">{{ b.earned_days|floatformat:1 }} days</td>
+                        <td class="text-center fw-semibold text-danger text-nowrap">{{ b.taken_days|floatformat:1 }} days</td>
+                        <td class="text-center fw-semibold text-warning text-nowrap">
+                            {% if b.pending_days > 0 %}
+                            <span class="badge bg-warning text-dark">{{ b.pending_days|floatformat:1 }} days</span>
+                            {% else %}
+                            0.0 days
+                            {% endif %}
+                        </td>
+                        <td class="text-end text-nowrap">
+                            <span class="fs-6 fw-extrabold text-success">{{ b.available_balance|floatformat:1 }} days</span>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="5" class="text-center text-muted py-3">No leave policy assigned.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Charts & Analytics Row -->
+<div class="row g-4 mb-4">
+    <div class="col-xl-8 col-lg-7">
+        <div class="gw-card h-100 mb-0">
+            <div class="gw-card-header">
+                <h5 class="gw-card-title"><i class="bi bi-graph-up text-primary me-2"></i>Monthly Expense Submissions &amp; Reimbursements</h5>
+                <span class="badge bg-light text-secondary border">Last 6 Months</span>
+            </div>
+            <div class="gw-card-body">
+                <div class="chart-canvas-wrap chart-canvas-wrap--line">
+                    <canvas id="expenseChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-4 col-lg-5">
+        <div class="gw-card h-100 mb-0">
+            <div class="gw-card-header">
+                <h5 class="gw-card-title"><i class="bi bi-pie-chart text-primary me-2"></i>Leave Utilization</h5>
+            </div>
+            <div class="gw-card-body d-flex flex-column justify-content-center">
+                {% if leave_chart_data.has_data %}
+                <div class="chart-canvas-wrap chart-canvas-wrap--doughnut">
+                    <canvas id="leavePieChart"></canvas>
+                </div>
+                {% else %}
+                <div class="text-center text-muted py-5">
+                    <i class="bi bi-pie-chart fs-2 d-block mb-2 opacity-50"></i>
+                    No approved leave days recorded yet.
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Recent Activities Split Tables -->
+<div class="row g-4">
+    <!-- Recent Expense Claims -->
+    <div class="col-xl-6">
+        <div class="gw-card h-100 mb-0">
+            <div class="gw-card-header">
+                <h5 class="gw-card-title"><i class="bi bi-receipt me-2"></i>Recent Expense Claims</h5>
+                <a href="{% url 'portal_expenses' %}" class="small text-decoration-none gw-header-link">View All</a>
+            </div>
+            <div class="gw-card-body p-0">
+                <div class="table-responsive">
+                    <table class="table gw-table m-0">
+                        <thead>
+                            <tr>
+                                <th>Claim #</th>
+                                <th>Category</th>
+                                <th>Amount</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for c in recent_claims %}
+                            <tr>
+                                <td>
+                                    <a href="{% url 'portal_expense_detail' c.pk %}" class="fw-bold text-decoration-none text-primary">
+                                        {{ c.claim_number }}
+                                    </a>
+                                    <div class="small text-muted">{{ c.expense_date|date:"M d, Y" }}</div>
+                                </td>
+                                <td>{{ c.category.name }}</td>
+                                <td class="fw-bold text-nowrap">${{ c.amount|floatformat:2 }}</td>
+                                <td>
+                                    <span class="status-badge {% if 'REJECTED' in c.status %}badge-rejected{% elif c.status == 'PAID' %}badge-paid{% elif 'APPROVED' in c.status %}badge-approved{% elif c.status == 'DRAFT' %}badge-draft{% else %}badge-pending{% endif %}">
+                                        {{ c.get_status_display }}
+                                    </span>
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="4" class="text-center text-muted py-4">No recent expense claims recorded.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Leave Requests -->
+    <div class="col-xl-6">
+        <div class="gw-card h-100 mb-0">
+            <div class="gw-card-header">
+                <h5 class="gw-card-title"><i class="bi bi-calendar2-range me-2"></i>Recent Leave Applications</h5>
+                <a href="{% url 'portal_leaves' %}" class="small text-decoration-none gw-header-link">View All</a>
+            </div>
+            <div class="gw-card-body p-0">
+                <div class="table-responsive">
+                    <table class="table gw-table m-0">
+                        <thead>
+                            <tr>
+                                <th>Application #</th>
+                                <th>Leave Type</th>
+                                <th>Duration</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for l in recent_leaves %}
+                            <tr>
+                                <td>
+                                    <a href="{% url 'portal_leave_detail' l.pk %}" class="fw-bold text-decoration-none text-primary">
+                                        {{ l.application_number }}
+                                    </a>
+                                    <div class="small text-muted">{{ l.submitted_at|date:"M d, Y" }}</div>
+                                </td>
+                                <td>{{ l.leave_type.name }}</td>
+                                <td class="text-nowrap">
+                                    <span class="fw-semibold">{{ l.number_of_days|floatformat:1 }} days</span>
+                                    <div class="small text-muted">{{ l.start_date|date:"M d" }} - {{ l.end_date|date:"M d" }}</div>
+                                </td>
+                                <td>
+                                    <span class="status-badge {% if 'REJECTED' in l.status %}badge-rejected{% elif l.status == 'APPROVED' %}badge-approved{% else %}badge-pending{% endif %}">
+                                        {{ l.get_status_display }}
+                                    </span>
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="4" class="text-center text-muted py-4">No recent leave applications submitted.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{{ expense_chart_data|json_script:"expense-chart-data" }}
+{{ leave_chart_data|json_script:"leave-chart-data" }}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    const expenseChartPayload = JSON.parse(document.getElementById('expense-chart-data').textContent);
+    const leaveChartPayload = JSON.parse(document.getElementById('leave-chart-data').textContent);
+
+    const expenseCanvas = document.getElementById('expenseChart');
+    if (expenseCanvas) {
+        const ctxExpense = expenseCanvas.getContext('2d');
+        const expenseGrad = ctxExpense.createLinearGradient(0, 0, 0, 240);
+        expenseGrad.addColorStop(0, 'rgba(91, 69, 224, 0.16)');
+        expenseGrad.addColorStop(1, 'rgba(91, 69, 224, 0.0)');
+
+        new Chart(ctxExpense, {
+            type: 'line',
+            data: {
+                labels: expenseChartPayload.labels,
+                datasets: [
+                    {
+                        label: 'Claimed ($)',
+                        data: expenseChartPayload.claimed,
+                        borderColor: '#5B45E0',
+                        backgroundColor: expenseGrad,
+                        fill: true,
+                        tension: 0.35,
+                        borderWidth: 2.5,
+                        pointRadius: 3.5,
+                        pointHoverRadius: 5
+                    },
+                    {
+                        label: 'Reimbursed ($)',
+                        data: expenseChartPayload.reimbursed,
+                        borderColor: '#00D284',
+                        backgroundColor: 'transparent',
+                        borderDash: [5, 5],
+                        borderWidth: 2.2,
+                        tension: 0.35,
+                        pointRadius: 3,
+                        pointHoverRadius: 5
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                resizeDelay: 80,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: {
+                        position: 'top',
+                        labels: { usePointStyle: true, boxWidth: 10, padding: 14 }
+                    },
+                    tooltip: {
+                        backgroundColor: '#161D2D',
+                        padding: 10,
+                        cornerRadius: 8
+                    }
+                },
+                scales: {
+                    y: { beginAtZero: true, grid: { color: '#F1F5F9' }, ticks: { callback: v => '$' + v } },
+                    x: { grid: { display: false } }
+                }
+            }
+        });
+    }
+
+    const leaveCanvas = document.getElementById('leavePieChart');
+    if (leaveCanvas && leaveChartPayload.has_data) {
+        const ctxLeave = leaveCanvas.getContext('2d');
+        new Chart(ctxLeave, {
+            type: 'doughnut',
+            data: {
+                labels: leaveChartPayload.labels,
+                datasets: [{
+                    data: leaveChartPayload.values,
+                    backgroundColor: ['#5B45E0', '#00D284', '#0EA5E9', '#F59E0B', '#64748B'],
+                    borderWidth: 2,
+                    borderColor: '#FFFFFF'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                resizeDelay: 80,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: { usePointStyle: true, boxWidth: 10, padding: 14 }
+                    },
+                    tooltip: {
+                        backgroundColor: '#161D2D',
+                        padding: 10,
+                        cornerRadius: 8
+                    }
+                },
+                cutout: '70%'
+            }
+        });
+    }
+
+    {% if is_director_dashboard %}
+    // Persist active Director workspace tab across reminder/approval form reloads
+    const actionTabButtons = document.querySelectorAll('#directorWorkspaceCard [data-tab-key]');
+    if (actionTabButtons.length > 0 && typeof bootstrap !== 'undefined') {
+        const savedTab = sessionStorage.getItem('gw_dir_action_tab');
+        if (savedTab) {
+            const targetBtn = document.querySelector(`#directorWorkspaceCard [data-tab-key="${savedTab}"]`);
+            if (targetBtn) {
+                bootstrap.Tab.getOrCreateInstance(targetBtn).show();
+            }
+        }
+        actionTabButtons.forEach(btn => {
+            btn.addEventListener('shown.bs.tab', () => {
+                sessionStorage.setItem('gw_dir_action_tab', btn.getAttribute('data-tab-key'));
+            });
+        });
+    }
+
+    // Quick filter chips for Approver Reminders
+    const reminderFilterBtns = document.querySelectorAll('[data-reminder-filter]');
+    const reminderRows = document.querySelectorAll('#approverRemindersTable tbody tr.reminder-row');
+    if (reminderFilterBtns.length > 0 && reminderRows.length > 0) {
+        reminderFilterBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                reminderFilterBtns.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                const mode = btn.getAttribute('data-reminder-filter');
+                reminderRows.forEach(row => {
+                    const show =
+                        mode === 'all' ||
+                        (mode === 'overdue' && row.getAttribute('data-sla') === 'overdue') ||
+                        (mode === 'unread' && row.getAttribute('data-read') === 'unread');
+                    row.style.display = show ? '' : 'none';
+                });
+            });
+        });
+    }
+
+    // Live staff analytics table filter (switches to All Staff tab if typing)
+    const staffSearchInput = document.getElementById('staffAnalyticsSearch');
+    if (staffSearchInput) {
+        const staffRows = document.querySelectorAll('#staffAnalyticsTable tbody tr.staff-analytics-row');
+        const allStaffTabBtn = document.getElementById('tab-all-staff-btn');
+        staffSearchInput.addEventListener('input', (e) => {
+            if (allStaffTabBtn && typeof bootstrap !== 'undefined' && !allStaffTabBtn.classList.contains('active')) {
+                bootstrap.Tab.getOrCreateInstance(allStaffTabBtn).show();
+            }
+            const q = e.target.value.toLowerCase().trim();
+            staffRows.forEach(row => {
+                row.style.display = row.innerText.toLowerCase().includes(q) ? '' : 'none';
+            });
+        });
+    }
+
+    function openDirectorModal(kind, id, refNumber, action) {
+        const scopeInput = document.getElementById('dirActionScope');
+        const claimInput = document.getElementById('dirClaimId');
+        const appInput = document.getElementById('dirAppId');
+        const actionInput = document.getElementById('dirAction');
+        const title = document.getElementById('directorDecisionTitle');
+        const prompt = document.getElementById('dirDecisionPrompt');
+        const submitBtn = document.getElementById('dirSubmitBtn');
+        const remarksLabel = document.getElementById('dirRemarksLabel');
+        const remarksInput = document.getElementById('dirRemarks');
+
+        if (kind === 'expense') {
+            scopeInput.value = 'expense_decision';
+            claimInput.value = id;
+            appInput.value = '';
+        } else {
+            scopeInput.value = 'leave_decision';
+            appInput.value = id;
+            claimInput.value = '';
+        }
+        actionInput.value = action;
+        remarksInput.value = '';
+
+        const isApprove = action === 'APPROVED';
+        title.textContent = `${isApprove ? 'Final Approve' : 'Reject'} ${refNumber}`;
+        prompt.textContent = isApprove
+            ? `Confirm Director final approval for ${refNumber}?`
+            : `Provide rejection remarks for ${refNumber}:`;
+
+        if (isApprove) {
+            submitBtn.className = 'btn btn-sm btn-success rounded-pill px-3';
+            submitBtn.textContent = 'Confirm Final Approval';
+            remarksLabel.innerHTML = 'Remarks <span class="text-muted">(Optional)</span>';
+            remarksInput.required = false;
+        } else {
+            submitBtn.className = 'btn btn-sm btn-danger rounded-pill px-3';
+            submitBtn.textContent = 'Confirm Rejection';
+            remarksLabel.innerHTML = 'Rejection Remarks <span class="text-danger">*</span>';
+            remarksInput.required = true;
+        }
+
+        new bootstrap.Modal(document.getElementById('directorDecisionModal')).show();
+    }
+    {% endif %}
+</script>
+{% endblock %}

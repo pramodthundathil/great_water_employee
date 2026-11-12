@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Leave Application {{ app.application_number }} — Great Waters{% endblock %}
+
+{% block content %}
+<div class="page-title-box">
+    <div>
+        <div class="d-flex align-items-center gap-2 mb-1">
+            <a href="{% url 'portal_leaves' %}" class="btn btn-sm btn-light py-0 px-2"><i class="bi bi-arrow-left"></i></a>
+            <h1 class="page-title m-0">Leave Application {{ app.application_number }}</h1>
+            <span class="status-badge {% if 'REJECTED' in app.status %}badge-rejected{% elif app.status == 'APPROVED' %}badge-approved{% else %}badge-pending{% endif %}">
+                {{ app.get_status_display }}
+            </span>
+        </div>
+        <p class="page-subtitle">Submitted on {{ app.submitted_at|date:"M d, Y H:i" }} by {{ app.employee.full_name }} ({{ app.employee.employee_id }})</p>
+    </div>
+    {% if app.status != 'APPROVED' and app.status != 'WITHDRAWN' and app.employee == user %}
+    <div>
+        <form method="post" onsubmit="return confirm('Withdraw this leave application?');">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="withdraw">
+            <button type="submit" class="btn btn-outline-danger"><i class="bi bi-x-circle me-1"></i> Withdraw Application</button>
+        </form>
+    </div>
+    {% endif %}
+</div>
+
+<!-- 4-Stage Workflow Progress Card -->
+<div class="gw-card mb-4">
+    <div class="gw-card-body p-4">
+        <h6 class="fw-bold text-dark mb-3">4-Stage Approval Sequence</h6>
+        <div class="row text-center g-2">
+            <!-- Stage 1 -->
+            <div class="col-md-3">
+                <div class="p-3 rounded-3 border bg-light h-100">
+                    <div class="badge bg-success mb-2">Stage 1</div>
+                    <div class="fw-bold small">Application Submitted</div>
+                    <small class="text-muted d-block">{{ app.submitted_at|date:"M d, Y" }}</small>
+                    <small class="text-success fw-semibold"><i class="bi bi-check-circle-fill"></i> Completed</small>
+                </div>
+            </div>
+            <!-- Stage 2 -->
+            <div class="col-md-3">
+                <div class="p-3 rounded-3 border {% if app.status != 'PENDING_LEAD_RECOMMENDATION' %}bg-light{% else %}border-primary bg-primary-subtle{% endif %} h-100">
+                    <div class="badge {% if app.status != 'PENDING_LEAD_RECOMMENDATION' %}bg-secondary{% else %}bg-primary{% endif %} mb-2">Stage 2</div>
+                    <div class="fw-bold small">Lead Recommendation</div>
+                    <small class="text-muted d-block">Reporting Manager</small>
+                    {% if 'REJECTED_BY_LEAD' in app.status %}
+                    <small class="text-danger fw-bold"><i class="bi bi-x-circle-fill"></i> Rejected</small>
+                    {% elif app.status != 'PENDING_LEAD_RECOMMENDATION' %}
+                    <small class="text-success fw-semibold"><i class="bi bi-check-circle-fill"></i> Recommended</small>
+                    {% else %}
+                    <small class="text-primary fw-semibold"><i class="bi bi-clock"></i> In Review</small>
+                    {% endif %}
+                </div>
+            </div>
+            <!-- Stage 3 -->
+            <div class="col-md-3">
+                <div class="p-3 rounded-3 border {% if app.status == 'PENDING_HR_VERIFICATION' %}border-warning bg-warning-subtle{% else %}bg-light{% endif %} h-100">
+                    <div class="badge {% if app.status == 'PENDING_HR_VERIFICATION' %}bg-warning text-dark{% else %}bg-secondary{% endif %} mb-2">Stage 3</div>
+                    <div class="fw-bold small">HR Policy Verification</div>
+                    <small class="text-muted d-block">HR Coordinator</small>
+                    {% if 'REJECTED_BY_HR' in app.status %}
+                    <small class="text-danger fw-bold"><i class="bi bi-x-circle-fill"></i> Rejected</small>
+                    {% elif app.status in 'PENDING_DIRECTOR_APPROVAL,APPROVED' %}
+                    <small class="text-success fw-semibold"><i class="bi bi-check-circle-fill"></i> Verified</small>
+                    {% elif app.status == 'PENDING_HR_VERIFICATION' %}
+                    <small class="text-warning text-dark fw-semibold"><i class="bi bi-clock"></i> Awaiting HR</small>
+                    {% else %}
+                    <small class="text-muted">Pending Previous</small>
+                    {% endif %}
+                </div>
+            </div>
+            <!-- Stage 4 -->
+            <div class="col-md-3">
+                <div class="p-3 rounded-3 border {% if app.status == 'APPROVED' %}border-success bg-success-subtle{% elif app.status == 'PENDING_DIRECTOR_APPROVAL' %}border-primary bg-primary-subtle{% else %}bg-light{% endif %} h-100">
+                    <div class="badge {% if app.status == 'APPROVED' %}bg-success{% elif app.status == 'PENDING_DIRECTOR_APPROVAL' %}bg-primary{% else %}bg-secondary{% endif %} mb-2">Stage 4</div>
+                    <div class="fw-bold small">Director Final Approval</div>
+                    <small class="text-muted d-block">Balance Deducted</small>
+                    {% if app.status == 'APPROVED' %}
+                    <small class="text-success fw-bold"><i class="bi bi-check-circle-fill"></i> Final Approved</small>
+                    {% elif 'REJECTED_BY_DIRECTOR' in app.status %}
+                    <small class="text-danger fw-bold"><i class="bi bi-x-circle-fill"></i> Rejected</small>
+                    {% elif app.status == 'PENDING_DIRECTOR_APPROVAL' %}
+                    <small class="text-primary fw-semibold"><i class="bi bi-clock"></i> Awaiting Director</small>
+                    {% else %}
+                    <small class="text-muted">Pending Previous</small>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4">
+    <!-- Application Details -->
+    <div class="col-lg-8">
+        <div class="gw-card">
+            <div class="gw-card-header">
+                <h5 class="gw-card-title"><i class="bi bi-info-circle me-2"></i>Application Overview</h5>
+            </div>
+            <div class="gw-card-body">
+                <div class="row g-3 mb-4">
+                    <div class="col-md-4">
+                        <small class="text-muted text-uppercase fw-bold">Leave Type</small>
+                        <div class="fs-5 fw-bold text-primary">{{ app.leave_type.name }} ({{ app.leave_type.code }})</div>
+                    </div>
+                    <div class="col-md-4">
+                        <small class="text-muted text-uppercase fw-bold">Duration</small>
+                        <div class="fs-5 fw-extrabold text-dark">{{ app.number_of_days|floatformat:1 }} day{{ app.number_of_days|pluralize }}</div>
+                        {% if app.is_half_day %}
+                        <small class="text-info fw-semibold">Half-Day ({{ app.get_half_day_period_display }})</small>
+                        {% endif %}
+                    </div>
+                    <div class="col-md-4">
+                        <small class="text-muted text-uppercase fw-bold">Dates Requested</small>
+                        <div class="fs-6 fw-bold text-dark">{{ app.start_date|date:"M d, Y" }} &ndash; {{ app.end_date|date:"M d, Y" }}</div>
+                    </div>
+                </div>
+
+                <div class="mb-4">
+                    <small class="text-muted text-uppercase fw-bold">Reason Provided</small>
+                    <div class="p-3 bg-light rounded-3 mt-1 text-dark">{{ app.reason }}</div>
+                </div>
+
+                {% if app.attachment %}
+                <div class="mb-3">
+                    <small class="text-muted text-uppercase fw-bold">Supporting Medical / Authorizing Attachment</small>
+                    <div class="mt-2">
+                        <a href="{{ app.attachment.url }}" target="_blank" class="btn btn-sm btn-light border shadow-sm">
+                            <i class="bi bi-paperclip me-1"></i> View Uploaded Attachment
+                        </a>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Approval History Sidebar -->
+    <div class="col-lg-4">
+        <div class="gw-card">
+            <div class="gw-card-header">
+                <h5 class="gw-card-title"><i class="bi bi-clock-history me-2"></i>Approval Remarks Trail</h5>
+            </div>
+            <div class="gw-card-body">
+                {% for h in approval_history %}
+                <div class="mb-3 pb-3 border-bottom">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <span class="badge {% if 'REJECT' in h.action %}bg-danger{% elif 'APPROV' in h.action %}bg-success{% else %}bg-primary{% endif %}">
+                            {{ h.action }}
+                        </span>
+                        <small class="text-muted">{{ h.created_at|date:"M d, H:i" }}</small>
+                    </div>
+                    <div class="fw-bold small text-dark">{{ h.approver.full_name }}</div>
+                    <div class="small text-muted">{{ h.stage }}</div>
+                    {% if h.remarks %}
+                    <div class="p-2 bg-light rounded small mt-2 text-secondary">
+                        <em>"{{ h.remarks }}"</em>
+                    </div>
+                    {% endif %}
+                </div>
+                {% empty %}
+                <div class="text-center text-muted small py-3">Awaiting first-stage Lead recommendation.</div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

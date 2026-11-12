@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Reports &amp; Exports{% endblock %}
+
+{% block content %}
+<div class="page-title-box">
+    <div>
+        <h1 class="page-title">Reports &amp; Data Exports</h1>
+        <p class="page-subtitle">PDF and Excel exports. Results are limited to the branches and employees you are authorised to see.</p>
+    </div>
+</div>
+
+<!-- Shared filters -->
+<div class="gw-card mb-4">
+    <div class="gw-card-header"><h5 class="gw-card-title"><i class="bi bi-funnel me-2"></i>Filters (apply to every report below)</h5></div>
+    <div class="gw-card-body p-4">
+        <form id="reportFilters" class="row g-3">
+            <div class="col-md-4">
+                <label class="form-label small fw-bold">Branch</label>
+                <select name="branch_id" class="form-select">
+                    <option value="">All authorised branches</option>
+                    {% for b in branches %}<option value="{{ b.id }}">{{ b.name }} ({{ b.code }})</option>{% endfor %}
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small fw-bold">Department</label>
+                <select name="department_id" class="form-select">
+                    <option value="">All departments</option>
+                    {% for d in departments %}<option value="{{ d.id }}">{{ d.name }}</option>{% endfor %}
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small fw-bold">Employee ID</label>
+                <input type="text" name="employee" class="form-control" placeholder="e.g. GW-EMP-001 (optional)">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label small fw-bold">From</label>
+                <input type="date" name="start_date" class="form-control" value="{{ year_start|date:'Y-m-d' }}">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label small fw-bold">To</label>
+                <input type="date" name="end_date" class="form-control" value="{{ today|date:'Y-m-d' }}">
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="row g-4">
+    <div class="col-lg-6">
+        <div class="gw-card h-100">
+            <div class="gw-card-header"><h5 class="gw-card-title text-primary"><i class="bi bi-receipt me-2"></i>Expense report</h5></div>
+            <div class="gw-card-body p-4">
+                <p class="small text-muted">Claims by employee, department, branch, category, status and date range.</p>
+                <form id="expenseExtra" class="row g-2 mb-3">
+                    <div class="col-6"><select name="category_id" class="form-select form-select-sm" aria-label="Category"><option value="">All categories</option>{% for c in categories %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}</select></div>
+                    <div class="col-6"><select name="status" class="form-select form-select-sm" aria-label="Status"><option value="">All statuses</option>{% for v, l in expense_statuses %}<option value="{{ v }}">{{ l }}</option>{% endfor %}</select></div>
+                </form>
+                {% include "portal/_export_buttons.html" with url="/api/v1/reports/expenses/export/" extra="expenseExtra" %}
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-6">
+        <div class="gw-card h-100">
+            <div class="gw-card-header"><h5 class="gw-card-title text-success"><i class="bi bi-calendar2-range me-2"></i>Leave history report</h5></div>
+            <div class="gw-card-body p-4">
+                <p class="small text-muted">Leave applications by employee and month with status.</p>
+                <form id="leaveExtra" class="row g-2 mb-3">
+                    <div class="col-6"><select name="leave_type_id" class="form-select form-select-sm" aria-label="Leave type"><option value="">All leave types</option>{% for lt in leave_types %}<option value="{{ lt.id }}">{{ lt.name }}</option>{% endfor %}</select></div>
+                    <div class="col-6"><select name="status" class="form-select form-select-sm" aria-label="Status"><option value="">All statuses</option>{% for v, l in leave_statuses %}<option value="{{ v }}">{{ l }}</option>{% endfor %}</select></div>
+                </form>
+                {% include "portal/_export_buttons.html" with url="/api/v1/reports/leaves/export/" extra="leaveExtra" %}
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-6">
+        <div class="gw-card h-100">
+            <div class="gw-card-header"><h5 class="gw-card-title"><i class="bi bi-wallet2 me-2"></i>Leave balance report</h5></div>
+            <div class="gw-card-body p-4">
+                <p class="small text-muted">Leave earned, taken, pending and remaining balance per employee and leave type.</p>
+                {% include "portal/_export_buttons.html" with url="/api/v1/reports/leave-balances/export/" %}
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-6">
+        <div class="gw-card h-100">
+            <div class="gw-card-header"><h5 class="gw-card-title"><i class="bi bi-table me-2"></i>Monthly expense summary</h5></div>
+            <div class="gw-card-body p-4">
+                <p class="small text-muted">Monthly totals per employee with category-wise breakdown.</p>
+                {% include "portal/_export_buttons.html" with url="/api/v1/reports/expense-summary/export/" %}
+            </div>
+        </div>
+    </div>
+    {% if is_reviewer %}
+    <div class="col-lg-6">
+        <div class="gw-card h-100">
+            <div class="gw-card-header"><h5 class="gw-card-title text-warning"><i class="bi bi-hourglass-split me-2"></i>Pending approvals report</h5></div>
+            <div class="gw-card-body p-4">
+                <p class="small text-muted">Everything awaiting action, grouped stage-wise and approver-wise, with days waiting.</p>
+                {% include "portal/_export_buttons.html" with url="/api/v1/reports/pending-approvals/export/" %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+    <div class="col-lg-6">
+        <div class="gw-card h-100">
+            <div class="gw-card-header"><h5 class="gw-card-title text-info"><i class="bi bi-cash-stack me-2"></i>Reimbursement / payment report</h5></div>
+            <div class="gw-card-body p-4">
+                <p class="small text-muted">Paid claims with payment date, mode and transaction reference.</p>
+                {% include "portal/_export_buttons.html" with url="/api/v1/reports/payments/export/" %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    function exportReport(url, format, extraFormId) {
+        const params = new URLSearchParams(new FormData(document.getElementById('reportFilters')));
+        if (extraFormId) {
+            new FormData(document.getElementById(extraFormId)).forEach((v, k) => { if (v) params.set(k, v); });
+        }
+        for (const [k, v] of [...params.entries()]) { if (!v) params.delete(k); }
+        params.set('format', format);
+        window.location.href = url + '?' + params.toString();
+    }
+</script>
+{% endblock %}

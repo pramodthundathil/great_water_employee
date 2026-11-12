@@ -1,0 +1,22 @@
+<form method="post" class="row g-2 align-items-end bg-light rounded p-2 mb-2">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="save_policy">
+    <input type="hidden" name="leave_type_id" value="{{ lt.id }}">
+    {% if policy %}<input type="hidden" name="policy_id" value="{{ policy.id }}">{% endif %}
+    <div class="col-md-3"><label class="form-label small m-0">Policy name</label><input name="name" value="{{ policy.name|default:'' }}" class="form-control form-control-sm" placeholder="{{ lt.name }} Policy"></div>
+    <div class="col-6 col-md-2"><label class="form-label small m-0">Credited</label>
+        <select name="accrual_frequency" class="form-select form-select-sm">
+            <option value="MONTHLY" {% if policy.accrual_frequency == 'MONTHLY' %}selected{% endif %}>Monthly (by service)</option>
+            <option value="YEARLY" {% if policy.accrual_frequency == 'YEARLY' %}selected{% endif %}>Yearly (1 Jan)</option>
+            <option value="NONE" {% if policy.accrual_frequency == 'NONE' %}selected{% endif %}>Yearly grant (fixed)</option>
+        </select>
+    </div>
+    <div class="col-6 col-md-1"><label class="form-label small m-0">Days / year</label><input type="number" step="0.5" min="0" name="yearly_entitlement" value="{{ policy.yearly_entitlement|default:'0' }}" class="form-control form-control-sm"></div>
+    <div class="col-6 col-md-1"><label class="form-label small m-0">Days / month</label><input type="number" step="0.25" min="0" name="monthly_accrual_rate" value="{{ policy.monthly_accrual_rate|default:'0' }}" class="form-control form-control-sm"></div>
+    <div class="col-6 col-md-1"><label class="form-label small m-0">Max carry fwd</label><input type="number" step="0.5" min="0" name="max_carry_forward" value="{{ policy.max_carry_forward|default:'0' }}" class="form-control form-control-sm"></div>
+    <div class="col-6 col-md-1"><label class="form-label small m-0">Probation (mo)</label><input type="number" min="0" name="probation_period_months" value="{{ policy.probation_period_months|default:'0' }}" class="form-control form-control-sm"></div>
+    <div class="col-6 col-md-1"><label class="form-label small m-0">Status</label>
+        <select name="is_active" class="form-select form-select-sm"><option value="1" {% if not policy or policy.is_active %}selected{% endif %}>Active</option><option value="0" {% if policy and not policy.is_active %}selected{% endif %}>Inactive</option></select>
+    </div>
+    <div class="col-auto ms-auto"><button class="btn btn-sm btn-outline-primary">Save policy</button></div>
+</form>

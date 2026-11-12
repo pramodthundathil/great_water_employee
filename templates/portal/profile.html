@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}My Profile — Great Waters{% endblock %}
+
+{% block content %}
+<div class="page-title-box">
+    <div>
+        <h1 class="page-title">Employee Profile & Settings</h1>
+        <p class="page-subtitle">View your organizational placement and update permitted contact and disbursement banking details.</p>
+    </div>
+</div>
+
+<div class="row g-4">
+    <!-- Left Column: Summary Card -->
+    <div class="col-lg-4">
+        <div class="gw-card text-center p-4">
+            <div class="user-avatar-placeholder mx-auto mb-3 shadow" style="width: 76px; height: 76px; font-size: 2rem;">
+                {{ user.first_name|default:user.employee_id|slice:":1"|upper }}
+            </div>
+            <h4 class="fw-bold text-dark mb-1">{{ user.full_name }}</h4>
+            <div class="text-secondary small mb-2">{{ profile.designation|default:"Staff Member" }}</div>
+            <span class="badge bg-primary px-3 py-1 rounded-pill mb-3">{{ user.get_role_display }}</span>
+
+            <div class="p-3 bg-light rounded-3 text-start mb-3">
+                <div class="d-flex justify-content-between mb-2 small">
+                    <span class="text-muted">Employee ID:</span>
+                    <span class="fw-bold font-monospace">{{ user.employee_id }}</span>
+                </div>
+                <div class="d-flex justify-content-between mb-2 small">
+                    <span class="text-muted">Primary Branch:</span>
+                    <span class="fw-semibold">{{ user.primary_branch.name }} ({{ user.primary_branch.code }})</span>
+                </div>
+                <div class="d-flex justify-content-between mb-2 small">
+                    <span class="text-muted">Department:</span>
+                    <span class="fw-semibold">{{ profile.department.name|default:"General" }}</span>
+                </div>
+                <div class="d-flex justify-content-between small">
+                    <span class="text-muted">Date of Joining:</span>
+                    <span class="fw-semibold">{{ profile.date_of_joining|date:"F d, Y" }}</span>
+                </div>
+            </div>
+
+            {% if profile.reporting_lead %}
+            <div class="alert alert-info py-2 px-3 small text-start m-0">
+                <div class="fw-bold mb-1"><i class="bi bi-person-check-fill me-1"></i> Reporting Lead / Manager:</div>
+                <div>{{ profile.reporting_lead.full_name }} ({{ profile.reporting_lead.employee_id }})</div>
+                <div class="text-muted" style="font-size: 0.75rem;">{{ profile.reporting_lead.email }}</div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Right Column: Profile Edit Form -->
+    <div class="col-lg-8">
+        <div class="gw-card">
+            <div class="gw-card-header">
+                <h5 class="gw-card-title"><i class="bi bi-pencil-square text-primary me-2"></i>Contact & Banking Information</h5>
+            </div>
+            <div class="gw-card-body p-4">
+                <form method="post" action="{% url 'portal_profile' %}">
+                    {% csrf_token %}
+                    <h6 class="fw-bold text-dark mb-3"><i class="bi bi-telephone me-2"></i>Contact Details</h6>
+                    <div class="row g-3 mb-4">
+                        <div class="col-md-6">
+                            <label class="form-label small fw-bold">Official Corporate Email</label>
+                            <input type="email" class="form-control bg-light" value="{{ user.email }}" readonly>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small fw-bold">Phone Number</label>
+                            <input type="text" name="phone" class="form-control" value="{{ user.phone }}" placeholder="+971 50 123 4567">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small fw-bold">Emergency Contact</label>
+                            <input type="text" name="emergency_contact" class="form-control" value="{{ profile.emergency_contact }}" placeholder="Contact Name & Phone">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small fw-bold">Residential / Field Address</label>
+                            <input type="text" name="address" class="form-control" value="{{ profile.address }}" placeholder="City, Country">
+                        </div>
+                    </div>
+
+                    <h6 class="fw-bold text-dark mb-3"><i class="bi bi-bank me-2"></i>Reimbursement Disbursement Bank Details</h6>
+                    <div class="row g-3 mb-4">
+                        <div class="col-md-4">
+                            <label class="form-label small fw-bold">Bank Name</label>
+                            <input type="text" name="bank_name" class="form-control" value="{{ profile.bank_name }}" placeholder="e.g. First Abu Dhabi Bank">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small fw-bold">Account / IBAN Number</label>
+                            <input type="text" name="bank_account_no" class="form-control font-monospace" value="{{ profile.bank_account_no }}" placeholder="AE0000000000000000">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small fw-bold">SWIFT / IFSC Code</label>
+                            <input type="text" name="bank_ifsc_or_swift" class="form-control font-monospace" value="{{ profile.bank_ifsc_or_swift }}" placeholder="e.g. FABAAEM">
+                        </div>
+                    </div>
+
+                    <div class="text-end">
+                        <button type="submit" class="btn btn-gw-primary px-4">Save Changes</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div class="gw-card mt-4">
+            <div class="gw-card-header">
+                <h5 class="gw-card-title"><i class="bi bi-shield-lock text-primary me-2"></i>Change Password</h5>
+            </div>
+            <div class="gw-card-body p-4">
+                <form method="post" action="{% url 'portal_password_change' %}" class="row g-3">
+                    {% csrf_token %}
+                    <div class="col-md-4">
+                        <label class="form-label small fw-bold" for="old_password">Current password</label>
+                        <input type="password" name="old_password" id="old_password" class="form-control" required autocomplete="current-password">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small fw-bold" for="new_password1">New password</label>
+                        <input type="password" name="new_password1" id="new_password1" class="form-control" required autocomplete="new-password">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small fw-bold" for="new_password2">Confirm new password</label>
+                        <input type="password" name="new_password2" id="new_password2" class="form-control" required autocomplete="new-password">
+                    </div>
+                    <div class="col-12 text-end">
+                        <button type="submit" class="btn btn-outline-primary px-4">Update Password</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

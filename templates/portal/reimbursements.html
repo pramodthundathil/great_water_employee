@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Reimbursements & Payments — Great Waters{% endblock %}
+
+{% block content %}
+<div class="page-title-box">
+    <div>
+        <h1 class="page-title">Reimbursement Disbursements</h1>
+        <p class="page-subtitle">Disburse payments for Director-approved expense claims and record transaction reference numbers.</p>
+    </div>
+</div>
+
+<!-- Pending Payments Queue -->
+<div class="gw-card mb-4">
+    <div class="gw-card-header bg-success bg-opacity-10">
+        <div>
+            <h5 class="gw-card-title text-success">
+                <i class="bi bi-hourglass-split me-2"></i>Approved Claims Awaiting Disbursement ({{ pending_payments.count }})
+            </h5>
+            <small class="text-muted">Director authorized claims ready for corporate account payout.</small>
+        </div>
+    </div>
+    <div class="gw-card-body p-0">
+        <div class="table-responsive">
+            <table class="table gw-table m-0">
+                <thead>
+                    <tr>
+                        <th>Claim #</th>
+                        <th>Employee</th>
+                        <th>Branch</th>
+                        <th>Category</th>
+                        <th>Amount</th>
+                        <th>Director Approved At</th>
+                        <th class="text-end">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for c in pending_payments %}
+                    <tr>
+                        <td>
+                            <a href="{% url 'portal_expense_detail' c.pk %}" class="fw-bold text-decoration-none text-primary">
+                                {{ c.claim_number }}
+                            </a>
+                        </td>
+                        <td>
+                            <div class="fw-semibold">{{ c.employee.full_name }}</div>
+                            <small class="text-muted">{{ c.employee.employee_id }}</small>
+                        </td>
+                        <td><span class="badge bg-light text-dark border">{{ c.branch.code }}</span></td>
+                        <td>{{ c.category.name }}</td>
+                        <td><span class="fs-6 fw-bold text-success">${{ c.amount|floatformat:2 }}</span></td>
+                        <td>{{ c.updated_at|date:"M d, Y H:i" }}</td>
+                        <td class="text-end">
+                            <button class="btn btn-sm btn-gw-primary" onclick="openPaymentModal('{{ c.id }}', '{{ c.claim_number }}', '{{ c.amount|floatformat:2 }}', '{{ c.employee.full_name }}')">
+                                <i class="bi bi-cash me-1"></i> Record Payment
+                            </button>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="7" class="text-center text-muted py-4">No approved claims awaiting disbursement.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Recent Paid Table -->
+<div class="gw-card">
+    <div class="gw-card-header">
+        <h5 class="gw-card-title"><i class="bi bi-check2-all text-primary me-2"></i>Recent Disbursed Payments</h5>
+    </div>
+    <div class="gw-card-body p-0">
+        <div class="table-responsive">
+            <table class="table gw-table m-0">
+                <thead>
+                    <tr>
+                        <th>Claim #</th>
+                        <th>Employee</th>
+                        <th>Branch</th>
+                        <th>Amount</th>
+                        <th>Payment Date</th>
+                        <th>Payment Mode</th>
+                        <th>Transaction Reference</th>
+                        <th>Recorded By</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for c in recent_paid %}
+                    <tr>
+                        <td>
+                            <a href="{% url 'portal_expense_detail' c.pk %}" class="fw-bold text-decoration-none text-primary">
+                                {{ c.claim_number }}
+                            </a>
+                        </td>
+                        <td>{{ c.employee.full_name }}</td>
+                        <td><span class="badge bg-light text-dark border">{{ c.branch.code }}</span></td>
+                        <td class="fw-bold">${{ c.amount|floatformat:2 }}</td>
+                        <td>{{ c.payment_record.payment_date|date:"M d, Y" }}</td>
+                        <td><span class="badge bg-secondary-subtle text-secondary">{{ c.payment_record.get_payment_mode_display }}</span></td>
+                        <td><code class="fw-bold text-dark">{{ c.payment_record.payment_reference }}</code></td>
+                        <td><small class="text-muted">{{ c.payment_record.recorded_by.full_name }}</small></td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="8" class="text-center text-muted py-4">No payment history recorded yet.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Record Payment -->
+<div class="modal fade" id="paymentModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow">
+            <div class="modal-header bg-light">
+                <h5 class="modal-title fw-bold"><i class="bi bi-wallet2 text-success me-2"></i>Record Reimbursement Payment</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="post" action="{% url 'portal_reimbursements' %}">
+                {% csrf_token %}
+                <input type="hidden" name="claim_id" id="paymentClaimId">
+                <div class="modal-body p-4">
+                    <div class="p-3 bg-light rounded-3 mb-3">
+                        <div class="d-flex justify-content-between mb-1">
+                            <span class="text-muted small">Claim:</span>
+                            <span class="fw-bold text-dark" id="modalClaimNum"></span>
+                        </div>
+                        <div class="d-flex justify-content-between mb-1">
+                            <span class="text-muted small">Payee Employee:</span>
+                            <span class="fw-semibold text-dark" id="modalPayeeName"></span>
+                        </div>
+                        <div class="d-flex justify-content-between">
+                            <span class="text-muted small">Total Payout:</span>
+                            <span class="fs-5 fw-extrabold text-success" id="modalClaimAmt"></span>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Payment Date <span class="text-danger">*</span></label>
+                        <input type="date" name="payment_date" class="form-control" required value="{{ today|date:'Y-m-d' }}">
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Payment Mode <span class="text-danger">*</span></label>
+                        <select name="payment_mode" class="form-select" required>
+                            <option value="BANK_TRANSFER">Bank Wire / Electronic Fund Transfer</option>
+                            <option value="CHEQUE">Corporate Cheque</option>
+                            <option value="CASH">Cash Voucher</option>
+                            <option value="CORPORATE_CARD">Corporate Card Settlement</option>
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Transaction Reference / UTR Number <span class="text-danger">*</span></label>
+                        <input type="text" name="payment_reference" class="form-control" placeholder="e.g. UTR-202610-987654 or CHQ-00123" required>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Accounting Remarks (Optional)</label>
+                        <textarea name="remarks" class="form-control" rows="2" placeholder="e.g. Cleared via corporate standard payroll batch..."></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer bg-light">
+                    <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-success px-4">Confirm Payment Disbursed</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    function openPaymentModal(claimId, claimNum, claimAmt, payeeName) {
+        document.getElementById('paymentClaimId').value = claimId;
+        document.getElementById('modalClaimNum').textContent = claimNum;
+        document.getElementById('modalClaimAmt').textContent = '$' + claimAmt;
+        document.getElementById('modalPayeeName').textContent = payeeName;
+        new bootstrap.Modal(document.getElementById('paymentModal')).show();
+    }
+</script>
+{% endblock %}

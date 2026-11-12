@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}Leave Settings{% endblock %}
+{% block content %}
+<div class="page-title-box">
+    <div>
+        <h1 class="page-title">Leave Settings</h1>
+        <p class="page-subtitle">Leave types, entitlement &amp; earned-leave accrual rules, and the public holiday list.</p>
+    </div>
+    <form method="post" onsubmit="return confirm('Credit this month\'s earned leave now? Employees already credited for this month are skipped.');">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="run_accrual">
+        <button class="btn btn-outline-primary"><i class="bi bi-arrow-repeat me-1"></i>Run this month's accrual</button>
+    </form>
+</div>
+
+<div class="gw-card mb-4">
+    <div class="gw-card-header"><h5 class="gw-card-title"><i class="bi bi-calendar2-check me-2"></i>Leave types &amp; policies</h5></div>
+    <div class="gw-card-body p-0">
+        {% for lt in leave_types %}
+        <div class="border-bottom p-3 p-md-4">
+            <form method="post" class="row g-2 align-items-end mb-3">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="update_leave_type">
+                <input type="hidden" name="leave_type_id" value="{{ lt.id }}">
+                <div class="col-md-3">
+                    <label class="form-label small fw-bold m-0">Leave type <code>{{ lt.code }}</code></label>
+                    <input type="text" name="name" value="{{ lt.name }}" class="form-control form-control-sm">
+                </div>
+                <div class="col-auto"><div class="form-check"><input class="form-check-input" type="checkbox" name="is_paid" value="1" id="paid{{ lt.id }}" {% if lt.is_paid %}checked{% endif %}><label class="form-check-label small" for="paid{{ lt.id }}">Paid (uses balance)</label></div></div>
+                <div class="col-auto"><div class="form-check"><input class="form-check-input" type="checkbox" name="is_accrual_based" value="1" id="acc{{ lt.id }}" {% if lt.is_accrual_based %}checked{% endif %}><label class="form-check-label small" for="acc{{ lt.id }}">Earned by service</label></div></div>
+                <div class="col-auto"><div class="form-check"><input class="form-check-input" type="checkbox" name="requires_attachment" value="1" id="att{{ lt.id }}" {% if lt.requires_attachment %}checked{% endif %}><label class="form-check-label small" for="att{{ lt.id }}">Attachment required</label></div></div>
+                <div class="col-auto"><div class="form-check"><input class="form-check-input" type="checkbox" name="is_active" value="1" id="act{{ lt.id }}" {% if lt.is_active %}checked{% endif %}><label class="form-check-label small" for="act{{ lt.id }}">Active</label></div></div>
+                <div class="col-auto ms-auto"><button class="btn btn-sm btn-outline-primary">Save type</button></div>
+            </form>
+
+            {% for p in lt.policies.all %}
+            {% include "portal/_leave_policy_form.html" with policy=p lt=lt %}
+            {% empty %}
+            {% if lt.is_paid %}
+            <div class="small text-muted mb-2">No entitlement policy yet — add one:</div>
+            {% include "portal/_leave_policy_form.html" with policy=None lt=lt %}
+            {% endif %}
+            {% endfor %}
+        </div>
+        {% endfor %}
+
+        <div class="p-3 p-md-4 bg-light">
+            <form method="post" class="row g-2 align-items-end">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="create_leave_type">
+                <div class="col-md-2"><label class="form-label small fw-bold m-0">Code</label><input name="code" class="form-control form-control-sm text-uppercase" required maxlength="20" placeholder="ML"></div>
+                <div class="col-md-3"><label class="form-label small fw-bold m-0">New leave type</label><input name="name" class="form-control form-control-sm" required placeholder="e.g. Maternity Leave"></div>
+                <div class="col-auto"><div class="form-check"><input class="form-check-input" type="checkbox" name="is_paid" value="1" id="newPaid" checked><label class="form-check-label small" for="newPaid">Paid</label></div></div>
+                <div class="col-auto"><div class="form-check"><input class="form-check-input" type="checkbox" name="is_accrual_based" value="1" id="newAcc"><label class="form-check-label small" for="newAcc">Earned by service</label></div></div>
+                <div class="col-auto"><div class="form-check"><input class="form-check-input" type="checkbox" name="requires_attachment" value="1" id="newAtt"><label class="form-check-label small" for="newAtt">Attachment required</label></div></div>
+                <div class="col-auto ms-auto"><button class="btn btn-sm btn-gw-primary">Add leave type</button></div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="gw-card">
+    <div class="gw-card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <h5 class="gw-card-title m-0"><i class="bi bi-calendar-event me-2"></i>Public holidays</h5>
+        <form method="get" class="d-flex gap-1">
+            {% for y in years %}<button name="year" value="{{ y }}" class="btn btn-sm {% if y == year %}btn-primary{% else %}btn-light{% endif %}">{{ y }}</button>{% endfor %}
+        </form>
+    </div>
+    <div class="gw-card-body p-0">
+        <div class="table-responsive">
+            <table class="table gw-table m-0">
+                <thead><tr><th>Date</th><th>Holiday</th><th>Applies to</th><th></th><th></th></tr></thead>
+                <tbody>
+                {% for h in holidays %}
+                <tr>
+                    <td class="text-nowrap">{{ h.date|date:"D, d M Y" }}</td>
+                    <td>{{ h.name }}</td>
+                    <td>{{ h.calendar.branch.name|default:"All branches" }}</td>
+                    <td>{% if h.is_optional %}<span class="badge bg-light text-secondary border">Optional</span>{% endif %}</td>
+                    <td class="text-end">
+                        <form method="post" onsubmit="return confirm('Remove {{ h.name|escapejs }}?');">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="delete_holiday">
+                            <input type="hidden" name="holiday_id" value="{{ h.id }}">
+                            <button class="btn btn-sm btn-link text-danger p-0" aria-label="Remove {{ h.name }}"><i class="bi bi-trash"></i></button>
+                        </form>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="5" class="text-center text-muted py-4">No holidays for {{ year }} yet.</td></tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <form method="post" class="row g-2 align-items-end p-3 p-md-4 bg-light m-0">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="add_holiday">
+            <div class="col-md-2"><label class="form-label small fw-bold m-0">Date</label><input type="date" name="date" class="form-control form-control-sm" required></div>
+            <div class="col-md-4"><label class="form-label small fw-bold m-0">Holiday name</label><input name="name" class="form-control form-control-sm" required></div>
+            <div class="col-md-3"><label class="form-label small fw-bold m-0">Branch</label>
+                <select name="branch" class="form-select form-select-sm"><option value="">All branches</option>{% for b in branches %}<option value="{{ b.id }}">{{ b.name }}</option>{% endfor %}</select>
+            </div>
+            <div class="col-auto"><div class="form-check"><input class="form-check-input" type="checkbox" name="is_optional" value="1" id="hOpt"><label class="form-check-label small" for="hOpt">Optional</label></div></div>
+            <div class="col-auto ms-auto"><button class="btn btn-sm btn-gw-primary">Add holiday</button></div>
+        </form>
+    </div>
+</div>
+<p class="small text-muted mt-3"><i class="bi bi-info-circle me-1"></i>Non-optional holidays are not counted as leave days. Year-end carry-forward / reset runs with <code>python manage.py process_yearly_leave_reset</code> (scheduled on 1 January).</p>
+{% endblock %}

@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Claim {{ claim.claim_number }} — Great Waters{% endblock %}
+
+{% block content %}
+<div class="page-title-box">
+    <div>
+        <div class="d-flex align-items-center gap-2 mb-1">
+            <a href="{% url 'portal_expenses' %}" class="btn btn-sm btn-light py-0 px-2"><i class="bi bi-arrow-left"></i></a>
+            <h1 class="page-title m-0">Claim {{ claim.claim_number }}</h1>
+            <span class="status-badge {% if 'REJECTED' in claim.status %}badge-rejected{% elif claim.status == 'PAID' %}badge-paid{% elif 'APPROVED' in claim.status %}badge-approved{% elif claim.status == 'DRAFT' %}badge-draft{% else %}badge-pending{% endif %}">
+                {{ claim.get_status_display }}
+            </span>
+        </div>
+        <p class="page-subtitle">Submitted on {{ claim.submitted_at|date:"M d, Y H:i"|default:"Not submitted yet" }} by {{ claim.employee.full_name }}</p>
+    </div>
+    <div class="d-flex gap-2">
+        {% if can_edit %}
+        <a href="{% url 'portal_expense_edit' claim.pk %}" class="btn btn-outline-primary"><i class="bi bi-pencil me-1"></i> Edit</a>
+        {% endif %}
+        {% if claim.status in 'DRAFT,REJECTED_BY_ADMIN,REJECTED_BY_DIRECTOR' and claim.employee == user %}
+        <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="submit">
+            <button type="submit" class="btn btn-gw-primary"><i class="bi bi-send me-1"></i> Submit for Review</button>
+        </form>
+        {% endif %}
+        {% if claim.status in 'DRAFT,UNDER_ADMIN_REVIEW' and claim.employee == user %}
+        <form method="post" onsubmit="return confirm('Are you sure you want to withdraw this claim?');">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="withdraw">
+            <button type="submit" class="btn btn-outline-danger"><i class="bi bi-x-circle me-1"></i> Withdraw</button>
+        </form>
+        {% endif %}
+    </div>
+</div>
+
+<div class="row g-4">
+    <!-- Main Claim Information -->
+    <div class="col-lg-8">
+        <div class="gw-card mb-4">
+            <div class="gw-card-header">
+                <h5 class="gw-card-title"><i class="bi bi-info-circle me-2"></i>Claim Details</h5>
+            </div>
+            <div class="gw-card-body">
+                <div class="row g-3 mb-4">
+                    <div class="col-md-4">
+                        <small class="text-muted text-uppercase fw-bold">Amount</small>
+                        <div class="fs-4 fw-extrabold text-primary">${{ claim.amount|floatformat:2 }}</div>
+                    </div>
+                    <div class="col-md-4">
+                        <small class="text-muted text-uppercase fw-bold">Category</small>
+                        <div class="fs-6 fw-bold text-dark">{{ claim.category.name }}</div>
+                    </div>
+                    <div class="col-md-4">
+                        <small class="text-muted text-uppercase fw-bold">Expense Date</small>
+                        <div class="fs-6 fw-bold text-dark">{{ claim.expense_date|date:"F d, Y" }}</div>
+                    </div>
+                </div>
+
+                <div class="mb-4">
+                    <small class="text-muted text-uppercase fw-bold">Business Purpose / Description</small>
+                    <div class="p-3 bg-light rounded-3 mt-1 text-dark">{{ claim.description }}</div>
+                </div>
+
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <small class="text-muted text-uppercase fw-bold">Project / Reference</small>
+                        <div class="fw-semibold text-secondary">{{ claim.project_reference|default:"None specified" }}</div>
+                    </div>
+                    <div class="col-md-6">
+                        <small class="text-muted text-uppercase fw-bold">Branch Office</small>
+                        <div class="fw-semibold text-secondary">{{ claim.branch.name }} ({{ claim.branch.code }})</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Receipts & Attachments Gallery -->
+        <div class="gw-card">
+            <div class="gw-card-header">
+                <h5 class="gw-card-title"><i class="bi bi-paperclip me-2"></i>Verified Receipts & Proofs ({{ attachments.count }})</h5>
+            </div>
+            <div class="gw-card-body">
+                <div class="row g-3">
+                    {% for att in attachments %}
+                    <div class="col-md-6">
+                        <div class="border rounded-3 p-3 d-flex align-items-center justify-content-between bg-light">
+                            <div class="d-flex align-items-center gap-3 overflow-hidden">
+                                <div class="bg-white p-2 rounded shadow-sm text-primary">
+                                    <i class="bi {% if 'pdf' in att.file_type %}bi-file-earmark-pdf-fill text-danger{% else %}bi-file-earmark-image-fill text-info{% endif %} fs-3"></i>
+                                </div>
+                                <div class="text-truncate">
+                                    <div class="fw-bold small text-truncate">{{ att.original_filename }}</div>
+                                    <small class="text-muted">{{ att.uploaded_at|date:"M d, Y" }} &bull; {{ att.file_size|filesizeformat }}</small>
+                                </div>
+                            </div>
+                            <a href="{{ att.file.url }}" target="_blank" class="btn btn-sm btn-white border shadow-sm ms-2" title="View or Download">
+                                <i class="bi bi-box-arrow-up-right"></i>
+                            </a>
+                        </div>
+                    </div>
+                    {% empty %}
+                    <div class="col-12 text-center py-4 text-muted">
+                        <i class="bi bi-exclamation-circle fs-3 text-warning mb-2 d-block"></i>
+                        No receipts uploaded for this claim.
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Right Sidebar: Workflow Progression & Approval Trail -->
+    <div class="col-lg-4">
+        <!-- Reimbursement Payment Details Card if Paid -->
+        {% if claim.status == 'PAID' and claim.payment_record %}
+        <div class="gw-card border-success mb-4" style="background: #F0FDF4;">
+            <div class="gw-card-header bg-transparent border-success-subtle">
+                <h5 class="gw-card-title text-success"><i class="bi bi-cash-coin me-2"></i>Payment Disbursed</h5>
+            </div>
+            <div class="gw-card-body">
+                <div class="mb-2">
+                    <small class="text-muted fw-bold">Payment Reference:</small>
+                    <div class="fw-bold text-dark font-monospace">{{ claim.payment_record.payment_reference }}</div>
+                </div>
+                <div class="mb-2">
+                    <small class="text-muted fw-bold">Disbursement Date:</small>
+                    <div class="fw-bold text-dark">{{ claim.payment_record.payment_date|date:"M d, Y" }}</div>
+                </div>
+                <div>
+                    <small class="text-muted fw-bold">Mode:</small>
+                    <div class="badge bg-success">{{ claim.payment_record.get_payment_mode_display }}</div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Approval History Trail -->
+        <div class="gw-card">
+            <div class="gw-card-header">
+                <h5 class="gw-card-title"><i class="bi bi-clock-history me-2"></i>Approval Workflow Log</h5>
+            </div>
+            <div class="gw-card-body">
+                <div class="timeline">
+                    {% for h in approval_history %}
+                    <div class="mb-3 pb-3 border-bottom">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <span class="badge {% if h.action == 'APPROVED' %}bg-success{% elif h.action == 'REJECTED' %}bg-danger{% else %}bg-secondary{% endif %}">
+                                {{ h.action }}
+                            </span>
+                            <small class="text-muted">{{ h.created_at|date:"M d, H:i" }}</small>
+                        </div>
+                        <div class="fw-bold small text-dark">{{ h.approver.full_name }} ({{ h.approver.employee_id }})</div>
+                        <div class="small text-muted">{{ h.stage }}</div>
+                        {% if h.remarks %}
+                        <div class="p-2 bg-light rounded small mt-2 text-secondary">
+                            <em>"{{ h.remarks }}"</em>
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% empty %}
+                    <div class="text-muted small text-center py-3">No approval actions recorded yet.</div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
