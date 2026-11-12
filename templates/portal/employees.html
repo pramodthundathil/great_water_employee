@@ -241,6 +241,15 @@
                                         </a>
                                     </li>
                                     {% endif %}
+                                    {% if can_reset_passwords and emp != user %}
+                                    <li>
+                                        <button type="button" class="dropdown-item rounded small btn-change-password"
+                                                data-bs-toggle="modal" data-bs-target="#changePasswordModal"
+                                                data-pk="{{ emp.pk }}" data-name="{{ emp.full_name }}" data-empid="{{ emp.employee_id }}">
+                                            <i class="bi bi-key me-2 text-warning"></i> Change Password
+                                        </button>
+                                    </li>
+                                    {% endif %}
                                     <li>
                                         <a class="dropdown-item rounded small" href="{% url 'portal_leave_ledger' %}?emp_id={{ emp.id }}">
                                             <i class="bi bi-wallet2 me-2 text-primary"></i> Leave Balances
@@ -454,4 +463,61 @@
         </div>
     </div>
 </div>
+
+<!-- ==========================================================================
+     Modal: Change an employee's password (Director / HR Coordinator)
+     ========================================================================== -->
+{% if can_reset_passwords %}
+<div class="modal fade" id="changePasswordModal" tabindex="-1" aria-labelledby="changePasswordModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content gw-modal-glass">
+            <form method="post" autocomplete="off">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="reset_password">
+                <input type="hidden" name="employee_pk" id="cpEmployeePk">
+                <div class="modal-header border-0 pb-0">
+                    <h5 class="modal-title fw-bold" id="changePasswordModalLabel"><i class="bi bi-key me-2"></i>Change password</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="small text-secondary mb-3">Set a new password for <strong id="cpEmployeeName" class="text-dark"></strong>. Share it with them securely; they can change it from their profile.</p>
+                    <label class="form-label small fw-semibold" for="cpNewPassword">New password</label>
+                    <input type="password" name="new_password" id="cpNewPassword" class="form-control rounded-pill px-3" minlength="8" required autocomplete="new-password" placeholder="At least 8 characters">
+                    <label class="form-label small fw-semibold mt-3" for="cpConfirmPassword">Confirm password</label>
+                    <input type="password" id="cpConfirmPassword" class="form-control rounded-pill px-3" minlength="8" required autocomplete="new-password">
+                    <div class="invalid-feedback d-block small mt-1" id="cpMismatch" style="display:none !important;">Passwords do not match.</div>
+                </div>
+                <div class="modal-footer border-0 pt-0">
+                    <button type="button" class="btn btn-sm btn-light rounded-pill px-3" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-sm btn-cta-purple px-4"><i class="bi bi-check2 me-1"></i> Set password</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    var modal = document.getElementById('changePasswordModal');
+    if (!modal) return;
+    var form = modal.querySelector('form');
+    var pw = document.getElementById('cpNewPassword');
+    var confirmPw = document.getElementById('cpConfirmPassword');
+    var mismatch = document.getElementById('cpMismatch');
+    modal.addEventListener('show.bs.modal', function (event) {
+        var btn = event.relatedTarget;
+        document.getElementById('cpEmployeePk').value = btn.getAttribute('data-pk');
+        document.getElementById('cpEmployeeName').textContent = btn.getAttribute('data-name') + ' (' + btn.getAttribute('data-empid') + ')';
+        form.reset();
+        mismatch.style.setProperty('display', 'none', 'important');
+    });
+    form.addEventListener('submit', function (e) {
+        if (pw.value !== confirmPw.value) {
+            e.preventDefault();
+            mismatch.style.setProperty('display', 'block', 'important');
+            confirmPw.focus();
+        }
+    });
+});
+</script>
+{% endif %}
 {% endblock %}

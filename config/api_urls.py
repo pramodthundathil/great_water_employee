@@ -9,8 +9,10 @@ from portal.api_views import DashboardSummaryView, PendingApprovalsView
 from portal.analytics_api import DashboardAnalyticsView
 from organization.api_views import UserBranchListView, DepartmentListView
 from organization.config_api import (
-    EmployeeListView, EmployeeDetailView, BranchOverviewView,
-    ExpenseCategoryConfigView, LeaveSettingsView,
+    EmployeeListView, EmployeeDetailView, EmployeeToggleActiveView, EmployeeSetPasswordView,
+    EmployeeFormOptionsView, BranchOverviewView, BranchUpdateView,
+    ExpenseCategoryConfigView, ExpenseCategoryUpdateView,
+    LeaveSettingsView, LeaveTypeUpdateView, LeavePolicyCreateView, LeavePolicyUpdateView,
 )
 from expenses.api_views import (
     ExpenseCategoryListView, ExpenseClaimListCreateView,
@@ -51,11 +53,19 @@ urlpatterns = [
     path("organization/departments/", DepartmentListView.as_view(), name="api_departments"),
     path("organization/branches/overview/", BranchOverviewView.as_view(), name="api_branches_overview"),
     path("organization/employees/", EmployeeListView.as_view(), name="api_employees"),
+    path("organization/branches/<int:pk>/", BranchUpdateView.as_view(), name="api_branch_update"),
+    path("organization/employees/form-options/", EmployeeFormOptionsView.as_view(), name="api_employee_form_options"),
     path("organization/employees/<int:pk>/", EmployeeDetailView.as_view(), name="api_employee_detail"),
+    path("organization/employees/<int:pk>/toggle-active/", EmployeeToggleActiveView.as_view(), name="api_employee_toggle_active"),
+    path("organization/employees/<int:pk>/set-password/", EmployeeSetPasswordView.as_view(), name="api_employee_set_password"),
 
     # Configuration (read-only)
     path("settings/expense-categories/", ExpenseCategoryConfigView.as_view(), name="api_settings_expense_categories"),
+    path("settings/expense-categories/<int:pk>/", ExpenseCategoryUpdateView.as_view(), name="api_settings_expense_category"),
     path("settings/leave-types/", LeaveSettingsView.as_view(), name="api_settings_leave_types"),
+    path("settings/leave-types/<int:pk>/", LeaveTypeUpdateView.as_view(), name="api_settings_leave_type"),
+    path("settings/leave-types/<int:pk>/policies/", LeavePolicyCreateView.as_view(), name="api_settings_leave_policy_create"),
+    path("settings/leave-policies/<int:pk>/", LeavePolicyUpdateView.as_view(), name="api_settings_leave_policy"),
 
     # Expenses
     path("expenses/categories/", ExpenseCategoryListView.as_view(), name="api_expense_categories"),

@@ -101,18 +101,20 @@
                 </form>
             </div>
         </div>
+        {% if can_reset_password %}
         <div class="gw-card">
-            <div class="gw-card-header"><h5 class="gw-card-title"><i class="bi bi-key me-2"></i>Set temporary password</h5></div>
+            <div class="gw-card-header"><h5 class="gw-card-title"><i class="bi bi-key me-2"></i>Change password</h5></div>
             <div class="gw-card-body p-4">
                 <form method="post">
                     {% csrf_token %}
                     <input type="hidden" name="action" value="reset_password">
-                    <input type="text" name="new_password" class="form-control mb-2" minlength="8" placeholder="At least 8 characters" required autocomplete="off">
+                    <input type="password" name="new_password" class="form-control mb-2" minlength="8" placeholder="New password (min. 8 characters)" required autocomplete="new-password">
                     <button type="submit" class="btn btn-outline-primary w-100">Set password</button>
                 </form>
                 <p class="small text-muted mt-2 mb-0">Employees can also use “Forgot password” on the sign-in page.</p>
             </div>
         </div>
+        {% endif %}
     </div>
 </div>
 {% endblock %}

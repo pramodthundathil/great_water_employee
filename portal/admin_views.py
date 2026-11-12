@@ -38,10 +38,10 @@ ALLOWED_UPLOAD_TYPES = ("image/jpeg", "image/png", "image/heic", "image/heif", "
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
 
-def can_manage_users(user):
-    return user.is_superuser or user.role in [
-        RoleChoices.DIRECTOR, RoleChoices.ADMIN_MANAGER, RoleChoices.HR_COORDINATOR
-    ]
+from accounts.services import (  # noqa: E402  (shared with the mobile API)
+    EmployeeError, can_manage_users, can_reset_passwords, can_set_scope, create_employee,
+    password_reset_block_reason, set_employee_password, toggle_employee_active, update_employee,
+)
 
 
 def get_default_organization(user=None):
@@ -109,64 +109,22 @@ def employee_edit_view(request, pk):
 
     if request.method == "POST":
         action = request.POST.get("action", "save")
-
-        if action == "toggle_active":
-            if emp == user:
-                messages.error(request, "You cannot deactivate your own account.")
-            else:
-                emp.is_active = not emp.is_active
-                emp.save(update_fields=["is_active"])
+        try:
+            if action == "toggle_active":
+                toggle_employee_active(user, emp)
                 messages.success(request, f"{emp.full_name} has been {'re-activated' if emp.is_active else 'deactivated'}.")
-            return redirect("portal_employee_edit", pk=emp.pk)
-
-        if action == "reset_password":
-            new_password = request.POST.get("new_password", "").strip()
-            if len(new_password) < 8:
-                messages.error(request, "Temporary password must be at least 8 characters.")
+            elif action == "reset_password":
+                set_employee_password(user, emp, request.POST.get("new_password", ""))
+                messages.success(request, f"New password set for {emp.employee_id}. Share it securely with the employee.")
             else:
-                emp.set_password(new_password)
-                emp.save()
-                messages.success(request, f"Temporary password set for {emp.employee_id}. Share it securely with the employee.")
-            return redirect("portal_employee_edit", pk=emp.pk)
-
-        email = request.POST.get("email", "").strip().lower()
-        if not email:
-            messages.error(request, "E-mail is required.")
-            return redirect("portal_employee_edit", pk=emp.pk)
-        if User.objects.filter(email__iexact=email).exclude(pk=emp.pk).exists():
-            messages.error(request, f"Another employee already uses {email}.")
-            return redirect("portal_employee_edit", pk=emp.pk)
-
-        role = request.POST.get("role", emp.role)
-        if role not in RoleChoices.values:
-            role = emp.role
-
-        branch_id = request.POST.get("primary_branch")
-        branch = accessible_branches.filter(id=branch_id).first() if branch_id else emp.primary_branch
-
-        doj = _parse_date(request.POST.get("date_of_joining"))
-        lead_id = request.POST.get("reporting_lead")
-        lead = User.objects.filter(id=lead_id).exclude(pk=emp.pk).first() if lead_id else None
-        dept_id = request.POST.get("department")
-
-        emp.first_name = request.POST.get("first_name", "").strip()
-        emp.last_name = request.POST.get("last_name", "").strip()
-        emp.email = email
-        emp.phone = request.POST.get("phone", "").strip()
-        emp.role = role
-        emp.primary_branch = branch
-        if user.is_superuser or user.is_director:
-            emp.is_global_scope = request.POST.get("is_global_scope") == "1"
-        emp.save()
-
-        profile.department = Department.objects.filter(id=dept_id).first() if dept_id else None
-        profile.designation = request.POST.get("designation", "").strip()
-        profile.reporting_lead = lead
-        if doj:
-            profile.date_of_joining = doj
-        profile.save()
-
-        messages.success(request, f"Employee record for {emp.full_name} ({emp.employee_id}) updated.")
+                data = request.POST.copy()
+                if can_set_scope(user):
+                    # An unticked checkbox is not posted at all.
+                    data["is_global_scope"] = request.POST.get("is_global_scope", "0")
+                update_employee(user, emp, data)
+                messages.success(request, f"Employee record for {emp.full_name} ({emp.employee_id}) updated.")
+        except EmployeeError as e:
+            messages.error(request, str(e))
         return redirect("portal_employee_edit", pk=emp.pk)
 
     leads = User.objects.filter(
@@ -183,7 +141,8 @@ def employee_edit_view(request, pk):
         "all_departments": Department.objects.filter(is_active=True),
         "all_roles": RoleChoices.choices,
         "all_leads": leads,
-        "can_set_scope": user.is_superuser or user.is_director,
+        "can_set_scope": can_set_scope(user),
+        "can_reset_password": password_reset_block_reason(user, emp) is None,
     }
     return render(request, "portal/employee_edit.html", context)
 

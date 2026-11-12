@@ -23,6 +23,7 @@ from leaves.services import (
     validate_leave_request, LeaveRequestError,
 )
 from portal.admin_views import validate_upload, can_manage_users, get_default_organization
+from accounts.services import EmployeeError, can_reset_passwords, create_employee, set_employee_password
 import secrets
 from notifications.models import NotificationEvent
 from notifications.services import notify_expense_event, notify_leave_event
@@ -1037,73 +1038,22 @@ def employees_view(request):
         RoleChoices.DIRECTOR, RoleChoices.ADMIN_MANAGER, RoleChoices.HR_COORDINATOR
     ]
 
-    # Handle Add Employee modal submission
     if request.method == "POST":
-        if not can_manage:
-            messages.error(request, "You do not have administrative authorization to register new staff.")
-            return redirect("portal_employees")
-
-        emp_id = request.POST.get("employee_id", "").strip().upper()
-        first_name = request.POST.get("first_name", "").strip()
-        last_name = request.POST.get("last_name", "").strip()
-        email = request.POST.get("email", "").strip().lower()
-        phone = request.POST.get("phone", "").strip()
-        role = request.POST.get("role", RoleChoices.EMPLOYEE)
-        branch_id = request.POST.get("primary_branch")
-        dept_id = request.POST.get("department")
-        designation = request.POST.get("designation", "").strip()
-        reporting_lead_id = request.POST.get("reporting_lead")
-        gender = request.POST.get("gender", "Unspecified").strip()
-        password = request.POST.get("password", "").strip()
-        generated_password = not password
-        if generated_password:
-            password = "GW-" + secrets.token_urlsafe(9)
-        elif len(password) < 8:
-            messages.error(request, "Temporary password must be at least 8 characters.")
-            return redirect("portal_employees")
-        if role not in RoleChoices.values:
-            role = RoleChoices.EMPLOYEE
+        back = redirect(f"{request.path}?{request.GET.urlencode()}" if request.GET else "portal_employees")
         try:
-            date_of_joining = datetime.strptime(request.POST.get("date_of_joining", ""), "%Y-%m-%d").date()
-        except ValueError:
-            date_of_joining = timezone.now().date()
-
-        if not emp_id or not email:
-            messages.error(request, "Employee ID and Email address are required fields.")
-            return redirect("portal_employees")
-
-        if User.objects.filter(Q(employee_id=emp_id) | Q(email=email)).exists():
-            messages.error(request, f"An employee profile with ID '{emp_id}' or Email '{email}' already exists.")
-            return redirect("portal_employees")
-
-        target_branch = accessible_branches.filter(id=branch_id).first() if branch_id else user.primary_branch
-
-        new_user = User.objects.create_user(
-            username=emp_id,
-            employee_id=emp_id,
-            email=email,
-            password=password,
-            first_name=first_name,
-            last_name=last_name,
-            phone=phone,
-            role=role,
-            primary_branch=target_branch
-        )
-
-        dept = Department.objects.filter(id=dept_id).first() if dept_id else None
-        rep_lead = User.objects.filter(id=reporting_lead_id).first() if reporting_lead_id else None
-
-        EmployeeProfile.objects.create(
-            user=new_user,
-            department=dept,
-            designation=designation or "Staff Specialist",
-            reporting_lead=rep_lead,
-            date_of_joining=date_of_joining
-        )
-
-        messages.success(request, f"Employee {new_user.full_name} ({emp_id}) added successfully to the roster.")
+            if request.POST.get("action") == "reset_password":
+                target = get_object_or_404(User, pk=request.POST.get("employee_pk"))
+                set_employee_password(user, target, request.POST.get("new_password", ""))
+                messages.success(request, f"New password set for {target.full_name} ({target.employee_id}). Share it securely with the employee.")
+                return back
+            # Add Employee modal submission
+            new_user, generated_password = create_employee(user, request.POST)
+        except EmployeeError as e:
+            messages.error(request, str(e))
+            return back
+        messages.success(request, f"Employee {new_user.full_name} ({new_user.employee_id}) added successfully to the roster.")
         if generated_password:
-            messages.info(request, f"Temporary password for {emp_id}: {password}  — share it securely; the employee can change it from their profile.")
+            messages.info(request, f"Temporary password for {new_user.employee_id}: {generated_password}  — share it securely; the employee can change it from their profile.")
         return redirect("portal_employees")
 
     # Search and Filter GET parameters
@@ -1187,6 +1137,7 @@ def employees_view(request):
         "all_roles": RoleChoices.choices,
         "all_leads": all_leads,
         "can_manage_employees": can_manage,
+        "can_reset_passwords": can_reset_passwords(user),
         "today": date.today(),
     }
     return render(request, "portal/employees.html", context)
