@@ -8,6 +8,10 @@ from accounts.api_views import (
 from portal.api_views import DashboardSummaryView, PendingApprovalsView
 from portal.analytics_api import DashboardAnalyticsView
 from organization.api_views import UserBranchListView, DepartmentListView
+from organization.config_api import (
+    EmployeeListView, EmployeeDetailView, BranchOverviewView,
+    ExpenseCategoryConfigView, LeaveSettingsView,
+)
 from expenses.api_views import (
     ExpenseCategoryListView, ExpenseClaimListCreateView,
     ExpenseClaimDetailView, ExpenseClaimSubmitView, ExpenseClaimWithdrawView,
@@ -45,6 +49,13 @@ urlpatterns = [
     # Organization
     path("organization/branches/", UserBranchListView.as_view(), name="api_branches"),
     path("organization/departments/", DepartmentListView.as_view(), name="api_departments"),
+    path("organization/branches/overview/", BranchOverviewView.as_view(), name="api_branches_overview"),
+    path("organization/employees/", EmployeeListView.as_view(), name="api_employees"),
+    path("organization/employees/<int:pk>/", EmployeeDetailView.as_view(), name="api_employee_detail"),
+
+    # Configuration (read-only)
+    path("settings/expense-categories/", ExpenseCategoryConfigView.as_view(), name="api_settings_expense_categories"),
+    path("settings/leave-types/", LeaveSettingsView.as_view(), name="api_settings_leave_types"),
 
     # Expenses
     path("expenses/categories/", ExpenseCategoryListView.as_view(), name="api_expense_categories"),

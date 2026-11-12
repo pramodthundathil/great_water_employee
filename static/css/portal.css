@@ -2116,7 +2116,11 @@ dialog.gw-dialog::backdrop {
 }
 
 .gw-settings-form .form-control:user-invalid,
-.gw-settings-form .form-select:user-invalid,
+.gw-settings-form .form-select:user-invalid {
+    border-color: #DC2626;
+    background-color: #FEF2F2;
+}
+
 .gw-settings-form .form-control.user-invalid-fallback,
 .gw-settings-form .form-select.user-invalid-fallback {
     border-color: #DC2626;
@@ -2124,10 +2128,17 @@ dialog.gw-dialog::backdrop {
 }
 
 .gw-settings-form .form-control:user-invalid ~ .field-error-msg,
-.gw-settings-form .form-select:user-invalid ~ .field-error-msg,
+.gw-settings-form .form-select:user-invalid ~ .field-error-msg {
+    display: flex;
+}
+
 .gw-settings-form .form-control.user-invalid-fallback ~ .field-error-msg,
 .gw-settings-form .form-select.user-invalid-fallback ~ .field-error-msg {
     display: flex;
+}
+
+[hidden] {
+    display: none !important;
 }
 
 .gw-sticky-panel {

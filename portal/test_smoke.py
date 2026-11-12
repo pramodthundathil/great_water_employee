@@ -83,6 +83,13 @@ class StaticFilesWhiteNoiseTests(SimpleTestCase):
             }
             with override_settings(DEBUG=False, STATIC_ROOT=static_root, STORAGES=storages):
                 call_command("collectstatic", interactive=False, verbosity=0)
-                resp = self.client.get("/static/css/portal.css")
+                from django.contrib.staticfiles.storage import staticfiles_storage
+
+                hashed_css_url = staticfiles_storage.url("css/portal.css")
+                resp = self.client.get(hashed_css_url)
                 self.assertEqual(resp.status_code, 200)
+                css_body = b"".join(resp.streaming_content).decode("utf-8")
                 resp.close()
+                self.assertIn(".gw-lt-card", css_body)
+                self.assertIn("dialog.gw-dialog", css_body)
+                self.assertIn(".gw-branch-card", css_body)
