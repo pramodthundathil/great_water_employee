@@ -21,7 +21,9 @@ from leaves.serializers import (
 from leaves.services import (
     get_employee_leave_balances, record_manual_leave_adjustment,
     validate_leave_request, LeaveRequestError, calculate_leave_days,
+    log_leave_audit, client_ip, resubmit_leave_application,
 )
+from leaves.models import LeaveAuditAction, fmt_days
 from leaves.models import Holiday
 from django.db.models import Q
 
@@ -45,6 +47,47 @@ def resolve_target_employee(request):
     return None
 from accounts.models import RoleChoices, User
 from notifications.services import notify_leave_event
+
+API_SOURCE = "MOBILE"
+
+
+def parse_optional_date(value, label):
+    if value in (None, ""):
+        return None
+    try:
+        return datetime.strptime(str(value)[:10], "%Y-%m-%d").date()
+    except ValueError:
+        raise ValidationError(f"Invalid {label}. Use YYYY-MM-DD.")
+
+
+def review_kwargs(request):
+    """Remarks plus the optional partial-approval range shared by every review stage."""
+    return {
+        "remarks": request.data.get("remarks", "") or "",
+        "approved_start_date": parse_optional_date(request.data.get("approved_start_date"), "approved start date"),
+        "approved_end_date": parse_optional_date(request.data.get("approved_end_date"), "approved end date"),
+        "source": API_SOURCE,
+        "ip_address": client_ip(request),
+    }
+
+
+def review_response(app, recorded):
+    if recorded == "REJECTED":
+        detail = "Leave rejected and returned to the employee."
+    elif recorded.startswith("PARTIALLY_"):
+        detail = (f"Partially {recorded.split('_', 1)[1].lower()}: {fmt_days(app.number_of_days)} of "
+                  f"{fmt_days(app.requested_number_of_days)} day(s) ({app.start_date:%d %b} to {app.end_date:%d %b %Y}).")
+    else:
+        detail = f"Leave {recorded.lower()} successfully."
+    return Response({"detail": detail, "status": app.status, "action": recorded})
+
+
+def can_view_application(user, application):
+    is_owner = application.employee_id == user.id
+    is_lead = getattr(getattr(application.employee, "profile", None), "reporting_lead_id", None) == user.id
+    has_branch_access = user.can_access_branch(application.branch) and user.role in [
+        RoleChoices.HR_COORDINATOR, RoleChoices.DIRECTOR, RoleChoices.ADMIN_MANAGER]
+    return is_owner or is_lead or has_branch_access or user.is_superuser
 
 
 class LeaveTypeListView(APIView):
@@ -183,6 +226,8 @@ class LeaveApplicationListCreateView(APIView):
             attachment=attachment,
             status=LeaveApplicationStatus.PENDING_LEAD_RECOMMENDATION
         )
+        log_leave_audit(application, user, LeaveAuditAction.CREATED, stage="EMPLOYEE",
+                        source=API_SOURCE, ip_address=client_ip(request))
 
         notify_leave_event(application, "LEAVE_SUBMITTED")
         detail_serializer = LeaveApplicationDetailSerializer(application, context={"request": request})
@@ -241,12 +286,7 @@ class LeaveApplicationDetailView(APIView):
         user = request.user
         application = get_object_or_404(LeaveApplication, pk=pk)
 
-        # Security check
-        is_owner = application.employee == user
-        is_lead = hasattr(application.employee, "profile") and application.employee.profile.reporting_lead == user
-        has_branch_access = user.can_access_branch(application.branch) and user.role in [RoleChoices.HR_COORDINATOR, RoleChoices.DIRECTOR, RoleChoices.ADMIN_MANAGER]
-
-        if not (is_owner or is_lead or has_branch_access or user.is_superuser):
+        if not can_view_application(user, application):
             return Response({"detail": "Permission denied."}, status=status.HTTP_403_FORBIDDEN)
 
         serializer = LeaveApplicationDetailSerializer(application, context={"request": request})
@@ -259,7 +299,7 @@ class LeaveApplicationWithdrawView(APIView):
     def post(self, request, pk):
         app = get_object_or_404(LeaveApplication, pk=pk, employee=request.user)
         try:
-            app.withdraw(request.user)
+            app.withdraw(request.user, source=API_SOURCE, ip_address=client_ip(request))
             return Response({"detail": "Leave application withdrawn.", "status": app.status})
         except ValidationError as e:
             return Response({"detail": " ".join(e.messages)}, status=status.HTTP_400_BAD_REQUEST)
@@ -278,13 +318,12 @@ class LeaveApplicationLeadRecommendView(APIView):
             return Response({"detail": "Only the designated Lead/Manager can recommend this leave."}, status=status.HTTP_403_FORBIDDEN)
 
         action = request.data.get("action", "").upper()
-        remarks = request.data.get("remarks", "")
-
         try:
-            app.lead_review(approver=user, action=action, remarks=remarks)
-            event_type = "LEAVE_LEAD_RECOMMENDED" if action == "RECOMMENDED" else "LEAVE_LEAD_REJECTED"
-            notify_leave_event(app, event_type, remarks=remarks)
-            return Response({"detail": f"Leave {action.lower()} successfully.", "status": app.status})
+            kwargs = review_kwargs(request)
+            recorded = app.lead_review(approver=user, action=action, **kwargs)
+            notify_leave_event(app, "LEAVE_LEAD_REJECTED" if recorded == "REJECTED" else "LEAVE_LEAD_RECOMMENDED",
+                               remarks=kwargs["remarks"], partial=recorded.startswith("PARTIALLY_"))
+            return review_response(app, recorded)
         except ValidationError as e:
             return Response({"detail": " ".join(e.messages)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -302,13 +341,12 @@ class LeaveApplicationHrVerifyView(APIView):
             return Response({"detail": "You do not have access to this branch."}, status=status.HTTP_403_FORBIDDEN)
 
         action = request.data.get("action", "").upper()
-        remarks = request.data.get("remarks", "")
-
         try:
-            app.hr_review(approver=user, action=action, remarks=remarks)
-            event_type = "LEAVE_HR_VERIFIED" if action == "VERIFIED" else "LEAVE_HR_REJECTED"
-            notify_leave_event(app, event_type, remarks=remarks)
-            return Response({"detail": f"Leave {action.lower()} successfully.", "status": app.status})
+            kwargs = review_kwargs(request)
+            recorded = app.hr_review(approver=user, action=action, **kwargs)
+            notify_leave_event(app, "LEAVE_HR_REJECTED" if recorded == "REJECTED" else "LEAVE_HR_VERIFIED",
+                               remarks=kwargs["remarks"], partial=recorded.startswith("PARTIALLY_"))
+            return review_response(app, recorded)
         except ValidationError as e:
             return Response({"detail": " ".join(e.messages)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -326,15 +364,106 @@ class LeaveApplicationDirectorApprovalView(APIView):
             return Response({"detail": "You do not have access to this branch."}, status=status.HTTP_403_FORBIDDEN)
 
         action = request.data.get("action", "").upper()
-        remarks = request.data.get("remarks", "")
-
         try:
-            app.director_review(approver=user, action=action, remarks=remarks)
-            event_type = "LEAVE_DIRECTOR_APPROVED" if action == "APPROVED" else "LEAVE_DIRECTOR_REJECTED"
-            notify_leave_event(app, event_type, remarks=remarks)
-            return Response({"detail": f"Leave {action.lower()} successfully.", "status": app.status})
+            kwargs = review_kwargs(request)
+            recorded = app.director_review(approver=user, action=action, **kwargs)
+            notify_leave_event(app, "LEAVE_DIRECTOR_REJECTED" if recorded == "REJECTED" else "LEAVE_DIRECTOR_APPROVED",
+                               remarks=kwargs["remarks"], partial=recorded.startswith("PARTIALLY_"))
+            return review_response(app, recorded)
         except ValidationError as e:
             return Response({"detail": " ".join(e.messages)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class LeaveApplicationResubmitView(APIView):
+    """
+    POST /api/v1/leaves/applications/<pk>/resubmit/
+    Edit a rejected application and send it back to the Lead / Manager.
+    Accepts the same fields as creating a leave, plus optional resubmit_note and remove_attachment.
+    Omitted fields keep their current value.
+    """
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def post(self, request, pk):
+        app = get_object_or_404(LeaveApplication, pk=pk, employee=request.user)
+        data = request.data
+        leave_type = app.leave_type
+        if data.get("leave_type"):
+            leave_type = get_object_or_404(LeaveType, id=data.get("leave_type"), is_active=True)
+        try:
+            start_date = parse_optional_date(data.get("start_date"), "start date") or app.requested_start_date or app.start_date
+            end_date = parse_optional_date(data.get("end_date"), "end date") or app.requested_end_date or app.end_date
+        except ValidationError as e:
+            return Response({"detail": " ".join(e.messages)}, status=status.HTTP_400_BAD_REQUEST)
+        if "is_half_day" in data:
+            is_half_day = str(data.get("is_half_day")).lower() in ("true", "1")
+        else:
+            is_half_day = app.is_half_day
+
+        def truthy(key):
+            return str(data.get(key, "false")).lower() in ("true", "1")
+
+        try:
+            app, warnings = resubmit_leave_application(
+                app, request.user, leave_type, start_date, end_date,
+                reason=data.get("reason", app.reason),
+                is_half_day=is_half_day,
+                half_day_period=data.get("half_day_period", app.half_day_period),
+                attachment=request.FILES.get("attachment"),
+                remove_attachment=truthy("remove_attachment"),
+                acknowledge_insufficient_balance=truthy("acknowledge_insufficient_balance"),
+                resubmit_note=data.get("resubmit_note", ""),
+                source=API_SOURCE, ip_address=client_ip(request),
+            )
+        except LeaveRequestError as e:
+            payload = {"detail": " ".join(e.messages), "code": e.code}
+            payload.update(e.extra)
+            return Response(payload, status=status.HTTP_400_BAD_REQUEST)
+
+        notify_leave_event(app, "LEAVE_RESUBMITTED")
+        result = dict(LeaveApplicationDetailSerializer(app, context={"request": request}).data)
+        result["warnings"] = warnings
+        return Response(result)
+
+
+class LeaveApplicationAuditTrailView(APIView):
+    """GET /api/v1/leaves/applications/<pk>/audit-trail/ — full audit history of one application."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        from leaves.serializers import LeaveAuditLogSerializer
+        app = get_object_or_404(LeaveApplication, pk=pk)
+        if not can_view_application(request.user, app):
+            return Response({"detail": "Permission denied."}, status=status.HTTP_403_FORBIDDEN)
+        logs = app.audit_logs.select_related("actor")
+        return Response(LeaveAuditLogSerializer(logs, many=True).data)
+
+
+class LeaveApplicationRangeDaysView(APIView):
+    """
+    GET /api/v1/leaves/applications/<pk>/range-days/?start_date=&end_date=
+    Chargeable days for a sub-range of the application, used by approvers choosing a partial approval.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        app = get_object_or_404(LeaveApplication, pk=pk)
+        if not can_view_application(request.user, app):
+            return Response({"detail": "Permission denied."}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            start = parse_optional_date(request.query_params.get("start_date"), "start date") or app.start_date
+            end = parse_optional_date(request.query_params.get("end_date"), "end date") or app.end_date
+        except ValidationError as e:
+            return Response({"detail": " ".join(e.messages)}, status=status.HTTP_400_BAD_REQUEST)
+        if end < start:
+            return Response({"ok": False, "number_of_days": 0, "detail": "End date cannot be before start date."})
+        if start < app.start_date or end > app.end_date:
+            return Response({"ok": False, "number_of_days": 0,
+                             "detail": f"Dates must be within {app.start_date:%d %b} to {app.end_date:%d %b %Y}."})
+        days = calculate_leave_days(app.employee.primary_branch or app.branch, start, end)
+        return Response({"ok": days > 0, "number_of_days": float(days),
+                         "current_days": float(app.number_of_days),
+                         "detail": "" if days > 0 else "No working days in this range."})
 
 
 class LeaveManualAdjustmentView(APIView):

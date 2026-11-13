@@ -16,6 +16,34 @@ class LeaveApplicationStatus(models.TextChoices):
     WITHDRAWN = "WITHDRAWN", "Withdrawn"
 
 
+def fmt_days(value):
+    """Decimal('3.00') -> '3', Decimal('2.50') -> '2.5'."""
+    if value is None:
+        return ""
+    return format(Decimal(value).normalize(), "f")
+
+
+REJECTED_LEAVE_STATUSES = [
+    LeaveApplicationStatus.REJECTED_BY_LEAD,
+    LeaveApplicationStatus.REJECTED_BY_HR,
+    LeaveApplicationStatus.REJECTED_BY_DIRECTOR,
+]
+
+
+class LeaveAuditAction(models.TextChoices):
+    CREATED = "CREATED", "Application Submitted"
+    RECORDED_BY_HR = "RECORDED_BY_HR", "Recorded by HR"
+    RECOMMENDED = "RECOMMENDED", "Recommended by Lead"
+    PARTIALLY_RECOMMENDED = "PARTIALLY_RECOMMENDED", "Partially Recommended by Lead"
+    VERIFIED = "VERIFIED", "Verified by HR"
+    PARTIALLY_VERIFIED = "PARTIALLY_VERIFIED", "Partially Verified by HR"
+    APPROVED = "APPROVED", "Approved by Director"
+    PARTIALLY_APPROVED = "PARTIALLY_APPROVED", "Partially Approved by Director"
+    REJECTED = "REJECTED", "Rejected"
+    RESUBMITTED = "RESUBMITTED", "Resubmitted"
+    WITHDRAWN = "WITHDRAWN", "Withdrawn"
+
+
 class LeaveLedgerEntryType(models.TextChoices):
     OPENING_BALANCE = "OPENING_BALANCE", "Opening Balance"
     ACCRUAL_CREDIT = "ACCRUAL_CREDIT", "Earned Leave Accrual Credit"
@@ -177,6 +205,11 @@ class LeaveApplication(models.Model):
         default=LeaveApplicationStatus.PENDING_LEAD_RECOMMENDATION,
         db_index=True
     )
+    # Original request, preserved when an approver grants only part of it.
+    requested_start_date = models.DateField(null=True, blank=True)
+    requested_end_date = models.DateField(null=True, blank=True)
+    requested_number_of_days = models.DecimalField(max_digits=4, decimal_places=2, null=True, blank=True)
+    resubmission_count = models.PositiveIntegerField(default=0)
     submitted_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -198,122 +231,205 @@ class LeaveApplication(models.Model):
             date_prefix = timezone.now().strftime("%Y%m")
             unique_part = uuid.uuid4().hex[:6].upper()
             self.application_number = f"LV-{date_prefix}-{unique_part}"
+        if self.requested_start_date is None:
+            self.requested_start_date = self.start_date
+        if self.requested_end_date is None:
+            self.requested_end_date = self.end_date
+        if self.requested_number_of_days is None:
+            self.requested_number_of_days = self.number_of_days
         super().save(*args, **kwargs)
 
+    # ------------------------------------------------------------------
+    # Derived state
+    # ------------------------------------------------------------------
+    @property
+    def is_rejected(self):
+        return self.status in REJECTED_LEAVE_STATUSES
+
+    @property
+    def is_partially_approved(self):
+        return (
+            self.status == LeaveApplicationStatus.APPROVED
+            and self.requested_number_of_days is not None
+            and self.number_of_days < self.requested_number_of_days
+        )
+
+    @property
+    def is_reduced(self):
+        """True when any approver has narrowed the requested dates."""
+        return self.requested_number_of_days is not None and self.number_of_days < self.requested_number_of_days
+
+    @property
+    def display_status(self):
+        if self.is_partially_approved:
+            return "Partially Approved"
+        return self.get_status_display()
+
+    def can_resubmit(self, user):
+        return self.is_rejected and self.employee_id == user.id
+
+    # ------------------------------------------------------------------
+    # Workflow
+    # ------------------------------------------------------------------
+    def _apply_partial(self, approved_start_date, approved_end_date, remarks):
+        """
+        Narrows the leave to a shorter date range inside the current one.
+        Returns the field changes, or None when the full range is approved.
+        """
+        if approved_start_date is None and approved_end_date is None:
+            return None
+        if approved_start_date is None or approved_end_date is None:
+            raise ValidationError("Both approved start and end dates are required for a partial approval.")
+        if self.is_half_day:
+            raise ValidationError("A half-day leave cannot be partially approved.")
+        if approved_end_date < approved_start_date:
+            raise ValidationError("Approved end date cannot be before the approved start date.")
+        if approved_start_date < self.start_date or approved_end_date > self.end_date:
+            raise ValidationError(
+                f"Approved dates must fall within the current leave period "
+                f"({self.start_date:%d %b %Y} to {self.end_date:%d %b %Y})."
+            )
+        if approved_start_date == self.start_date and approved_end_date == self.end_date:
+            return None
+
+        from leaves.services import calculate_leave_days
+        days = calculate_leave_days(self.employee.primary_branch or self.branch, approved_start_date, approved_end_date)
+        if days <= 0:
+            raise ValidationError("The approved dates contain no working days.")
+        if days >= self.number_of_days:
+            return None
+        if not remarks or not remarks.strip():
+            raise ValidationError("Remarks are mandatory when approving fewer days than requested.")
+
+        changes = {
+            "start_date": [self.start_date.isoformat(), approved_start_date.isoformat()],
+            "end_date": [self.end_date.isoformat(), approved_end_date.isoformat()],
+            "number_of_days": [fmt_days(self.number_of_days), fmt_days(days)],
+        }
+        self.start_date = approved_start_date
+        self.end_date = approved_end_date
+        self.number_of_days = days
+        return changes
+
+    def _review(self, *, stage, expected_status, wrong_status_msg, approver, action, remarks,
+                positive_action, next_status, rejected_status, approved_start_date=None,
+                approved_end_date=None, source="SYSTEM", ip_address=None):
+        if self.status != expected_status:
+            raise ValidationError(wrong_status_msg)
+
+        action = (action or "").upper()
+        wants_partial = action == f"PARTIALLY_{positive_action}"
+        if wants_partial:
+            if approved_start_date is None or approved_end_date is None:
+                raise ValidationError("Choose the approved start and end dates for a partial approval.")
+            action = positive_action
+
+        from_status = self.status
+        changes = None
+        if action == positive_action:
+            changes = self._apply_partial(approved_start_date, approved_end_date, remarks)
+            recorded_action = f"PARTIALLY_{positive_action}" if changes else positive_action
+            self.status = next_status
+            LeaveApproval.objects.create(
+                application=self,
+                stage=stage,
+                approver=approver,
+                action=recorded_action,
+                remarks=remarks or "",
+                approved_start_date=self.start_date if changes else None,
+                approved_end_date=self.end_date if changes else None,
+                approved_days=self.number_of_days if changes else None,
+            )
+        elif action == "REJECTED":
+            if not remarks or not remarks.strip():
+                raise ValidationError("Remarks are mandatory when returning/rejecting leave.")
+            recorded_action = "REJECTED"
+            self.status = rejected_status
+            LeaveApproval.objects.create(
+                application=self, stage=stage, approver=approver, action="REJECTED", remarks=remarks,
+            )
+        else:
+            raise ValidationError(f"Invalid action: {action}")
+
+        self.save()
+        from leaves.services import log_leave_audit
+        log_leave_audit(
+            self, approver, recorded_action, from_status=from_status, stage=stage,
+            remarks=remarks, changes=changes, source=source, ip_address=ip_address,
+        )
+        return recorded_action
+
     @transaction.atomic
-    def lead_review(self, approver, action, remarks=""):
-        """
-        Stage 1: Reporting Lead / Manager recommendation.
-        """
-        if self.status != LeaveApplicationStatus.PENDING_LEAD_RECOMMENDATION:
-            raise ValidationError("Leave application is not awaiting Lead recommendation.")
+    def lead_review(self, approver, action, remarks="", approved_start_date=None, approved_end_date=None,
+                    source="SYSTEM", ip_address=None):
+        """Stage 1: Reporting Lead / Manager recommendation (full or partial)."""
         if approver == self.employee and not approver.is_superuser:
             raise ValidationError("You cannot recommend your own leave application.")
-
-        if action == "RECOMMENDED":
-            self.status = LeaveApplicationStatus.PENDING_HR_VERIFICATION
-            LeaveApproval.objects.create(
-                application=self,
-                stage="LEAD_MANAGER",
-                approver=approver,
-                action="RECOMMENDED",
-                remarks=remarks or "Recommended to HR Coordinator"
-            )
-        elif action == "REJECTED":
-            if not remarks:
-                raise ValidationError("Remarks are mandatory when returning/rejecting leave.")
-            self.status = LeaveApplicationStatus.REJECTED_BY_LEAD
-            LeaveApproval.objects.create(
-                application=self,
-                stage="LEAD_MANAGER",
-                approver=approver,
-                action="REJECTED",
-                remarks=remarks
-            )
-        else:
-            raise ValidationError(f"Invalid lead action: {action}")
-        self.save()
+        return self._review(
+            stage="LEAD_MANAGER",
+            expected_status=LeaveApplicationStatus.PENDING_LEAD_RECOMMENDATION,
+            wrong_status_msg="Leave application is not awaiting Lead recommendation.",
+            approver=approver, action=action, remarks=remarks,
+            positive_action="RECOMMENDED",
+            next_status=LeaveApplicationStatus.PENDING_HR_VERIFICATION,
+            rejected_status=LeaveApplicationStatus.REJECTED_BY_LEAD,
+            approved_start_date=approved_start_date, approved_end_date=approved_end_date,
+            source=source, ip_address=ip_address,
+        )
 
     @transaction.atomic
-    def hr_review(self, approver, action, remarks=""):
-        """
-        Stage 2: HR Coordinator policy verification.
-        """
-        if self.status != LeaveApplicationStatus.PENDING_HR_VERIFICATION:
-            raise ValidationError("Leave application is not awaiting HR verification.")
+    def hr_review(self, approver, action, remarks="", approved_start_date=None, approved_end_date=None,
+                  source="SYSTEM", ip_address=None):
+        """Stage 2: HR Coordinator policy verification (full or partial)."""
         if approver == self.employee and not approver.is_superuser:
             raise ValidationError("You cannot verify your own leave application. Another HR Coordinator must verify it.")
-
-        if action == "VERIFIED":
-            self.status = LeaveApplicationStatus.PENDING_DIRECTOR_APPROVAL
-            LeaveApproval.objects.create(
-                application=self,
-                stage="HR_COORDINATOR",
-                approver=approver,
-                action="VERIFIED",
-                remarks=remarks or "Verified against leave policy and balance"
-            )
-        elif action == "REJECTED":
-            if not remarks:
-                raise ValidationError("Remarks are mandatory when rejecting leave.")
-            self.status = LeaveApplicationStatus.REJECTED_BY_HR
-            LeaveApproval.objects.create(
-                application=self,
-                stage="HR_COORDINATOR",
-                approver=approver,
-                action="REJECTED",
-                remarks=remarks
-            )
-        else:
-            raise ValidationError(f"Invalid HR action: {action}")
-        self.save()
+        return self._review(
+            stage="HR_COORDINATOR",
+            expected_status=LeaveApplicationStatus.PENDING_HR_VERIFICATION,
+            wrong_status_msg="Leave application is not awaiting HR verification.",
+            approver=approver, action=action, remarks=remarks,
+            positive_action="VERIFIED",
+            next_status=LeaveApplicationStatus.PENDING_DIRECTOR_APPROVAL,
+            rejected_status=LeaveApplicationStatus.REJECTED_BY_HR,
+            approved_start_date=approved_start_date, approved_end_date=approved_end_date,
+            source=source, ip_address=ip_address,
+        )
 
     @transaction.atomic
-    def director_review(self, approver, action, remarks=""):
+    def director_review(self, approver, action, remarks="", approved_start_date=None, approved_end_date=None,
+                        source="SYSTEM", ip_address=None):
         """
-        Stage 3: Director final approval or rejection.
-        CRITICAL: Balance is deducted ONLY upon Director approval!
+        Stage 3: Director final approval (full or partial) or rejection.
+        CRITICAL: Balance is deducted ONLY upon Director approval, and only for the approved days.
         """
-        if self.status != LeaveApplicationStatus.PENDING_DIRECTOR_APPROVAL:
-            raise ValidationError("Leave application is not awaiting Director approval.")
-
-        if action == "APPROVED":
-            self.status = LeaveApplicationStatus.APPROVED
-            LeaveApproval.objects.create(
-                application=self,
-                stage="DIRECTOR",
-                approver=approver,
-                action="APPROVED",
-                remarks=remarks or "Final approval granted"
-            )
-
-            # Deduct from official balance in the ledger (paid leave types only)
+        recorded = self._review(
+            stage="DIRECTOR",
+            expected_status=LeaveApplicationStatus.PENDING_DIRECTOR_APPROVAL,
+            wrong_status_msg="Leave application is not awaiting Director approval.",
+            approver=approver, action=action, remarks=remarks,
+            positive_action="APPROVED",
+            next_status=LeaveApplicationStatus.APPROVED,
+            rejected_status=LeaveApplicationStatus.REJECTED_BY_DIRECTOR,
+            approved_start_date=approved_start_date, approved_end_date=approved_end_date,
+            source=source, ip_address=ip_address,
+        )
+        if self.status == LeaveApplicationStatus.APPROVED:
             from leaves.services import deduct_leave_from_ledger
             deduct_leave_from_ledger(self, approver)
-
-        elif action == "REJECTED":
-            if not remarks:
-                raise ValidationError("Remarks are mandatory when rejecting leave.")
-            self.status = LeaveApplicationStatus.REJECTED_BY_DIRECTOR
-            LeaveApproval.objects.create(
-                application=self,
-                stage="DIRECTOR",
-                approver=approver,
-                action="REJECTED",
-                remarks=remarks
-            )
-        else:
-            raise ValidationError(f"Invalid Director action: {action}")
-        self.save()
+        return recorded
 
     @transaction.atomic
-    def withdraw(self, user):
+    def withdraw(self, user, source="SYSTEM", ip_address=None):
         if self.employee != user and not user.is_superuser:
             raise ValidationError("Only the employee can withdraw their application.")
         if self.status in [LeaveApplicationStatus.APPROVED, LeaveApplicationStatus.WITHDRAWN]:
             raise ValidationError(f"Cannot withdraw leave application in status {self.status}.")
+        from_status = self.status
         self.status = LeaveApplicationStatus.WITHDRAWN
         self.save()
+        from leaves.services import log_leave_audit
+        log_leave_audit(self, user, LeaveAuditAction.WITHDRAWN, from_status=from_status, stage="EMPLOYEE",
+                        source=source, ip_address=ip_address)
 
 
 class LeaveApproval(models.Model):
@@ -328,8 +444,12 @@ class LeaveApproval(models.Model):
         on_delete=models.PROTECT,
         related_name="leave_approvals"
     )
-    action = models.CharField(max_length=30)  # RECOMMENDED, VERIFIED, APPROVED, REJECTED
+    action = models.CharField(max_length=30)  # RECOMMENDED, VERIFIED, APPROVED, PARTIALLY_*, REJECTED, RESUBMITTED
     remarks = models.TextField(blank=True)
+    # Set only when the approver granted fewer days than were pending at their stage.
+    approved_start_date = models.DateField(null=True, blank=True)
+    approved_end_date = models.DateField(null=True, blank=True)
+    approved_days = models.DecimalField(max_digits=4, decimal_places=2, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -339,6 +459,58 @@ class LeaveApproval(models.Model):
 
     def __str__(self):
         return f"{self.application.application_number} - {self.stage} - {self.action} by {self.approver.employee_id}"
+
+    @property
+    def action_label(self):
+        return self.action.replace("_", " ").title()
+
+    @property
+    def stage_label(self):
+        return {"LEAD_MANAGER": "Lead / Manager", "HR_COORDINATOR": "HR Coordinator",
+                "DIRECTOR": "Director", "EMPLOYEE": "Employee"}.get(self.stage, self.stage)
+
+
+class LeaveAuditLog(models.Model):
+    """
+    Append-only audit trail of every event on a leave application:
+    submission, each review decision (full / partial / rejection), resubmission and withdrawal.
+    """
+    SOURCE_CHOICES = [("WEB", "Web Portal"), ("MOBILE", "Mobile App"), ("SYSTEM", "System")]
+
+    application = models.ForeignKey(
+        LeaveApplication,
+        on_delete=models.CASCADE,
+        related_name="audit_logs"
+    )
+    actor = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="leave_audit_logs"
+    )
+    action = models.CharField(max_length=30, choices=LeaveAuditAction.choices, db_index=True)
+    stage = models.CharField(max_length=30, blank=True)
+    from_status = models.CharField(max_length=35, blank=True)
+    to_status = models.CharField(max_length=35, blank=True)
+    remarks = models.TextField(blank=True)
+    changes = models.JSONField(default=dict, blank=True, help_text="{field: [old, new]}")
+    source = models.CharField(max_length=10, choices=SOURCE_CHOICES, default="SYSTEM")
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        verbose_name = "Leave Audit Log"
+        verbose_name_plural = "Leave Audit Logs"
+        ordering = ["created_at", "id"]
+
+    def __str__(self):
+        return f"{self.application.application_number} - {self.action} ({self.created_at:%Y-%m-%d %H:%M})"
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError("Audit log entries are immutable.")
+        super().save(*args, **kwargs)
 
 
 class HolidayCalendar(models.Model):

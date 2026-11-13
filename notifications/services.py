@@ -151,14 +151,42 @@ def notify_expense_event(claim, event_type, remarks=""):
         )
 
 
-def notify_leave_event(application, event_type, remarks=""):
+def notify_leave_event(application, event_type, remarks="", partial=False):
+    from leaves.models import fmt_days
     """
     Dispatches role-aware notifications across leave workflow stages.
+    partial=True means the approver at this stage granted fewer days than were pending.
     """
     emp = application.employee
     branch = application.branch
 
-    if event_type == "LEAVE_SUBMITTED":
+    # Tell the employee as soon as an intermediate approver trims their dates.
+    if partial and event_type in ("LEAVE_LEAD_RECOMMENDED", "LEAVE_HR_VERIFIED"):
+        stage = "Lead / Manager" if event_type == "LEAVE_LEAD_RECOMMENDED" else "HR Coordinator"
+        send_system_notification(
+            recipient=emp,
+            title=f"Leave Partially Recommended: {application.application_number}",
+            message=(f"Your {stage} forwarded {fmt_days(application.number_of_days)} of "
+                     f"{fmt_days(application.requested_number_of_days)} requested day(s) "
+                     f"({application.start_date} to {application.end_date}). Remarks: {remarks}"),
+            event_type="LEAVE_PARTIALLY_REDUCED",
+            link_url=f"/leaves/{application.id}/"
+        )
+
+    if event_type == "LEAVE_RESUBMITTED":
+        lead = getattr(emp.profile, "reporting_lead", None) if hasattr(emp, "profile") else None
+        if lead:
+            send_system_notification(
+                recipient=lead,
+                title=f"Leave Resubmitted by {emp.full_name}",
+                message=(f"{emp.full_name} corrected and resubmitted {application.application_number}: "
+                         f"{application.number_of_days} days of {application.leave_type.name} "
+                         f"({application.start_date} to {application.end_date})."),
+                event_type=event_type,
+                link_url=f"/leaves/{application.id}/"
+            )
+
+    elif event_type == "LEAVE_SUBMITTED":
         # Notify direct reporting lead
         lead = getattr(emp.profile, "reporting_lead", None) if hasattr(emp, "profile") else None
         if lead:
@@ -203,10 +231,19 @@ def notify_leave_event(application, event_type, remarks=""):
             )
 
     elif event_type == "LEAVE_DIRECTOR_APPROVED":
+        if application.is_reduced:
+            title = f"Leave Application Partially Approved: {application.application_number}"
+            message = (f"{fmt_days(application.number_of_days)} of {fmt_days(application.requested_number_of_days)} requested day(s) "
+                       f"approved ({application.start_date} to {application.end_date}).")
+            if remarks:
+                message += f" Remarks: {remarks}"
+        else:
+            title = f"Leave Application Approved: {application.application_number}"
+            message = f"Your application for {application.number_of_days} days ({application.start_date} to {application.end_date}) has been approved."
         send_system_notification(
             recipient=emp,
-            title=f"Leave Application Approved: {application.application_number}",
-            message=f"Your application for {application.number_of_days} days ({application.start_date} to {application.end_date}) has been approved.",
+            title=title,
+            message=message,
             event_type=event_type,
             link_url=f"/leaves/{application.id}/"
         )
@@ -215,7 +252,7 @@ def notify_leave_event(application, event_type, remarks=""):
         send_system_notification(
             recipient=emp,
             title=f"Leave Application Returned/Rejected: {application.application_number}",
-            message=f"Your leave application was not approved. Remarks: {remarks}",
+            message=f"Your leave application was not approved. Remarks: {remarks}. You can edit and resubmit it from the leave details page.",
             event_type=event_type,
             link_url=f"/leaves/{application.id}/"
         )

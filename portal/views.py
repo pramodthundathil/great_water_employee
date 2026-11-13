@@ -18,9 +18,11 @@ from leaves.models import (
     LeaveApplication, LeaveType, LeavePolicy, LeaveLedgerEntry,
     LeaveApplicationStatus, HolidayCalendar, Holiday
 )
+from leaves.models import LeaveAuditAction, fmt_days
 from leaves.services import (
     get_employee_leave_balances, record_manual_leave_adjustment,
     validate_leave_request, LeaveRequestError,
+    log_leave_audit, client_ip, resubmit_leave_application,
 )
 from portal.admin_views import validate_upload, can_manage_users, get_default_organization
 from accounts.services import EmployeeError, can_reset_passwords, create_employee, set_employee_password
@@ -37,6 +39,37 @@ from portal.dashboard_services import (
     build_monthly_expense_series,
     send_approver_reminder,
 )
+
+
+def _parse_post_date(value, label):
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError:
+        raise ValidationError(f"Invalid {label}.")
+
+
+def _leave_review_kwargs(request):
+    """Remarks and the optional partial-approval range posted from a web review form."""
+    partial = request.POST.get("partial") == "1"
+    return {
+        "remarks": request.POST.get("remarks", ""),
+        "approved_start_date": _parse_post_date(request.POST.get("approved_start_date"), "approved start date") if partial else None,
+        "approved_end_date": _parse_post_date(request.POST.get("approved_end_date"), "approved end date") if partial else None,
+        "source": "WEB",
+        "ip_address": client_ip(request),
+    }
+
+
+def _leave_review_message(app, recorded, stage_label):
+    if recorded == "REJECTED":
+        return f"Application {app.application_number} {stage_label}: rejected."
+    if recorded.startswith("PARTIALLY_"):
+        return (f"Application {app.application_number} {stage_label}: partially approved - "
+                f"{fmt_days(app.number_of_days)} of {fmt_days(app.requested_number_of_days)} day(s) "
+                f"({app.start_date:%d %b} to {app.end_date:%d %b %Y}).")
+    return f"Application {app.application_number} {stage_label}: {recorded.lower()}."
 
 
 def login_view(request):
@@ -127,12 +160,12 @@ def _handle_director_dashboard_post(request, user, claim_qs, leave_qs):
             messages.error(request, "You do not have permission for this branch.")
             return redirect("portal_dashboard")
         decision = request.POST.get("action", "").upper()
-        remarks = request.POST.get("remarks", "")
         try:
-            app.director_review(approver=user, action=decision, remarks=remarks)
-            event_type = "LEAVE_DIRECTOR_APPROVED" if decision == "APPROVED" else "LEAVE_DIRECTOR_REJECTED"
-            notify_leave_event(app, event_type, remarks=remarks)
-            messages.success(request, f"Leave {app.application_number} marked {decision}.")
+            kwargs = _leave_review_kwargs(request)
+            recorded = app.director_review(approver=user, action=decision, **kwargs)
+            event_type = "LEAVE_DIRECTOR_REJECTED" if recorded == "REJECTED" else "LEAVE_DIRECTOR_APPROVED"
+            notify_leave_event(app, event_type, remarks=kwargs["remarks"], partial=recorded.startswith("PARTIALLY_"))
+            messages.success(request, _leave_review_message(app, recorded, "Director decision"))
         except ValidationError as e:
             messages.error(request, str(e))
         return redirect("portal_dashboard")
@@ -600,6 +633,8 @@ def leaves_list_view(request):
             attachment=attachment,
             status=LeaveApplicationStatus.PENDING_LEAD_RECOMMENDATION
         )
+        log_leave_audit(app, user, LeaveAuditAction.CREATED, stage="EMPLOYEE",
+                        source="WEB", ip_address=client_ip(request))
 
         notify_leave_event(app, "LEAVE_SUBMITTED")
         messages.success(request, f"Leave application {app.application_number} submitted for Lead recommendation!")
@@ -648,18 +683,96 @@ def leave_detail_view(request, pk):
         action = request.POST.get("action")
         if action == "withdraw":
             try:
-                app.withdraw(user)
+                app.withdraw(user, source="WEB", ip_address=client_ip(request))
                 messages.info(request, "Leave application has been withdrawn.")
             except ValidationError as e:
-                messages.error(request, str(e))
+                messages.error(request, " ".join(e.messages))
+        elif action == "resubmit":
+            return _handle_leave_resubmit(request, app)
         return redirect("portal_leave_detail", pk=app.pk)
 
     context = {
         "active_nav": "leaves",
         "app": app,
-        "approval_history": app.approval_history.all().order_by("created_at"),
+        "approval_history": app.approval_history.select_related("approver").order_by("created_at"),
+        "audit_trail": _audit_rows(app),
+        "can_resubmit": app.can_resubmit(user),
+        "leave_types": LeaveType.objects.filter(is_active=True) if app.can_resubmit(user) else [],
     }
     return render(request, "portal/leave_detail.html", context)
+
+
+AUDIT_FIELD_LABELS = {
+    "leave_type": "Leave type", "start_date": "From", "end_date": "To", "is_half_day": "Half day",
+    "half_day_period": "Half-day period", "number_of_days": "Days", "reason": "Reason", "attachment": "Attachment",
+}
+
+
+def _audit_rows(app):
+    """Audit log entries with status labels and readable field changes for the template."""
+    status_labels = dict(LeaveApplicationStatus.choices)
+    rows = []
+    for log in app.audit_logs.select_related("actor").order_by("created_at", "id"):
+        log.from_status_label = status_labels.get(log.from_status, log.from_status)
+        log.to_status_label = status_labels.get(log.to_status, log.to_status)
+        log.change_rows = [
+            (AUDIT_FIELD_LABELS.get(field, field.replace("_", " ").capitalize()), vals[0], vals[1])
+            for field, vals in (log.changes or {}).items()
+            if isinstance(vals, (list, tuple)) and len(vals) == 2
+        ]
+        rows.append(log)
+    return rows
+
+
+def _handle_leave_resubmit(request, app):
+    user = request.user
+    redirect_detail = redirect("portal_leave_detail", pk=app.pk)
+    if not app.can_resubmit(user):
+        messages.error(request, "Only your own rejected leave applications can be resubmitted.")
+        return redirect_detail
+
+    leave_type = get_object_or_404(LeaveType, id=request.POST.get("leave_type") or app.leave_type_id, is_active=True)
+    try:
+        start_date = _parse_post_date(request.POST.get("start_date"), "start date")
+        end_date = _parse_post_date(request.POST.get("end_date"), "end date") or start_date
+    except ValidationError as e:
+        messages.error(request, " ".join(e.messages))
+        return redirect_detail
+    if not start_date:
+        messages.error(request, "Start date is required.")
+        return redirect_detail
+
+    attachment = request.FILES.get("attachment")
+    if attachment:
+        upload_error = validate_upload(attachment)
+        if upload_error:
+            messages.error(request, upload_error)
+            return redirect_detail
+
+    is_half_day = request.POST.get("is_half_day") == "1"
+    try:
+        app, warnings = resubmit_leave_application(
+            app, user, leave_type, start_date, end_date,
+            reason=request.POST.get("reason", ""),
+            is_half_day=is_half_day,
+            half_day_period=request.POST.get("half_day_period", "FIRST_HALF"),
+            attachment=attachment,
+            remove_attachment=request.POST.get("remove_attachment") == "1",
+            acknowledge_insufficient_balance=request.POST.get("acknowledge_insufficient_balance") == "1",
+            resubmit_note=request.POST.get("resubmit_note", ""),
+            source="WEB", ip_address=client_ip(request),
+        )
+    except LeaveRequestError as e:
+        messages.error(request, " ".join(e.messages))
+        if e.extra.get("insufficient_balance"):
+            messages.warning(request, "To resubmit anyway, tick 'Apply even if my balance is insufficient'.")
+        return redirect_detail
+
+    for w in warnings:
+        messages.warning(request, w)
+    notify_leave_event(app, "LEAVE_RESUBMITTED")
+    messages.success(request, f"Leave application {app.application_number} resubmitted for Lead recommendation.")
+    return redirect_detail
 
 
 @login_required
@@ -675,7 +788,6 @@ def leave_approvals_view(request):
     if request.method == "POST":
         app_id = request.POST.get("app_id")
         action = request.POST.get("action", "").upper()
-        remarks = request.POST.get("remarks", "")
         app = get_object_or_404(LeaveApplication, id=app_id)
 
         reporting_lead = getattr(getattr(app.employee, "profile", None), "reporting_lead", None)
@@ -691,23 +803,25 @@ def leave_approvals_view(request):
             return redirect("portal_leave_approvals")
 
         try:
+            kwargs = _leave_review_kwargs(request)
+            remarks = kwargs["remarks"]
             if app.status == LeaveApplicationStatus.PENDING_LEAD_RECOMMENDATION and (reporting_lead == user or user.is_superuser):
-                app.lead_review(approver=user, action=action, remarks=remarks)
-                event_type = "LEAVE_LEAD_RECOMMENDED" if action == "RECOMMENDED" else "LEAVE_LEAD_REJECTED"
-                notify_leave_event(app, event_type, remarks=remarks)
-                messages.success(request, f"Application {app.application_number} Lead Review: {action}!")
+                recorded = app.lead_review(approver=user, action=action, **kwargs)
+                event_type = "LEAVE_LEAD_REJECTED" if recorded == "REJECTED" else "LEAVE_LEAD_RECOMMENDED"
+                notify_leave_event(app, event_type, remarks=remarks, partial=recorded.startswith("PARTIALLY_"))
+                messages.success(request, _leave_review_message(app, recorded, "Lead review"))
 
             elif user.is_hr_coordinator and app.status == LeaveApplicationStatus.PENDING_HR_VERIFICATION:
-                app.hr_review(approver=user, action=action, remarks=remarks)
-                event_type = "LEAVE_HR_VERIFIED" if action == "VERIFIED" else "LEAVE_HR_REJECTED"
-                notify_leave_event(app, event_type, remarks=remarks)
-                messages.success(request, f"Application {app.application_number} HR Verification: {action}!")
+                recorded = app.hr_review(approver=user, action=action, **kwargs)
+                event_type = "LEAVE_HR_REJECTED" if recorded == "REJECTED" else "LEAVE_HR_VERIFIED"
+                notify_leave_event(app, event_type, remarks=remarks, partial=recorded.startswith("PARTIALLY_"))
+                messages.success(request, _leave_review_message(app, recorded, "HR verification"))
 
             elif user.is_director and app.status == LeaveApplicationStatus.PENDING_DIRECTOR_APPROVAL:
-                app.director_review(approver=user, action=action, remarks=remarks)
-                event_type = "LEAVE_DIRECTOR_APPROVED" if action == "APPROVED" else "LEAVE_DIRECTOR_REJECTED"
-                notify_leave_event(app, event_type, remarks=remarks)
-                messages.success(request, f"Application {app.application_number} Final Decision: {action}! Official balance updated.")
+                recorded = app.director_review(approver=user, action=action, **kwargs)
+                event_type = "LEAVE_DIRECTOR_REJECTED" if recorded == "REJECTED" else "LEAVE_DIRECTOR_APPROVED"
+                notify_leave_event(app, event_type, remarks=remarks, partial=recorded.startswith("PARTIALLY_"))
+                messages.success(request, _leave_review_message(app, recorded, "Final decision") + " Official balance updated.")
 
             else:
                 messages.error(request, "This application is not awaiting your action.")

@@ -374,7 +374,7 @@
                                 <td data-label="Type">{{ l.leave_type.name }}</td>
                                 <td data-label="Dates">{{ l.start_date|date:"d M" }} &ndash; {{ l.end_date|date:"d M Y" }}</td>
                                 <td data-label="Days">{{ l.number_of_days|floatformat:"-2" }}</td>
-                                <td data-label="Status"><span class="badge bg-light text-dark border">{{ l.get_status_display }}</span></td>
+                                <td data-label="Status"><span class="badge bg-light text-dark border">{{ l.display_status }}</span></td>
                             </tr>
                             {% empty %}
                             <tr class="is-empty-row">

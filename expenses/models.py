@@ -2,6 +2,7 @@ from django.db import models, transaction
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 import uuid
+from datetime import date
 
 
 class ExpenseClaimStatus(models.TextChoices):
@@ -20,6 +21,29 @@ class PaymentMode(models.TextChoices):
     CHEQUE = "CHEQUE", "Cheque"
     CASH = "CASH", "Cash"
     CORPORATE_CARD = "CORPORATE_CARD", "Corporate Card"
+
+
+# Audit-trail entry written when the Admin Manager disburses a reimbursement.
+PAYMENT_STAGE = "PAYMENT"
+PAYMENT_ACTION = "PAID"
+
+
+def payment_trail_remarks(payment):
+    """One-line summary of a disbursement for the claim's audit trail."""
+    parts = [f"Disbursed via {payment.get_payment_mode_display()}"]
+    if payment.payment_reference:
+        parts.append(f"Ref {payment.payment_reference}")
+    paid_on = payment.payment_date
+    if isinstance(paid_on, str):  # views pass the raw form / JSON value through
+        try:
+            paid_on = date.fromisoformat(paid_on[:10])
+        except ValueError:
+            pass
+    parts.append(f"Paid on {paid_on:%d %b %Y}" if hasattr(paid_on, "strftime") else f"Paid on {paid_on}")
+    text = " · ".join(parts)
+    if payment.remarks:
+        text += f" — {payment.remarks}"
+    return text
 
 
 class ExpenseCategory(models.Model):
@@ -205,6 +229,14 @@ class ExpenseClaim(models.Model):
             payment_mode=payment_mode,
             payment_reference=payment_reference,
             remarks=remarks
+        )
+        # Disbursement is part of the claim's audit trail, alongside the approvals.
+        ExpenseApproval.objects.create(
+            claim=self,
+            stage=PAYMENT_STAGE,
+            approver=recorded_by,
+            action=PAYMENT_ACTION,
+            remarks=payment_trail_remarks(payment),
         )
         self.status = ExpenseClaimStatus.PAID
         self.save()

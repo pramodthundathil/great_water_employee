@@ -88,7 +88,7 @@
                         <td style="max-width: 250px;" class="text-truncate" title="{{ a.reason }}">{{ a.reason }}</td>
                         <td>
                             <span class="status-badge {% if 'REJECTED' in a.status %}badge-rejected{% elif a.status == 'APPROVED' %}badge-approved{% else %}badge-pending{% endif %}">
-                                {{ a.get_status_display }}
+                                {{ a.display_status }}{% if a.resubmission_count %} <i class="bi bi-arrow-repeat" title="Resubmitted"></i>{% endif %}
                             </span>
                         </td>
                         <td class="text-end">

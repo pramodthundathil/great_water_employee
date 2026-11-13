@@ -140,20 +140,20 @@
         <!-- Approval History Trail -->
         <div class="gw-card">
             <div class="gw-card-header">
-                <h5 class="gw-card-title"><i class="bi bi-clock-history me-2"></i>Approval Workflow Log</h5>
+                <h5 class="gw-card-title"><i class="bi bi-clock-history me-2"></i>Audit Trail</h5>
             </div>
             <div class="gw-card-body">
                 <div class="timeline">
                     {% for h in approval_history %}
                     <div class="mb-3 pb-3 border-bottom">
                         <div class="d-flex justify-content-between align-items-center mb-1">
-                            <span class="badge {% if h.action == 'APPROVED' %}bg-success{% elif h.action == 'REJECTED' %}bg-danger{% else %}bg-secondary{% endif %}">
-                                {{ h.action }}
+                            <span class="badge {% if h.action == 'APPROVED' %}bg-success{% elif h.action == 'REJECTED' %}bg-danger{% elif h.action == 'PAID' %}bg-primary{% else %}bg-secondary{% endif %}">
+                                {% if h.action == 'PAID' %}<i class="bi bi-cash-coin me-1"></i>DISBURSED{% else %}{{ h.action }}{% endif %}
                             </span>
                             <small class="text-muted">{{ h.created_at|date:"M d, H:i" }}</small>
                         </div>
                         <div class="fw-bold small text-dark">{{ h.approver.full_name }} ({{ h.approver.employee_id }})</div>
-                        <div class="small text-muted">{{ h.stage }}</div>
+                        <div class="small text-muted">{% if h.stage == 'PAYMENT' %}Payment (Admin Manager){% elif h.stage == 'ADMIN_MANAGER' %}Admin Manager review{% elif h.stage == 'DIRECTOR' %}Director approval{% else %}{{ h.stage }}{% endif %}</div>
                         {% if h.remarks %}
                         <div class="p-2 bg-light rounded small mt-2 text-secondary">
                             <em>"{{ h.remarks }}"</em>

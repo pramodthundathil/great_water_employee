@@ -228,6 +228,54 @@ Director Stage 3 final approval/rejection.
   }
   ```
 
+#### Partial approval (all three review stages)
+Any approver may forward / approve only part of the leave by sending a narrower date range that lies
+inside the application's current dates. `remarks` is then mandatory. Half-day leave cannot be partially approved.
+```json
+{
+  "action": "APPROVED",              // or RECOMMENDED / VERIFIED, or the explicit PARTIALLY_* form
+  "approved_start_date": "2026-09-02",
+  "approved_end_date": "2026-09-03",
+  "remarks": "Only two days can be spared during the audit."
+}
+```
+- The application's `start_date` / `end_date` / `number_of_days` become the approved values; the original request
+  is kept in `requested_start_date` / `requested_end_date` / `requested_number_of_days`.
+- The approval-history entry is recorded as `PARTIALLY_RECOMMENDED`, `PARTIALLY_VERIFIED` or `PARTIALLY_APPROVED`
+  with `approved_start_date`, `approved_end_date`, `approved_days`.
+- On final approval only the approved days are deducted. `status` stays `APPROVED`; `status_display` is
+  `"Partially Approved"` and `is_partially_approved` is `true`.
+- Response: `{"detail": "...", "status": "...", "action": "PARTIALLY_APPROVED"}`.
+
+### `GET /api/v1/leaves/applications/{id}/range-days/?start_date=&end_date=`
+Chargeable days for a sub-range of the application (holidays excluded), used while choosing a partial approval.
+Response: `{"ok": true, "number_of_days": 2.0, "current_days": 5.0, "detail": ""}`.
+
+### `POST /api/v1/leaves/applications/{id}/resubmit/` (multipart/form-data or JSON)
+Employee edits a **rejected** application (`REJECTED_BY_LEAD`, `REJECTED_BY_HR`, `REJECTED_BY_DIRECTOR`) and sends it
+back to Stage 1. The application number, approval history and audit trail are preserved; `resubmission_count` increments.
+Fields are the same as creating a leave (omitted fields keep their current value), plus:
+- `resubmit_note`: what was changed (optional, shown to approvers)
+- `remove_attachment`: `true` to drop the current attachment
+- `acknowledge_insufficient_balance`: as for a new application
+
+The detail endpoint returns `can_resubmit: true` when the signed-in user may resubmit.
+
+### `GET /api/v1/leaves/applications/{id}/audit-trail/`
+Immutable audit trail (also embedded as `audit_trail` in the application detail). Each entry:
+```json
+{
+  "action": "RESUBMITTED", "action_display": "Resubmitted", "stage": "EMPLOYEE",
+  "actor_name": "Anu Joseph", "actor_id_str": "GW-104",
+  "from_status": "REJECTED_BY_LEAD", "to_status": "PENDING_LEAD_RECOMMENDATION",
+  "remarks": "Shortened to 2 days",
+  "changes": {"end_date": ["2026-09-05", "2026-09-02"], "number_of_days": ["5", "2"]},
+  "source": "MOBILE", "created_at": "2026-09-01T10:15:00Z"
+}
+```
+Actions: `CREATED`, `RECORDED_BY_HR`, `RECOMMENDED`, `PARTIALLY_RECOMMENDED`, `VERIFIED`, `PARTIALLY_VERIFIED`,
+`APPROVED`, `PARTIALLY_APPROVED`, `REJECTED`, `RESUBMITTED`, `WITHDRAWN`.
+
 ### `POST /api/v1/leaves/adjust-balance/`
 HR Coordinator manual ledger adjustment with mandatory audit remarks.
 - **Request Body:**

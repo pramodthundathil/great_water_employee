@@ -846,7 +846,7 @@
                                 </td>
                                 <td>
                                     <span class="status-badge {% if 'REJECTED' in l.status %}badge-rejected{% elif l.status == 'APPROVED' %}badge-approved{% else %}badge-pending{% endif %}">
-                                        {{ l.get_status_display }}
+                                        {{ l.display_status }}
                                     </span>
                                 </td>
                             </tr>

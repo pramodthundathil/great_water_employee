@@ -7,7 +7,8 @@ from django.core.exceptions import ValidationError
 
 from leaves.models import (
     LeaveType, LeavePolicy, LeaveAccrualRun, LeaveLedgerEntry,
-    LeaveLedgerEntryType, LeaveApplication, LeaveApplicationStatus
+    LeaveLedgerEntryType, LeaveApplication, LeaveApplicationStatus,
+    LeaveAuditLog, LeaveAuditAction, LeaveApproval, fmt_days,
 )
 
 
@@ -330,15 +331,134 @@ def deduct_leave_from_ledger(application, actor, note_prefix="Approved Leave App
     if not application.leave_type.is_paid:
         return None
     current_bal = LeaveLedgerEntry.get_current_balance(application.employee, application.leave_type)
+    note = f"{note_prefix} {application.application_number} ({application.start_date} to {application.end_date})"
+    if application.is_reduced:
+        note += f" - partially approved {fmt_days(application.number_of_days)} of {fmt_days(application.requested_number_of_days)} day(s)"
     return LeaveLedgerEntry.objects.create(
         employee=application.employee,
         leave_type=application.leave_type,
         entry_type=LeaveLedgerEntryType.LEAVE_DEDUCTION,
         transaction_days=-application.number_of_days,
         balance_after=current_bal - application.number_of_days,
-        reference_note=f"{note_prefix} {application.application_number} ({application.start_date} to {application.end_date})",
+        reference_note=note[:255],
         created_by=actor,
     )
+
+
+# ---------------------------------------------------------------------------
+# Audit trail
+# ---------------------------------------------------------------------------
+
+def client_ip(request):
+    if request is None:
+        return None
+    forwarded = request.META.get("HTTP_X_FORWARDED_FOR")
+    ip = forwarded.split(",")[0].strip() if forwarded else request.META.get("REMOTE_ADDR")
+    return ip or None
+
+
+def log_leave_audit(application, actor, action, from_status="", stage="", remarks="",
+                    changes=None, source="SYSTEM", ip_address=None):
+    """Appends one immutable entry to the application's audit trail."""
+    return LeaveAuditLog.objects.create(
+        application=application,
+        actor=actor,
+        action=action,
+        stage=stage or "",
+        from_status=from_status or "",
+        to_status=application.status,
+        remarks=(remarks or "").strip(),
+        changes=changes or {},
+        source=source,
+        ip_address=ip_address,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Resubmission of rejected applications
+# ---------------------------------------------------------------------------
+
+@transaction.atomic
+def resubmit_leave_application(application, user, leave_type, start_date, end_date, reason,
+                               is_half_day=False, half_day_period="NONE", attachment=None,
+                               remove_attachment=False, acknowledge_insufficient_balance=False,
+                               resubmit_note="", source="SYSTEM", ip_address=None):
+    """
+    Lets the employee correct a rejected application and send it back through the
+    full approval chain (Lead -> HR -> Director). The application keeps its number
+    and its entire approval and audit history.
+    Returns (application, warnings).
+    """
+    application = LeaveApplication.objects.select_for_update().get(pk=application.pk)
+    if application.employee_id != user.id:
+        raise LeaveRequestError("Only the employee who applied can resubmit this leave application.")
+    if not application.is_rejected:
+        raise LeaveRequestError("Only rejected leave applications can be resubmitted.")
+    if not reason or not reason.strip():
+        raise LeaveRequestError("A reason is required.")
+
+    final_attachment = attachment or (None if remove_attachment else application.attachment)
+    number_of_days, end_date, warnings = validate_leave_request(
+        user, leave_type, start_date, end_date, is_half_day,
+        acknowledge_insufficient_balance=acknowledge_insufficient_balance,
+        attachment=final_attachment,
+        exclude_application_id=application.id,
+    )
+
+    half_day_period = half_day_period if is_half_day else "NONE"
+    before = {
+        "leave_type": application.leave_type.code,
+        "start_date": application.start_date.isoformat(),
+        "end_date": application.end_date.isoformat(),
+        "is_half_day": application.is_half_day,
+        "half_day_period": application.half_day_period,
+        "number_of_days": fmt_days(application.number_of_days),
+        "reason": application.reason,
+        "attachment": application.attachment.name if application.attachment else "",
+    }
+
+    application.leave_type = leave_type
+    application.start_date = start_date
+    application.end_date = end_date
+    application.is_half_day = is_half_day
+    application.half_day_period = half_day_period
+    application.number_of_days = number_of_days
+    application.requested_start_date = start_date
+    application.requested_end_date = end_date
+    application.requested_number_of_days = number_of_days
+    application.reason = reason.strip()
+    if attachment:
+        application.attachment = attachment
+    elif remove_attachment:
+        application.attachment = None
+    if user.primary_branch_id:
+        application.branch = user.primary_branch
+    from_status = application.status
+    application.status = LeaveApplicationStatus.PENDING_LEAD_RECOMMENDATION
+    application.resubmission_count += 1
+    application.save()
+
+    after = {
+        "leave_type": leave_type.code,
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "is_half_day": is_half_day,
+        "half_day_period": half_day_period,
+        "number_of_days": fmt_days(number_of_days),
+        "reason": application.reason,
+        "attachment": application.attachment.name if application.attachment else "",
+    }
+    changes = {k: [before[k], after[k]] for k in before if before[k] != after[k]}
+
+    note = (resubmit_note or "").strip() or f"Resubmitted after rejection (attempt {application.resubmission_count + 1})"
+    LeaveApproval.objects.create(
+        application=application, stage="EMPLOYEE", approver=user, action="RESUBMITTED", remarks=note,
+    )
+    log_leave_audit(
+        application, user, LeaveAuditAction.RESUBMITTED, from_status=from_status, stage="EMPLOYEE",
+        remarks=note, changes=changes, source=source, ip_address=ip_address,
+    )
+    return application, warnings
 
 
 @transaction.atomic
@@ -348,8 +468,6 @@ def record_leave_on_behalf(hr_user, employee, leave_type, start_date, end_date, 
     HR Coordinator records leave for an employee as a single entry.
     The leave is stored as APPROVED and the balance is updated immediately.
     """
-    from leaves.models import LeaveApproval
-
     if not reason or not reason.strip():
         raise LeaveRequestError("A reason / remark is required when recording leave on behalf of an employee.")
     if not employee.primary_branch_id:
@@ -381,6 +499,10 @@ def record_leave_on_behalf(hr_user, employee, leave_type, start_date, end_date, 
         remarks=f"Recorded on behalf of employee by HR Coordinator {hr_user.employee_id}",
     )
     deduct_leave_from_ledger(application, hr_user, note_prefix="Leave recorded by HR")
+    log_leave_audit(
+        application, hr_user, LeaveAuditAction.RECORDED_BY_HR, stage="HR_COORDINATOR",
+        remarks=reason, source="WEB",
+    )
     return application, warnings
 
 

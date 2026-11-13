@@ -7,7 +7,7 @@
 <div class="page-title-box">
     <div>
         <h1 class="page-title">Leave Approval Queues</h1>
-        <p class="page-subtitle">Multi-tier review sequence: Lead Recommendation &rarr; HR Verification &rarr; Director Approval & Balance Deduction.</p>
+        <p class="page-subtitle">Multi-tier review sequence: Lead Recommendation &rarr; HR Verification &rarr; Director Approval & Balance Deduction. Every stage can approve the full request or only part of it.</p>
     </div>
 </div>
 
@@ -50,10 +50,10 @@
                         </td>
                         <td>{{ a.leave_type.name }}</td>
                         <td>{{ a.start_date|date:"M d" }} - {{ a.end_date|date:"M d, Y" }}</td>
-                        <td><span class="fw-bold">{{ a.number_of_days|floatformat:1 }} days</span></td>
+                        <td><span class="fw-bold">{{ a.number_of_days|floatformat:1 }} days</span>{% if a.is_reduced %}<div class="small text-warning-emphasis">of {{ a.requested_number_of_days|floatformat:"-1" }} requested</div>{% endif %}{% if a.resubmission_count %}<div><span class="badge bg-info-subtle text-info-emphasis border"><i class="bi bi-arrow-repeat"></i> Resubmitted</span></div>{% endif %}</td>
                         <td style="max-width: 200px;" class="text-truncate">{{ a.reason }}</td>
                         <td class="text-end">
-                            <button class="btn btn-sm btn-primary me-1" onclick="openLeaveModal('{{ a.id }}', '{{ a.application_number }}', 'RECOMMENDED', 'Recommend')">
+                            <button class="btn btn-sm btn-primary me-1" onclick="openLeaveModal('{{ a.id }}', '{{ a.application_number }}', 'RECOMMENDED', 'Recommend', '{{ a.start_date|date:"Y-m-d" }}', '{{ a.end_date|date:"Y-m-d" }}', {% if a.is_half_day %}true{% else %}false{% endif %}, '{{ a.number_of_days|floatformat:"-1" }}')">
                                 <i class="bi bi-hand-thumbs-up me-1"></i> Recommend
                             </button>
                             <button class="btn btn-sm btn-outline-danger" onclick="openLeaveModal('{{ a.id }}', '{{ a.application_number }}', 'REJECTED', 'Return/Reject')">
@@ -112,7 +112,7 @@
                         </td>
                         <td><span class="badge bg-light text-dark border">{{ a.branch.code }}</span></td>
                         <td>{{ a.leave_type.name }}</td>
-                        <td><span class="fw-bold">{{ a.number_of_days|floatformat:1 }} days</span></td>
+                        <td><span class="fw-bold">{{ a.number_of_days|floatformat:1 }} days</span>{% if a.is_reduced %}<div class="small text-warning-emphasis">of {{ a.requested_number_of_days|floatformat:"-1" }} requested</div>{% endif %}{% if a.resubmission_count %}<div><span class="badge bg-info-subtle text-info-emphasis border"><i class="bi bi-arrow-repeat"></i> Resubmitted</span></div>{% endif %}</td>
                         <td>
                             {% with last_app=a.approval_history.last %}
                             <small class="fw-semibold text-success">{{ last_app.approver.full_name }}</small>
@@ -120,7 +120,7 @@
                             {% endwith %}
                         </td>
                         <td class="text-end">
-                            <button class="btn btn-sm btn-info text-white me-1" onclick="openLeaveModal('{{ a.id }}', '{{ a.application_number }}', 'VERIFIED', 'Verify')">
+                            <button class="btn btn-sm btn-info text-white me-1" onclick="openLeaveModal('{{ a.id }}', '{{ a.application_number }}', 'VERIFIED', 'Verify', '{{ a.start_date|date:"Y-m-d" }}', '{{ a.end_date|date:"Y-m-d" }}', {% if a.is_half_day %}true{% else %}false{% endif %}, '{{ a.number_of_days|floatformat:"-1" }}')">
                                 <i class="bi bi-check2-all me-1"></i> Verify & Forward
                             </button>
                             <button class="btn btn-sm btn-outline-danger" onclick="openLeaveModal('{{ a.id }}', '{{ a.application_number }}', 'REJECTED', 'Reject')">
@@ -180,7 +180,7 @@
                         </td>
                         <td><span class="badge bg-light text-dark border">{{ a.branch.code }}</span></td>
                         <td>{{ a.leave_type.name }}</td>
-                        <td><span class="fs-6 fw-extrabold text-primary">{{ a.number_of_days|floatformat:1 }} days</span></td>
+                        <td><span class="fs-6 fw-extrabold text-primary">{{ a.number_of_days|floatformat:1 }} days</span>{% if a.is_reduced %}<div class="small text-warning-emphasis">of {{ a.requested_number_of_days|floatformat:"-1" }} requested</div>{% endif %}{% if a.resubmission_count %}<div><span class="badge bg-info-subtle text-info-emphasis border"><i class="bi bi-arrow-repeat"></i> Resubmitted</span></div>{% endif %}</td>
                         <td>{{ a.start_date|date:"M d" }} - {{ a.end_date|date:"M d, Y" }}</td>
                         <td>
                             {% with last_app=a.approval_history.last %}
@@ -188,7 +188,7 @@
                             {% endwith %}
                         </td>
                         <td class="text-end">
-                            <button class="btn btn-sm btn-success me-1" onclick="openLeaveModal('{{ a.id }}', '{{ a.application_number }}', 'APPROVED', 'Approve (Deduct Balance)')">
+                            <button class="btn btn-sm btn-success me-1" onclick="openLeaveModal('{{ a.id }}', '{{ a.application_number }}', 'APPROVED', 'Approve (Deduct Balance)', '{{ a.start_date|date:"Y-m-d" }}', '{{ a.end_date|date:"Y-m-d" }}', {% if a.is_half_day %}true{% else %}false{% endif %}, '{{ a.number_of_days|floatformat:"-1" }}')">
                                 <i class="bi bi-check-lg me-1"></i> Final Approve
                             </button>
                             <button class="btn btn-sm btn-outline-danger" onclick="openLeaveModal('{{ a.id }}', '{{ a.application_number }}', 'REJECTED', 'Reject')">
@@ -222,6 +222,26 @@
                 <input type="hidden" name="action" id="modalLeaveAction">
                 <div class="modal-body p-4">
                     <p class="small text-secondary mb-3" id="leavePrompt"></p>
+                    <div id="partialBlock" class="mb-3 d-none">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" name="partial" value="1" id="partialToggle">
+                            <label class="form-check-label small fw-bold" for="partialToggle">Approve fewer days (partial approval)</label>
+                        </div>
+                        <div id="partialFields" class="border rounded-3 p-3 mt-2 bg-light d-none">
+                            <div class="small text-muted mb-2" id="partialRangeHint"></div>
+                            <div class="row g-2">
+                                <div class="col-6">
+                                    <label class="form-label small fw-bold mb-1">Approved from</label>
+                                    <input type="date" name="approved_start_date" id="partialStart" class="form-control form-control-sm">
+                                </div>
+                                <div class="col-6">
+                                    <label class="form-label small fw-bold mb-1">Approved to</label>
+                                    <input type="date" name="approved_end_date" id="partialEnd" class="form-control form-control-sm">
+                                </div>
+                            </div>
+                            <div class="small mt-2 fw-semibold" id="partialDays"></div>
+                        </div>
+                    </div>
                     <div class="mb-3">
                         <label class="form-label small fw-bold" id="leaveRemarksLabel">Review Remarks</label>
                         <textarea name="remarks" id="modalLeaveRemarks" class="form-control" rows="3" placeholder="Enter review remarks..."></textarea>
@@ -239,32 +259,103 @@
 
 {% block extra_scripts %}
 <script>
-    function openLeaveModal(appId, appNumber, action, label) {
+    let currentLeaveId = null;
+    let currentDays = null;
+
+    function setRemarksRequired(required, labelHtml) {
+        const remarksText = document.getElementById('modalLeaveRemarks');
+        document.getElementById('leaveRemarksLabel').innerHTML = labelHtml;
+        remarksText.required = required;
+    }
+
+    function syncPartial() {
+        const on = document.getElementById('partialToggle').checked;
+        document.getElementById('partialFields').classList.toggle('d-none', !on);
+        document.getElementById('partialStart').required = on;
+        document.getElementById('partialEnd').required = on;
+        if (on) {
+            setRemarksRequired(true, 'Reason for partial approval <span class="text-danger">*</span>');
+            refreshPartialDays();
+        } else {
+            setRemarksRequired(false, 'Review Remarks <span class="text-muted">(Optional)</span>');
+        }
+    }
+
+    async function refreshPartialDays() {
+        const out = document.getElementById('partialDays');
+        const start = document.getElementById('partialStart').value;
+        const end = document.getElementById('partialEnd').value;
+        if (!start || !end || !currentLeaveId) { out.textContent = ''; return; }
+        try {
+            const res = await fetch(`/api/v1/leaves/applications/${currentLeaveId}/range-days/?start_date=${start}&end_date=${end}`, { credentials: 'same-origin' });
+            const data = await res.json();
+            if (!data.ok) {
+                out.className = 'small mt-2 fw-semibold text-danger';
+                out.textContent = data.detail;
+            } else if (data.number_of_days >= data.current_days) {
+                out.className = 'small mt-2 fw-semibold text-muted';
+                out.textContent = `${data.number_of_days} day(s): same as requested, this will be a full approval.`;
+            } else {
+                out.className = 'small mt-2 fw-semibold text-success';
+                out.textContent = `${data.number_of_days} of ${data.current_days} day(s) will be approved.`;
+            }
+        } catch (e) {
+            out.textContent = '';
+        }
+    }
+
+    function openLeaveModal(appId, appNumber, action, label, startDate, endDate, isHalfDay, days) {
+        currentLeaveId = appId;
+        currentDays = days;
         document.getElementById('modalAppId').value = appId;
         document.getElementById('modalLeaveAction').value = action;
-        
+
         const title = document.getElementById('leaveModalTitle');
         const prompt = document.getElementById('leavePrompt');
         const submitBtn = document.getElementById('modalLeaveSubmitBtn');
-        const remarksLabel = document.getElementById('leaveRemarksLabel');
-        const remarksText = document.getElementById('modalLeaveRemarks');
+        const partialBlock = document.getElementById('partialBlock');
+        const partialToggle = document.getElementById('partialToggle');
+        const ps = document.getElementById('partialStart');
+        const pe = document.getElementById('partialEnd');
 
         title.textContent = `${label} for Application ${appNumber}`;
         prompt.textContent = `Are you sure you want to execute action "${label}" on ${appNumber}?`;
+        partialToggle.checked = false;
+
+        const canPartial = action !== 'REJECTED' && startDate && endDate && !isHalfDay && startDate !== endDate;
+        partialBlock.classList.toggle('d-none', !canPartial);
+        if (canPartial) {
+            ps.min = pe.min = startDate;
+            ps.max = pe.max = endDate;
+            ps.value = startDate;
+            pe.value = endDate;
+            document.getElementById('partialRangeHint').textContent =
+                `Requested ${startDate} to ${endDate} (${days} day(s)). Choose the dates you approve; only those days are deducted.`;
+        }
 
         if (action === 'REJECTED') {
             submitBtn.className = 'btn btn-danger px-4';
             submitBtn.textContent = 'Confirm Rejection';
-            remarksLabel.innerHTML = 'Rejection Reason / Remarks <span class="text-danger">*</span>';
-            remarksText.required = true;
+            setRemarksRequired(true, 'Rejection Reason / Remarks <span class="text-danger">*</span>');
         } else {
             submitBtn.className = 'btn btn-primary px-4';
             submitBtn.textContent = 'Confirm ' + label;
-            remarksLabel.innerHTML = 'Review Remarks <span class="text-muted">(Optional)</span>';
-            remarksText.required = false;
+            setRemarksRequired(false, 'Review Remarks <span class="text-muted">(Optional)</span>');
         }
+        syncPartial();
 
         new bootstrap.Modal(document.getElementById('leaveDecisionModal')).show();
     }
+
+    document.getElementById('partialToggle').addEventListener('change', syncPartial);
+    ['partialStart', 'partialEnd'].forEach(function (id) {
+        document.getElementById(id).addEventListener('change', function () {
+            const ps = document.getElementById('partialStart');
+            const pe = document.getElementById('partialEnd');
+            if (pe.value < ps.value) pe.value = ps.value;
+            pe.min = ps.value;
+            refreshPartialDays();
+        });
+    });
 </script>
 {% endblock %}
