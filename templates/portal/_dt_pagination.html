@@ -1,0 +1,41 @@
+{# Server-side datatable footer. Requires: page_obj, paginator, page_range, query_string #}
+<div class="gw-dt-footer">
+    <div class="gw-dt-info">
+        {% if paginator.count %}
+        Showing <strong>{{ page_obj.start_index }}</strong>–<strong>{{ page_obj.end_index }}</strong> of <strong>{{ paginator.count }}</strong> entries
+        {% else %}
+        No entries
+        {% endif %}
+    </div>
+    {% if paginator.num_pages > 1 %}
+    <nav aria-label="Table pagination">
+        <ul class="gw-dt-pages">
+            <li>
+                {% if page_obj.has_previous %}
+                <a href="?{% if query_string %}{{ query_string }}&{% endif %}page={{ page_obj.previous_page_number }}" aria-label="Previous"><i class="bi bi-chevron-left"></i></a>
+                {% else %}
+                <span class="is-disabled"><i class="bi bi-chevron-left"></i></span>
+                {% endif %}
+            </li>
+            {% for n in page_range %}
+            <li>
+                {% if n == paginator.ELLIPSIS %}
+                <span class="is-ellipsis">…</span>
+                {% elif n == page_obj.number %}
+                <span class="is-active" aria-current="page">{{ n }}</span>
+                {% else %}
+                <a href="?{% if query_string %}{{ query_string }}&{% endif %}page={{ n }}">{{ n }}</a>
+                {% endif %}
+            </li>
+            {% endfor %}
+            <li>
+                {% if page_obj.has_next %}
+                <a href="?{% if query_string %}{{ query_string }}&{% endif %}page={{ page_obj.next_page_number }}" aria-label="Next"><i class="bi bi-chevron-right"></i></a>
+                {% else %}
+                <span class="is-disabled"><i class="bi bi-chevron-right"></i></span>
+                {% endif %}
+            </li>
+        </ul>
+    </nav>
+    {% endif %}
+</div>

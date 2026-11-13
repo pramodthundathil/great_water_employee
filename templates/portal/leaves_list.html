@@ -7,7 +7,7 @@
 <div class="page-title-box">
     <div>
         <h1 class="page-title">Leave Management</h1>
-        <p class="page-subtitle">Apply for planned time-off, track 4-stage approvals, and monitor your live leave balances.</p>
+        <p class="page-subtitle">Apply for planned time-off and track leave applications across employees and locations.</p>
     </div>
     <div>
         <button class="btn btn-gw-primary" data-bs-toggle="modal" data-bs-target="#applyLeaveModal">
@@ -16,46 +16,59 @@
     </div>
 </div>
 
-<!-- Balance Cards -->
-<div class="row g-3 mb-4">
-    {% for b in balances %}
-    <div class="col-xl-3 col-md-6">
-        <div class="kpi-card">
-            <div class="d-flex justify-content-between align-items-center mb-2">
-                <span class="badge bg-primary-subtle text-primary fw-bold">{{ b.leave_type.code }}</span>
-                {% if b.leave_type.is_accrual_based %}
-                <small class="badge bg-light text-muted border">Accrual Policy</small>
-                {% endif %}
-            </div>
-            <div class="kpi-value text-success">{{ b.available_balance|floatformat:1 }} <span class="fs-6 text-muted fw-normal">days left</span></div>
-            <div class="kpi-label">{{ b.leave_type.name }}</div>
-            <div class="border-top pt-2 mt-2 d-flex justify-content-between small text-muted">
-                <span>Earned: <strong>{{ b.earned_days|floatformat:1 }}</strong></span>
-                <span>Taken: <strong class="text-danger">{{ b.taken_days|floatformat:1 }}</strong></span>
-                <span>Pending: <strong class="text-warning">{{ b.pending_days|floatformat:1 }}</strong></span>
-            </div>
-        </div>
-    </div>
-    {% endfor %}
-</div>
-
-<!-- Leave Applications Table -->
-<div class="gw-card">
+<!-- Leave Applications Datatable (server-side paginated) -->
+<div class="gw-card gw-dt">
     <div class="gw-card-header">
-        <h5 class="gw-card-title"><i class="bi bi-calendar2-range text-primary me-2"></i>My Leave History</h5>
+        <h5 class="gw-card-title"><i class="bi bi-calendar2-range text-primary me-2"></i>Leave Applications</h5>
         <a href="{% url 'portal_leave_ledger' %}" class="btn btn-sm btn-link text-decoration-none">Leave Ledger Statement <i class="bi bi-arrow-right"></i></a>
     </div>
+
+    <form method="get" class="gw-dt-toolbar" id="leavesDtForm">
+        <input type="hidden" name="sort" value="{{ sort }}">
+        <input type="hidden" name="dir" value="{{ dir }}">
+        <div class="gw-dt-search">
+            <i class="bi bi-search"></i>
+            <input type="search" name="q" value="{{ q }}" class="form-control form-control-sm" placeholder="Search employee, ID, location, application #..." autocomplete="off" data-dt-search>
+        </div>
+        <select name="status" class="form-select form-select-sm gw-dt-filter" data-dt-autosubmit>
+            <option value="">All statuses</option>
+            <option value="pending" {% if status_filter == "pending" %}selected{% endif %}>Pending</option>
+            <option value="approved" {% if status_filter == "approved" %}selected{% endif %}>Approved</option>
+            <option value="rejected" {% if status_filter == "rejected" %}selected{% endif %}>Rejected</option>
+            <option value="withdrawn" {% if status_filter == "withdrawn" %}selected{% endif %}>Withdrawn</option>
+        </select>
+        <select name="leave_type" class="form-select form-select-sm gw-dt-filter" data-dt-autosubmit>
+            <option value="">All leave types</option>
+            {% for lt in leave_types %}
+            <option value="{{ lt.id }}" {% if leave_type_filter == lt.id|stringformat:"s" %}selected{% endif %}>{{ lt.name }}</option>
+            {% endfor %}
+        </select>
+        {% if is_filtered %}
+        <a href="{% url 'portal_leaves' %}?page_size={{ page_size }}" class="btn btn-sm btn-light gw-dt-reset"><i class="bi bi-x-lg me-1"></i>Clear</a>
+        {% endif %}
+        <div class="gw-dt-pagesize ms-auto">
+            <span>Show</span>
+            <select name="page_size" class="form-select form-select-sm" data-dt-autosubmit>
+                {% for n in page_size_options %}
+                <option value="{{ n }}" {% if n == page_size %}selected{% endif %}>{{ n }}</option>
+                {% endfor %}
+            </select>
+            <span>rows</span>
+        </div>
+    </form>
+
     <div class="gw-card-body p-0">
         <div class="table-responsive">
-            <table class="table gw-table m-0">
+            <table class="table gw-table gw-dt-table m-0">
                 <thead>
                     <tr>
-                        <th>Application #</th>
-                        <th>Leave Type</th>
-                        <th>Dates</th>
-                        <th>Duration</th>
-                        <th>Reason</th>
-                        <th>Status</th>
+                        {% include "portal/_dt_sort_th.html" with col="employee" label="Employee" %}
+                        {% include "portal/_dt_sort_th.html" with col="location" label="Location" %}
+                        {% include "portal/_dt_sort_th.html" with col="number" label="Application #" %}
+                        {% include "portal/_dt_sort_th.html" with col="type" label="Leave Type" %}
+                        {% include "portal/_dt_sort_th.html" with col="dates" label="Dates" %}
+                        {% include "portal/_dt_sort_th.html" with col="days" label="Days" %}
+                        {% include "portal/_dt_sort_th.html" with col="status" label="Status" %}
                         <th class="text-end">Actions</th>
                     </tr>
                 </thead>
@@ -63,50 +76,60 @@
                     {% for a in applications %}
                     <tr>
                         <td>
-                            <a href="{% url 'portal_leave_detail' a.pk %}" class="fw-bold text-decoration-none text-primary">
-                                {{ a.application_number }}
-                            </a>
+                            <div class="gw-dt-employee">
+                                <span class="gw-dt-avatar">{{ a.employee.first_name|first|upper }}{{ a.employee.last_name|first|upper }}</span>
+                                <div>
+                                    <div class="gw-dt-employee-name">{{ a.employee.full_name }}</div>
+                                    <div class="gw-dt-employee-id">{{ a.employee.employee_id }}</div>
+                                </div>
+                            </div>
+                        </td>
+                        <td>
+                            <span class="gw-dt-location" title="{{ a.branch.code }}">
+                                <i class="bi bi-geo-alt-fill"></i>
+                                <span>{{ a.branch.name }}{% if a.branch.city %}<small>{{ a.branch.city }}</small>{% endif %}</span>
+                            </span>
+                        </td>
+                        <td>
+                            <a href="{% url 'portal_leave_detail' a.pk %}" class="fw-bold text-decoration-none text-primary">{{ a.application_number }}</a>
                             <div class="small text-muted">{{ a.submitted_at|date:"M d, Y" }}</div>
                         </td>
                         <td>
                             <span class="fw-semibold">{{ a.leave_type.name }}</span>
                             {% if a.attachment %}
-                            <a href="{{ a.attachment.url }}" target="_blank" class="ms-1 text-primary" title="Attachment available">
-                                <i class="bi bi-paperclip"></i>
-                            </a>
+                            <a href="{{ a.attachment.url }}" target="_blank" class="ms-1 text-primary" title="Attachment available"><i class="bi bi-paperclip"></i></a>
                             {% endif %}
                         </td>
-                        <td>
-                            <div class="fw-semibold">{{ a.start_date|date:"M d, Y" }} to {{ a.end_date|date:"M d, Y" }}</div>
+                        <td class="text-nowrap">
+                            <div class="fw-semibold">{{ a.start_date|date:"M d" }} – {{ a.end_date|date:"M d, Y" }}</div>
                             {% if a.is_half_day %}
                             <span class="badge bg-info-subtle text-info border">Half-Day ({{ a.get_half_day_period_display }})</span>
                             {% endif %}
                         </td>
-                        <td>
-                            <span class="fs-6 fw-bold text-dark">{{ a.number_of_days|floatformat:1 }} day{{ a.number_of_days|pluralize }}</span>
-                        </td>
-                        <td style="max-width: 250px;" class="text-truncate" title="{{ a.reason }}">{{ a.reason }}</td>
+                        <td><span class="fw-bold">{{ a.number_of_days|floatformat:"-1" }}</span></td>
                         <td>
                             <span class="status-badge {% if 'REJECTED' in a.status %}badge-rejected{% elif a.status == 'APPROVED' %}badge-approved{% else %}badge-pending{% endif %}">
                                 {{ a.display_status }}{% if a.resubmission_count %} <i class="bi bi-arrow-repeat" title="Resubmitted"></i>{% endif %}
                             </span>
                         </td>
                         <td class="text-end">
-                            <a href="{% url 'portal_leave_detail' a.pk %}" class="btn btn-sm btn-light" title="View Progress">
-                                <i class="bi bi-eye"></i>
-                            </a>
+                            <a href="{% url 'portal_leave_detail' a.pk %}" class="btn btn-sm btn-light" title="View Progress"><i class="bi bi-eye"></i></a>
                         </td>
                     </tr>
                     {% empty %}
                     <tr>
-                        <td colspan="7">
+                        <td colspan="8">
                             <div class="empty-state">
                                 <i class="bi bi-calendar2-x empty-state-icon"></i>
+                                {% if is_filtered %}
+                                <div class="empty-state-title">No matching applications</div>
+                                <p class="empty-state-desc">Try a different search or clear the filters.</p>
+                                <a href="{% url 'portal_leaves' %}" class="btn btn-light">Clear filters</a>
+                                {% else %}
                                 <div class="empty-state-title">No Leave Applications Found</div>
-                                <p class="empty-state-desc">You have not submitted any leave applications yet.</p>
-                                <button class="btn btn-gw-primary" data-bs-toggle="modal" data-bs-target="#applyLeaveModal">
-                                    <i class="bi bi-calendar-plus me-1"></i> Apply for Leave
-                                </button>
+                                <p class="empty-state-desc">No leave applications have been submitted yet.</p>
+                                <button class="btn btn-gw-primary" data-bs-toggle="modal" data-bs-target="#applyLeaveModal"><i class="bi bi-calendar-plus me-1"></i> Apply for Leave</button>
+                                {% endif %}
                             </div>
                         </td>
                     </tr>
@@ -115,6 +138,8 @@
             </table>
         </div>
     </div>
+
+    {% include "portal/_dt_pagination.html" %}
 </div>
 
 <!-- Modal: Apply Leave -->
@@ -200,6 +225,20 @@
 
 {% block extra_scripts %}
 <script>
+    (function () {
+        const form = document.getElementById('leavesDtForm');
+        if (!form) return;
+        form.querySelectorAll('[data-dt-autosubmit]').forEach(el => el.addEventListener('change', () => form.submit()));
+        const search = form.querySelector('[data-dt-search]');
+        let timer;
+        search.addEventListener('input', () => {
+            clearTimeout(timer);
+            timer = setTimeout(() => form.submit(), 450);
+        });
+        // Keep cursor at end of the search box after reload
+        if (search.value) { search.focus(); search.setSelectionRange(search.value.length, search.value.length); }
+    })();
+
     function toggleHalfDay(isHalfDay) {
         const endDateWrapper = document.getElementById('endDateWrapper');
         const halfDayPeriodWrapper = document.getElementById('halfDayPeriodWrapper');

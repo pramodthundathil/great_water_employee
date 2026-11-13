@@ -1,0 +1,7 @@
+{# Sortable datatable header. Requires: col, label, sort, dir, sort_query_string #}
+<th class="gw-dt-sortable{% if sort == col %} is-sorted{% endif %}" aria-sort="{% if sort == col %}{% if dir == 'asc' %}ascending{% else %}descending{% endif %}{% else %}none{% endif %}">
+    <a href="?{% if sort_query_string %}{{ sort_query_string }}&{% endif %}sort={{ col }}&dir={% if sort == col and dir == 'asc' %}desc{% else %}asc{% endif %}">
+        {{ label }}
+        <i class="bi {% if sort == col %}{% if dir == 'asc' %}bi-caret-up-fill{% else %}bi-caret-down-fill{% endif %}{% else %}bi-chevron-expand{% endif %}"></i>
+    </a>
+</th>

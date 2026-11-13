@@ -5,6 +5,7 @@ from django.contrib import messages
 from django.db.models import Sum, Count, Q, ProtectedError
 from django.utils import timezone
 from django.core.exceptions import ValidationError
+from django.core.paginator import Paginator
 from datetime import datetime, date, timedelta
 from decimal import Decimal
 
@@ -649,15 +650,104 @@ def leaves_list_view(request):
     if user.role not in (RoleChoices.EMPLOYEE, RoleChoices.LEAD_MANAGER) and selected_branch and selected_branch != "all":
         applications = applications.filter(branch_id=selected_branch)
 
-    applications = applications.select_related("leave_type", "branch", "employee").order_by("-submitted_at")
+    applications = applications.select_related("leave_type", "branch", "employee")
     leave_types = LeaveType.objects.filter(is_active=True)
-    balances = get_employee_leave_balances(user)
+
+    # ---- Server-side datatable: search, filters, sorting, pagination ----
+    q = request.GET.get("q", "").strip()
+    if q:
+        applications = applications.filter(
+            Q(employee__first_name__icontains=q)
+            | Q(employee__last_name__icontains=q)
+            | Q(employee__employee_id__icontains=q)
+            | Q(application_number__icontains=q)
+            | Q(branch__name__icontains=q)
+            | Q(branch__city__icontains=q)
+            | Q(leave_type__name__icontains=q)
+        )
+
+    status_filter = request.GET.get("status", "")
+    status_groups = {
+        "pending": [
+            LeaveApplicationStatus.PENDING_LEAD_RECOMMENDATION,
+            LeaveApplicationStatus.PENDING_HR_VERIFICATION,
+            LeaveApplicationStatus.PENDING_DIRECTOR_APPROVAL,
+        ],
+        "approved": [LeaveApplicationStatus.APPROVED],
+        "rejected": [
+            LeaveApplicationStatus.REJECTED_BY_LEAD,
+            LeaveApplicationStatus.REJECTED_BY_HR,
+            LeaveApplicationStatus.REJECTED_BY_DIRECTOR,
+        ],
+        "withdrawn": [LeaveApplicationStatus.WITHDRAWN],
+    }
+    if status_filter in status_groups:
+        applications = applications.filter(status__in=status_groups[status_filter])
+    else:
+        status_filter = ""
+
+    leave_type_filter = request.GET.get("leave_type", "")
+    if leave_type_filter.isdigit():
+        applications = applications.filter(leave_type_id=int(leave_type_filter))
+    else:
+        leave_type_filter = ""
+
+    sort_map = {
+        "employee": ["employee__first_name", "employee__last_name"],
+        "location": ["branch__name"],
+        "number": ["application_number"],
+        "type": ["leave_type__name"],
+        "dates": ["start_date"],
+        "days": ["number_of_days"],
+        "status": ["status"],
+        "submitted": ["submitted_at"],
+    }
+    sort = request.GET.get("sort", "submitted")
+    direction = request.GET.get("dir", "desc")
+    if sort not in sort_map:
+        sort = "submitted"
+    if direction not in ("asc", "desc"):
+        direction = "desc"
+    prefix = "-" if direction == "desc" else ""
+    applications = applications.order_by(*[prefix + f for f in sort_map[sort]], "-id")
+
+    page_size_options = [10, 25, 50, 100]
+    try:
+        page_size = int(request.GET.get("page_size", 10))
+    except (TypeError, ValueError):
+        page_size = 10
+    if page_size not in page_size_options:
+        page_size = 10
+
+    paginator = Paginator(applications, page_size)
+    page_obj = paginator.get_page(request.GET.get("page"))
+    page_range = paginator.get_elided_page_range(page_obj.number, on_each_side=1, on_ends=1)
+
+    # Query string without page/sort params, for building links
+    base_params = request.GET.copy()
+    for key in ("page",):
+        base_params.pop(key, None)
+    sort_params = base_params.copy()
+    for key in ("sort", "dir"):
+        sort_params.pop(key, None)
 
     context = {
         "active_nav": "leaves",
-        "applications": applications,
+        "applications": page_obj.object_list,
+        "page_obj": page_obj,
+        "paginator": paginator,
+        "page_range": page_range,
+        "page_size": page_size,
+        "page_size_options": page_size_options,
+        "q": q,
+        "status_filter": status_filter,
+        "leave_type_filter": leave_type_filter,
+        "sort": sort,
+        "dir": direction,
+        "query_string": base_params.urlencode(),
+        "sort_query_string": sort_params.urlencode(),
         "leave_types": leave_types,
-        "balances": balances,
+        "is_filtered": bool(q or status_filter or leave_type_filter),
     }
     return render(request, "portal/leaves_list.html", context)
 
