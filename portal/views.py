@@ -24,7 +24,7 @@ from leaves.services import (
     validate_leave_request, LeaveRequestError,
     log_leave_audit, client_ip, resubmit_leave_application,
     initial_leave_route, visible_leave_applications, can_view_leave_application,
-    filter_leave_track, leave_track_counts,
+    filter_leave_track, leave_track_counts, leave_review_options,
 )
 from portal.admin_views import validate_upload, can_manage_users, get_default_organization
 from accounts.services import EmployeeError, can_reset_passwords, create_employee, set_employee_password
@@ -689,6 +689,7 @@ def leave_detail_view(request, pk):
         "approval_history": app.approval_history.select_related("approver").order_by("created_at"),
         "audit_trail": _audit_rows(app),
         "can_resubmit": app.can_resubmit(user),
+        "review": leave_review_options(user, app),
         "leave_types": LeaveType.objects.filter(is_active=True) if app.can_resubmit(user) else [],
     }
     return render(request, "portal/leave_detail.html", context)
@@ -781,18 +782,21 @@ def leave_approvals_view(request):
         app_id = request.POST.get("app_id")
         action = request.POST.get("action", "").upper()
         app = get_object_or_404(LeaveApplication, id=app_id)
+        next_url = request.POST.get("next", "")
+        back = redirect(next_url if next_url.startswith("/leaves/") and "//" not in next_url
+                        else "portal_leave_approvals")
 
         reporting_lead = getattr(getattr(app.employee, "profile", None), "reporting_lead", None)
         if app.employee == user:
             messages.error(request, "You cannot act on your own leave application.")
-            return redirect("portal_leave_approvals")
+            return back
         if app.status == LeaveApplicationStatus.PENDING_LEAD_RECOMMENDATION:
             if not (reporting_lead == user or user.is_superuser):
                 messages.error(request, "Only the employee's reporting Lead / Manager can give the recommendation.")
-                return redirect("portal_leave_approvals")
+                return back
         elif not user.can_access_branch(app.branch):
             messages.error(request, "You do not have permission for this branch.")
-            return redirect("portal_leave_approvals")
+            return back
 
         try:
             kwargs = _leave_review_kwargs(request)
@@ -821,7 +825,7 @@ def leave_approvals_view(request):
         except ValidationError as e:
             messages.error(request, " ".join(e.messages))
 
-        return redirect("portal_leave_approvals")
+        return back
 
     base_qs = LeaveApplication.objects.filter(branch__in=accessible_branches)
     if selected_branch and selected_branch != "all":

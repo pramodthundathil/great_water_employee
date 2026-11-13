@@ -416,6 +416,47 @@ def visible_leave_applications(user, include_own=True):
     return qs.distinct()
 
 
+def leave_review_options(user, application):
+    """
+    What the signed-in user can decide on this application right now, or None.
+    Single source of truth for the web detail page, the mobile detail screen and the approval queues.
+    """
+    if application.employee_id == user.id and not user.is_superuser:
+        return None
+    status = application.status
+    can_partial = not application.is_half_day and application.start_date != application.end_date
+
+    if status == LeaveApplicationStatus.PENDING_LEAD_RECOMMENDATION:
+        lead_id = getattr(getattr(application.employee, "profile", None), "reporting_lead_id", None)
+        if not (user.id == lead_id or user.is_superuser):
+            return None
+        stage, label, path, positive, positive_label = (
+            "LEAD_MANAGER", "Lead recommendation", "lead-recommend", "RECOMMENDED", "Recommend")
+    elif status == LeaveApplicationStatus.PENDING_HR_VERIFICATION:
+        if not (user.is_hr_coordinator and user.can_access_branch(application.branch)):
+            return None
+        stage, label, path, positive, positive_label = (
+            "HR_COORDINATOR", "HR verification", "hr-verify", "VERIFIED", "Verify & forward")
+    elif status == LeaveApplicationStatus.PENDING_DIRECTOR_APPROVAL:
+        if not (user.is_director and user.can_access_branch(application.branch)):
+            return None
+        stage, label, path, positive, positive_label = (
+            "DIRECTOR", "Director final approval", "director-approval", "APPROVED", "Approve")
+    else:
+        return None
+
+    return {
+        "stage": stage,
+        "stage_label": label,
+        "endpoint": f"/leaves/applications/{application.id}/{path}/",
+        "can_partial": can_partial,
+        "actions": [
+            {"value": positive, "label": positive_label, "requires_remarks": False, "tone": "positive"},
+            {"value": "REJECTED", "label": "Reject", "requires_remarks": True, "tone": "negative"},
+        ],
+    }
+
+
 def can_view_leave_application(user, application):
     if user.is_superuser or application.employee_id == user.id:
         return True

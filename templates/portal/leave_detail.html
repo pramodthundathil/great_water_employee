@@ -223,6 +223,57 @@
     </div>
 </div>
 
+{% if review %}
+<!-- Decision for the current approver -->
+<div class="gw-card mt-4 border border-primary" id="decision">
+    <div class="gw-card-header bg-primary bg-opacity-10">
+        <div>
+            <h5 class="gw-card-title text-primary"><i class="bi bi-check2-square me-2"></i>Your decision &middot; {{ review.stage_label }}</h5>
+            <small class="text-muted">This leave is awaiting your action.</small>
+        </div>
+    </div>
+    <div class="gw-card-body">
+        <form method="post" action="{% url 'portal_leave_approvals' %}" id="decisionForm">
+            {% csrf_token %}
+            <input type="hidden" name="app_id" value="{{ app.id }}">
+            <input type="hidden" name="next" value="{% url 'portal_leave_detail' app.pk %}">
+            <input type="hidden" name="action" id="decisionAction">
+            {% if review.can_partial %}
+            <div class="form-check form-switch mb-2">
+                <input class="form-check-input" type="checkbox" name="partial" value="1" id="dPartial">
+                <label class="form-check-label small fw-bold" for="dPartial">Approve fewer days (partial approval)</label>
+            </div>
+            <div id="dPartialFields" class="border rounded-3 p-3 mb-3 bg-light d-none">
+                <div class="row g-2">
+                    <div class="col-md-4">
+                        <label class="form-label small fw-bold mb-1">Approved from</label>
+                        <input type="date" name="approved_start_date" id="dStart" class="form-control form-control-sm"
+                               value="{{ app.start_date|date:'Y-m-d' }}" min="{{ app.start_date|date:'Y-m-d' }}" max="{{ app.end_date|date:'Y-m-d' }}">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small fw-bold mb-1">Approved to</label>
+                        <input type="date" name="approved_end_date" id="dEnd" class="form-control form-control-sm"
+                               value="{{ app.end_date|date:'Y-m-d' }}" min="{{ app.start_date|date:'Y-m-d' }}" max="{{ app.end_date|date:'Y-m-d' }}">
+                    </div>
+                    <div class="col-md-4 d-flex align-items-end"><div class="small fw-semibold" id="dDays"></div></div>
+                </div>
+            </div>
+            {% endif %}
+            <label class="form-label small fw-bold" id="dRemarksLabel">Remarks <span class="text-muted">(optional for approval, required for rejection or partial approval)</span></label>
+            <textarea name="remarks" id="dRemarks" class="form-control mb-3" rows="3" placeholder="Enter review remarks..."></textarea>
+            <div class="d-flex gap-2 flex-wrap">
+                {% for a in review.actions %}
+                <button type="submit" class="btn {% if a.tone == 'negative' %}btn-outline-danger{% else %}btn-success{% endif %} px-4"
+                        data-action="{{ a.value }}" data-tone="{{ a.tone }}">
+                    <i class="bi {% if a.tone == 'negative' %}bi-x-lg{% else %}bi-check-lg{% endif %} me-1"></i>{{ a.label }}
+                </button>
+                {% endfor %}
+            </div>
+        </form>
+    </div>
+</div>
+{% endif %}
+
 <!-- Full Audit Trail -->
 <div class="gw-card mt-4">
     <div class="gw-card-header">
@@ -380,6 +431,58 @@
         half.addEventListener('change', sync);
         start.addEventListener('change', function () { if (!end.value || end.value < start.value) end.value = start.value; sync(); });
         sync();
+    })();
+</script>
+{% endif %}
+{% if review %}
+<script>
+    (function () {
+        const form = document.getElementById('decisionForm');
+        const actionInput = document.getElementById('decisionAction');
+        const remarks = document.getElementById('dRemarks');
+        const partial = document.getElementById('dPartial');
+        const fields = document.getElementById('dPartialFields');
+        const start = document.getElementById('dStart');
+        const end = document.getElementById('dEnd');
+        const out = document.getElementById('dDays');
+        let clicked = null;
+
+        form.querySelectorAll('button[data-action]').forEach(function (btn) {
+            btn.addEventListener('click', function () { clicked = btn; });
+        });
+
+        async function refreshDays() {
+            if (!partial || !partial.checked) return;
+            try {
+                const r = await fetch(`/api/v1/leaves/applications/{{ app.id }}/range-days/?start_date=${start.value}&end_date=${end.value}`, { credentials: 'same-origin' });
+                const d = await r.json();
+                out.className = 'small fw-semibold ' + (!d.ok ? 'text-danger' : d.number_of_days < d.current_days ? 'text-success' : 'text-muted');
+                out.textContent = !d.ok ? d.detail : d.number_of_days < d.current_days
+                    ? `${d.number_of_days} of ${d.current_days} day(s) will be approved`
+                    : 'Same as requested: full approval';
+            } catch (e) { out.textContent = ''; }
+        }
+        if (partial) {
+            partial.addEventListener('change', function () { fields.classList.toggle('d-none', !partial.checked); refreshDays(); });
+            [start, end].forEach(function (el) {
+                el.addEventListener('change', function () { if (end.value < start.value) end.value = start.value; end.min = start.value; refreshDays(); });
+            });
+        }
+
+        form.addEventListener('submit', function (e) {
+            if (!clicked) { e.preventDefault(); return; }
+            const negative = clicked.dataset.tone === 'negative';
+            actionInput.value = clicked.dataset.action;
+            if (negative && partial) partial.checked = false;
+            if ((negative || (partial && partial.checked)) && !remarks.value.trim()) {
+                e.preventDefault();
+                remarks.classList.add('is-invalid');
+                remarks.focus();
+                return;
+            }
+            const msg = negative ? 'Reject this leave and return it to the employee?' : `Confirm: ${clicked.textContent.trim()}?`;
+            if (!confirm(msg)) e.preventDefault();
+        });
     })();
 </script>
 {% endif %}

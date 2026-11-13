@@ -182,3 +182,39 @@ class LeaveRoutingAndTrackingTests(TestCase):
             self.assertContains(page, app.application_number)
         self.client.force_login(self.hr_dxb)
         self.assertNotContains(self.client.get("/leaves/approvals/?track=all"), app.application_number)
+
+    # ------------------------------------------------------------------ decision available on the leave itself
+
+    def test_hr_can_verify_from_leave_detail_on_mobile_api(self):
+        app = self._apply(self.lead)  # goes straight to HR
+        self.api.force_authenticate(self.hr)
+        review = self.api.get(f"/api/v1/leaves/applications/{app.id}/").data["review"]
+        self.assertEqual(review["stage"], "HR_COORDINATOR")
+        self.assertEqual(review["endpoint"], f"/leaves/applications/{app.id}/hr-verify/")
+        self.assertEqual([a["value"] for a in review["actions"]], ["VERIFIED", "REJECTED"])
+        r = self.api.post(f"/api/v1{review['endpoint']}", {"action": "VERIFIED"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+
+        # Others get no decision: the applicant, HR of another branch, and HR once it has moved on
+        self.api.force_authenticate(self.lead)
+        self.assertIsNone(self.api.get(f"/api/v1/leaves/applications/{app.id}/").data["review"])
+        self.api.force_authenticate(self.hr)
+        self.assertIsNone(self.api.get(f"/api/v1/leaves/applications/{app.id}/").data["review"])
+        self.api.force_authenticate(self.director)
+        self.assertEqual(self.api.get(f"/api/v1/leaves/applications/{app.id}/").data["review"]["stage"], "DIRECTOR")
+
+    def test_hr_can_verify_from_web_leave_detail(self):
+        app = self._apply(self.emp)
+        app.lead_review(self.lead, "RECOMMENDED")
+        self.client.force_login(self.hr_dxb)
+        self.client.get(f"/leaves/{app.id}/")  # no access to Kochi
+        self.client.force_login(self.hr)
+        page = self.client.get(f"/leaves/{app.id}/")
+        self.assertContains(page, "Your decision")
+        self.assertContains(page, "Verify &amp; forward")
+        r = self.client.post("/leaves/approvals/", {"app_id": app.id, "action": "VERIFIED",
+                                                    "next": f"/leaves/{app.id}/"})
+        self.assertRedirects(r, f"/leaves/{app.id}/", fetch_redirect_response=False)
+        app.refresh_from_db()
+        self.assertEqual(app.status, LeaveApplicationStatus.PENDING_DIRECTOR_APPROVAL)
+        self.assertNotContains(self.client.get(f"/leaves/{app.id}/"), "Your decision")
