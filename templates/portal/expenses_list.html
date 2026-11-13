@@ -83,7 +83,7 @@
                         </td>
                         <td>{{ c.category.name }}</td>
                         <td>
-                            <span class="fs-6 fw-bold text-dark">${{ c.amount|floatformat:2 }}</span>
+                            <span class="fs-6 fw-bold text-dark">${{ c.amount|floatformat:2 }}</span>{% if c.is_partially_approved %}<div class="small text-warning-emphasis">of ${{ c.claimed_amount|floatformat:2 }}</div>{% endif %}
                         </td>
                         <td class="text-center">
                             {% with att_count=c.attachments.count %}

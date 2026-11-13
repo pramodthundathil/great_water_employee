@@ -1,0 +1,24 @@
+{% comment %}Review / Partial / Reject buttons that open portal/_expense_review_modal.html. Needs `c` (claim) and `stage` ("admin" | "director").{% endcomment %}
+{% with amt=c.amount|stringformat:".2f" claimed=c.claimed_amount|stringformat:".2f" %}
+<button type="button" class="btn btn-sm btn-success me-1" data-expense-review data-decision="APPROVED"
+    data-claim-id="{{ c.id }}" data-claim-number="{{ c.claim_number }}" data-employee="{{ c.employee.full_name }}"
+    data-branch="{{ c.branch.name }} ({{ c.branch.code }})" data-category="{{ c.category.name }}"
+    data-amount="{{ amt }}" data-claimed="{{ claimed }}" data-stage="{{ stage }}"
+    data-detail-url="{% url 'portal_expense_detail' c.pk %}">
+    <i class="bi bi-check-lg me-1"></i>{% if stage == "director" %}Final Approve{% else %}Approve{% endif %}
+</button>
+<button type="button" class="btn btn-sm btn-outline-warning text-dark me-1" title="Approve a partial amount" data-expense-review data-decision="PARTIAL"
+    data-claim-id="{{ c.id }}" data-claim-number="{{ c.claim_number }}" data-employee="{{ c.employee.full_name }}"
+    data-branch="{{ c.branch.name }} ({{ c.branch.code }})" data-category="{{ c.category.name }}"
+    data-amount="{{ amt }}" data-claimed="{{ claimed }}" data-stage="{{ stage }}"
+    data-detail-url="{% url 'portal_expense_detail' c.pk %}">
+    <i class="bi bi-dash-circle me-1"></i>Partial
+</button>
+<button type="button" class="btn btn-sm btn-outline-danger" data-expense-review data-decision="REJECTED"
+    data-claim-id="{{ c.id }}" data-claim-number="{{ c.claim_number }}" data-employee="{{ c.employee.full_name }}"
+    data-branch="{{ c.branch.name }} ({{ c.branch.code }})" data-category="{{ c.category.name }}"
+    data-amount="{{ amt }}" data-claimed="{{ claimed }}" data-stage="{{ stage }}"
+    data-detail-url="{% url 'portal_expense_detail' c.pk %}">
+    <i class="bi bi-x-lg me-1"></i>Reject
+</button>
+{% endwith %}

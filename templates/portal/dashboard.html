@@ -216,14 +216,13 @@
                                             </div>
                                         </div>
                                     </td>
-                                    <td class="fw-bold text-dark text-nowrap">${{ c.amount|floatformat:2 }}</td>
+                                    <td class="fw-bold text-dark text-nowrap">
+                                        ${{ c.amount|floatformat:2 }}
+                                        {% if c.is_partially_approved %}<div class="small fw-normal text-warning-emphasis">of ${{ c.claimed_amount|floatformat:2 }}</div>{% endif %}
+                                        {% if c.skips_admin_stage %}<div class="small fw-normal text-info-emphasis">Direct (Admin Mgr)</div>{% endif %}
+                                    </td>
                                     <td class="text-end text-nowrap">
-                                        <button type="button" class="btn-gw-approve me-1" onclick="openDirectorModal('expense', '{{ c.id }}', '{{ c.claim_number|escapejs }}', 'APPROVED')">
-                                            <i class="bi bi-check-lg"></i> Approve
-                                        </button>
-                                        <button type="button" class="btn-gw-reject" onclick="openDirectorModal('expense', '{{ c.id }}', '{{ c.claim_number|escapejs }}', 'REJECTED')" title="Reject Claim">
-                                            <i class="bi bi-x-lg"></i>
-                                        </button>
+                                        {% include "portal/_expense_review_buttons.html" with c=c stage="director" %}
                                     </td>
                                 </tr>
                                 {% empty %}
@@ -866,6 +865,7 @@
 
 {{ expense_chart_data|json_script:"expense-chart-data" }}
 {{ leave_chart_data|json_script:"leave-chart-data" }}
+{% if is_director_dashboard %}{% include "portal/_expense_review_modal.html" %}{% endif %}
 {% endblock %}
 
 {% block extra_scripts %}

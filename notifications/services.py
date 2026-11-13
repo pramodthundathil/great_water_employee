@@ -64,68 +64,93 @@ Great Waters Automated Notification System
     return event
 
 
+def expense_approvers_for(branch, role, exclude=None):
+    """
+    Active users holding `role` who may act on expense claims of `branch`:
+    organisation-wide scope, the branch as primary location, or an active branch scope
+    that grants expense management. Directors fall back to the superuser when none match.
+    """
+    qs = User.objects.filter(is_active=True, role=role).filter(
+        Q(is_global_scope=True) | Q(primary_branch=branch) |
+        Q(branch_scopes__branch=branch, branch_scopes__is_active=True, branch_scopes__can_manage_expenses=True)
+    ).distinct()
+    if exclude is not None:
+        qs = qs.exclude(pk=exclude.pk)
+    users = list(qs)
+    if not users and role == RoleChoices.DIRECTOR:
+        users = list(User.objects.filter(is_active=True, is_superuser=True))
+    return users
+
+
+def _money(value):
+    return f"${value:,.2f}"
+
+
 def notify_expense_event(claim, event_type, remarks=""):
     """
-    Dispatches role-aware notifications across expense workflow stages.
+    Dispatches role-aware, branch-aware notifications across expense workflow stages.
     """
     emp = claim.employee
     branch = claim.branch
+    partial_note = (
+        f" Approved {_money(claim.amount)} of {_money(claim.claimed_amount)} claimed."
+        if claim.is_partially_approved else ""
+    )
 
     if event_type == "EXPENSE_SUBMITTED":
-        # Notify Admin Managers who have access to this branch
-        admin_managers = User.objects.filter(
-            is_active=True,
-            role=RoleChoices.ADMIN_MANAGER
-        ).filter(
-            Q(is_global_scope=True) |
-            Q(primary_branch=branch) |
-            Q(branch_scopes__branch=branch, branch_scopes__is_active=True)
-        ).distinct()
-
-        for adm in admin_managers:
+        if claim.status == "UNDER_DIRECTOR_REVIEW":
+            # Admin Manager's own claim goes straight to the Director(s) of that branch.
+            for d in expense_approvers_for(branch, RoleChoices.DIRECTOR, exclude=emp):
+                send_system_notification(
+                    recipient=d,
+                    title=f"Expense Claim Pending Director Approval: {claim.claim_number}",
+                    message=f"{emp.full_name} ({emp.get_role_display()}) submitted a claim for {_money(claim.amount)} "
+                            f"({claim.category.name}) at {branch.name}. It comes directly to you for approval.",
+                    event_type=event_type,
+                    link_url=f"/expenses/{claim.id}/"
+                )
+            return
+        for adm in expense_approvers_for(branch, RoleChoices.ADMIN_MANAGER, exclude=emp):
             send_system_notification(
                 recipient=adm,
                 title=f"New Expense Claim {claim.claim_number}",
-                message=f"{emp.full_name} ({emp.employee_id}) submitted a claim for ${claim.amount} ({claim.category.name}) at {branch.name}.",
+                message=f"{emp.full_name} ({emp.employee_id}) submitted a claim for {_money(claim.amount)} ({claim.category.name}) at {branch.name}.",
                 event_type=event_type,
                 link_url=f"/expenses/{claim.id}/"
             )
 
     elif event_type == "EXPENSE_ADMIN_APPROVED":
-        # Notify Directors
-        directors = User.objects.filter(is_active=True, role=RoleChoices.DIRECTOR)
-        for d in directors:
+        for d in expense_approvers_for(branch, RoleChoices.DIRECTOR):
             send_system_notification(
                 recipient=d,
                 title=f"Expense Claim Pending Director Approval: {claim.claim_number}",
-                message=f"Claim of ${claim.amount} for {emp.full_name} reviewed by Admin and is awaiting your final approval.",
+                message=f"Claim of {_money(claim.amount)} for {emp.full_name} ({branch.name}) reviewed by Admin and is awaiting your final approval.{partial_note}",
+                event_type=event_type,
+                link_url=f"/expenses/{claim.id}/"
+            )
+        if claim.is_partially_approved:
+            send_system_notification(
+                recipient=emp,
+                title=f"Expense Claim Partially Approved by Admin: {claim.claim_number}",
+                message=f"{partial_note.strip()} It now goes to the Director. Remarks: {remarks}",
                 event_type=event_type,
                 link_url=f"/expenses/{claim.id}/"
             )
 
     elif event_type == "EXPENSE_DIRECTOR_APPROVED":
-        # Notify Employee & Admin Managers for reimbursement disbursement
         send_system_notification(
             recipient=emp,
-            title=f"Expense Claim Approved: {claim.claim_number}",
-            message=f"Your claim of ${claim.amount} has been approved by the Director and is now queued for payment.",
+            title=f"Expense Claim {'Partially ' if claim.is_partially_approved else ''}Approved: {claim.claim_number}",
+            message=f"Your claim has been approved by the Director for {_money(claim.amount)} and is now queued for payment.{partial_note}"
+                    + (f" Remarks: {remarks}" if claim.is_partially_approved and remarks else ""),
             event_type=event_type,
             link_url=f"/expenses/{claim.id}/"
         )
-
-        admin_managers = User.objects.filter(
-            is_active=True,
-            role=RoleChoices.ADMIN_MANAGER
-        ).filter(
-            Q(is_global_scope=True) |
-            Q(primary_branch=branch) |
-            Q(branch_scopes__branch=branch, branch_scopes__is_active=True)
-        ).distinct()
-        for adm in admin_managers:
+        for adm in expense_approvers_for(branch, RoleChoices.ADMIN_MANAGER, exclude=emp):
             send_system_notification(
                 recipient=adm,
                 title=f"Approved Claim Awaiting Payment: {claim.claim_number}",
-                message=f"Claim of ${claim.amount} for {emp.full_name} approved by Director. Ready for reimbursement payment.",
+                message=f"Claim of {_money(claim.amount)} for {emp.full_name} ({branch.name}) approved by Director. Ready for reimbursement payment.",
                 event_type=event_type,
                 link_url=f"/expenses/reimbursements/"
             )
@@ -134,7 +159,7 @@ def notify_expense_event(claim, event_type, remarks=""):
         send_system_notification(
             recipient=emp,
             title=f"Expense Claim Rejected: {claim.claim_number}",
-            message=f"Your claim of ${claim.amount} was rejected. Reason/Remarks: {remarks}",
+            message=f"Your claim of {_money(claim.claimed_amount)} was rejected. Reason/Remarks: {remarks}",
             event_type=event_type,
             link_url=f"/expenses/{claim.id}/"
         )
@@ -145,7 +170,7 @@ def notify_expense_event(claim, event_type, remarks=""):
         send_system_notification(
             recipient=emp,
             title=f"Expense Claim Reimbursed: {claim.claim_number}",
-            message=f"Payment of ${claim.amount} has been processed.{ref_text}",
+            message=f"Payment of {_money(claim.amount)} has been processed.{ref_text}",
             event_type=event_type,
             link_url=f"/expenses/{claim.id}/"
         )

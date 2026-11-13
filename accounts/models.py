@@ -109,6 +109,33 @@ class User(AbstractUser):
             return True
         return self.branch_scopes.filter(branch=branch, is_active=True).exists()
 
+    def get_expense_branches(self):
+        """
+        Branches whose expense claims this user may review / pay.
+        Like get_accessible_branches(), but a cross-branch scope only counts when it grants
+        expense management (UserBranchScope.can_manage_expenses).
+        """
+        from organization.models import Branch
+
+        if self.is_superuser or (self.is_global_scope and self.role in [
+            RoleChoices.DIRECTOR,
+            RoleChoices.ADMIN_MANAGER,
+        ]):
+            return Branch.objects.filter(is_active=True)
+
+        branch_ids = set()
+        if self.primary_branch_id:
+            branch_ids.add(self.primary_branch_id)
+        branch_ids.update(
+            self.branch_scopes.filter(is_active=True, can_manage_expenses=True).values_list("branch_id", flat=True)
+        )
+        return Branch.objects.filter(id__in=branch_ids, is_active=True)
+
+    def can_manage_expenses_for(self, branch):
+        if not branch:
+            return False
+        return self.get_expense_branches().filter(id=branch.id).exists()
+
     @property
     def is_lead_manager(self):
         return self.role == RoleChoices.LEAD_MANAGER or self.is_superuser

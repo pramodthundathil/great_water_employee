@@ -1,0 +1,193 @@
+{% comment %}
+Shared expense review modal (Admin Manager stage-1 review and Director final approval).
+Open it from any button carrying data-* attributes:
+    <button type="button" class="..." data-expense-review
+        data-claim-id="{{ c.id }}" data-claim-number="{{ c.claim_number }}"
+        data-employee="{{ c.employee.full_name }}" data-branch="{{ c.branch.name }} ({{ c.branch.code }})"
+        data-category="{{ c.category.name }}" data-amount="{{ c.amount|stringformat:'.2f' }}"
+        data-claimed="{{ c.claimed_amount|stringformat:'.2f' }}" data-stage="admin|director"
+        data-detail-url="{% url 'portal_expense_detail' c.pk %}" data-decision="APPROVED|REJECTED">
+The form posts to the expense approvals view; `next` brings the reviewer back to the page they came from.
+{% endcomment %}
+<div class="modal fade" id="expenseReviewModal" tabindex="-1" aria-labelledby="expenseReviewTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow">
+            <div class="modal-header bg-light">
+                <h5 class="modal-title fw-bold" id="expenseReviewTitle">Review claim</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form method="post" action="{% url 'portal_expense_approvals' %}" id="expenseReviewForm" novalidate>
+                {% csrf_token %}
+                <input type="hidden" name="claim_id" id="erClaimId">
+                <input type="hidden" name="action" id="erAction">
+                <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                <div class="modal-body p-4">
+                    <div class="border rounded-3 p-3 bg-light mb-3 small">
+                        <div class="d-flex justify-content-between align-items-start gap-2">
+                            <div>
+                                <div class="fw-bold text-dark" id="erEmployee"></div>
+                                <div class="text-muted" id="erMeta"></div>
+                            </div>
+                            <div class="text-end">
+                                <div class="fs-5 fw-bold text-primary" id="erAmount"></div>
+                                <div class="text-muted" id="erClaimed"></div>
+                            </div>
+                        </div>
+                        <a href="#" id="erDetailLink" class="d-inline-block mt-2 text-decoration-none">
+                            <i class="bi bi-paperclip me-1"></i>Open claim &amp; receipts
+                        </a>
+                    </div>
+
+                    <label class="form-label small fw-bold mb-2">Decision</label>
+                    <div class="d-grid gap-2 mb-3" role="radiogroup" aria-label="Decision">
+                        <input type="radio" class="btn-check" name="decision" id="erFull" value="full" autocomplete="off">
+                        <label class="btn btn-outline-success text-start" for="erFull">
+                            <i class="bi bi-check-circle me-2"></i><span id="erFullLabel">Approve full amount</span>
+                        </label>
+                        <input type="radio" class="btn-check" name="decision" id="erPartial" value="partial" autocomplete="off">
+                        <label class="btn btn-outline-warning text-start text-dark" for="erPartial">
+                            <i class="bi bi-dash-circle me-2"></i>Approve a partial amount
+                        </label>
+                        <input type="radio" class="btn-check" name="decision" id="erReject" value="reject" autocomplete="off">
+                        <label class="btn btn-outline-danger text-start" for="erReject">
+                            <i class="bi bi-x-circle me-2"></i>Reject &amp; return to employee
+                        </label>
+                    </div>
+
+                    <div id="erPartialBlock" class="border rounded-3 p-3 mb-3 d-none" style="background: #FFFBEB;">
+                        <input type="hidden" name="partial" id="erPartialFlag" value="">
+                        <label class="form-label small fw-bold" for="erApprovedAmount">Approved amount <span class="text-danger">*</span></label>
+                        <div class="input-group input-group-sm">
+                            <span class="input-group-text">$</span>
+                            <input type="number" step="0.01" min="0.01" name="approved_amount" id="erApprovedAmount" class="form-control" inputmode="decimal">
+                        </div>
+                        <div class="small mt-2" id="erPartialHint"></div>
+                    </div>
+
+                    <div class="mb-1">
+                        <label class="form-label small fw-bold" for="erRemarks" id="erRemarksLabel">Remarks</label>
+                        <textarea name="remarks" id="erRemarks" class="form-control" rows="3" placeholder="Visible to the employee"></textarea>
+                        <div class="invalid-feedback" id="erError"></div>
+                    </div>
+                </div>
+                <div class="modal-footer bg-light">
+                    <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-success px-4" id="erSubmit">Confirm</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+(function () {
+    const modalEl = document.getElementById('expenseReviewModal');
+    if (!modalEl || modalEl.dataset.bound) return;
+    modalEl.dataset.bound = '1';
+
+    const $ = (id) => document.getElementById(id);
+    const money = (n) => '$' + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    let current = null;
+
+    function decision() {
+        const el = document.querySelector('#expenseReviewForm input[name="decision"]:checked');
+        return el ? el.value : 'full';
+    }
+
+    function sync() {
+        const d = decision();
+        const partial = d === 'partial';
+        $('erPartialBlock').classList.toggle('d-none', !partial);
+        $('erPartialFlag').value = partial ? '1' : '';
+        $('erApprovedAmount').required = partial;
+        $('erAction').value = d === 'reject' ? 'REJECTED' : 'APPROVED';
+
+        const needRemarks = d !== 'full';
+        $('erRemarks').required = needRemarks;
+        $('erRemarksLabel').innerHTML = d === 'reject'
+            ? 'Reason for rejection <span class="text-danger">*</span>'
+            : partial ? 'Reason for the reduced amount <span class="text-danger">*</span>'
+                      : 'Remarks <span class="text-muted">(optional)</span>';
+
+        const btn = $('erSubmit');
+        btn.className = 'btn px-4 ' + (d === 'reject' ? 'btn-danger' : partial ? 'btn-warning' : 'btn-success');
+        btn.textContent = d === 'reject' ? 'Confirm rejection'
+            : partial ? 'Approve partial amount'
+            : current && current.stage === 'director' ? 'Confirm final approval' : 'Approve';
+        refreshHint();
+        $('erRemarks').classList.remove('is-invalid');
+    }
+
+    function refreshHint() {
+        if (!current) return;
+        const v = parseFloat($('erApprovedAmount').value);
+        const hint = $('erPartialHint');
+        if (isNaN(v) || v <= 0) {
+            hint.className = 'small mt-2 text-muted';
+            hint.textContent = `Enter an amount below ${money(current.amount)}.`;
+        } else if (v > current.amount) {
+            hint.className = 'small mt-2 text-danger fw-semibold';
+            hint.textContent = `Cannot exceed ${money(current.amount)} (the amount under review).`;
+        } else if (v === current.amount) {
+            hint.className = 'small mt-2 text-muted';
+            hint.textContent = 'Same as the amount under review: this will be a full approval.';
+        } else {
+            hint.className = 'small mt-2 fw-semibold text-warning-emphasis';
+            hint.textContent = `${money(v)} approved · ${money(current.amount - v)} disallowed.`;
+        }
+    }
+
+    function open(btn) {
+        const d = btn.dataset;
+        current = {
+            stage: d.stage,
+            amount: parseFloat(d.amount),
+            claimed: parseFloat(d.claimed || d.amount),
+        };
+        $('erClaimId').value = d.claimId;
+        $('expenseReviewTitle').textContent = `${d.stage === 'director' ? 'Director approval' : 'Admin review'} · ${d.claimNumber}`;
+        $('erEmployee').textContent = d.employee || '';
+        $('erMeta').textContent = [d.category, d.branch].filter(Boolean).join(' · ');
+        $('erAmount').textContent = money(current.amount);
+        $('erClaimed').textContent = current.claimed > current.amount
+            ? `Claimed ${money(current.claimed)} · reduced at earlier stage` : 'Amount claimed';
+        $('erFullLabel').textContent = `Approve full amount (${money(current.amount)})`;
+        $('erDetailLink').href = d.detailUrl || '#';
+        $('erApprovedAmount').max = current.amount.toFixed(2);
+        $('erApprovedAmount').value = '';
+        $('erRemarks').value = '';
+        const preset = d.decision === 'REJECTED' ? 'erReject' : d.decision === 'PARTIAL' ? 'erPartial' : 'erFull';
+        $(preset).checked = true;
+        sync();
+        bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    }
+
+    document.addEventListener('click', function (e) {
+        const btn = e.target.closest('[data-expense-review]');
+        if (btn) { e.preventDefault(); open(btn); }
+    });
+    document.querySelectorAll('#expenseReviewForm input[name="decision"]').forEach((r) => r.addEventListener('change', sync));
+    $('erApprovedAmount').addEventListener('input', refreshHint);
+
+    $('expenseReviewForm').addEventListener('submit', function (e) {
+        const d = decision();
+        const err = $('erError');
+        const remarks = $('erRemarks');
+        let msg = '';
+        if (d === 'partial') {
+            const v = parseFloat($('erApprovedAmount').value);
+            if (isNaN(v) || v <= 0) msg = 'Enter the approved amount.';
+            else if (v > current.amount) msg = `The approved amount cannot exceed ${money(current.amount)}.`;
+        }
+        if (!msg && d !== 'full' && !remarks.value.trim()) {
+            msg = d === 'reject' ? 'Enter the reason for rejection. The employee will see it.'
+                                 : 'Explain why only part of the claim is approved. The employee will see it.';
+        }
+        if (msg) {
+            e.preventDefault();
+            err.textContent = msg;
+            remarks.classList.add('is-invalid');
+        }
+    });
+})();
+</script>

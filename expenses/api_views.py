@@ -11,7 +11,7 @@ from decimal import Decimal
 
 from expenses.models import (
     ExpenseCategory, ExpenseClaim, ExpenseAttachment,
-    ExpenseClaimStatus, ReimbursementPayment
+    ExpenseClaimStatus, ReimbursementPayment, review_message
 )
 from expenses.serializers import (
     ExpenseCategorySerializer, ExpenseClaimListSerializer,
@@ -159,7 +159,7 @@ class ExpenseClaimDetailView(APIView):
         error = _validate_claim_fields(amount, expense_date)
         if error:
             return Response({"detail": error}, status=status.HTTP_400_BAD_REQUEST)
-        claim.amount = Decimal(str(amount))
+        claim.set_claimed_amount(Decimal(str(amount)))
         claim.expense_date = str(expense_date)[:10]
         if "description" in data:
             claim.description = data.get("description", "")
@@ -257,17 +257,18 @@ class ExpenseClaimAdminReviewView(APIView):
             return Response({"detail": "Only Admin Managers can perform Stage 1 review."}, status=status.HTTP_403_FORBIDDEN)
 
         claim = get_object_or_404(ExpenseClaim, pk=pk)
-        if not user.can_access_branch(claim.branch):
-            return Response({"detail": "You do not have access to this branch."}, status=status.HTTP_403_FORBIDDEN)
+        if not user.can_manage_expenses_for(claim.branch):
+            return Response({"detail": "You are not an expense approver for this branch."}, status=status.HTTP_403_FORBIDDEN)
 
         action = request.data.get("action", "").upper()
         remarks = request.data.get("remarks", "")
+        approved_amount = request.data.get("approved_amount")
 
         try:
-            claim.admin_review(approver=user, action=action, remarks=remarks)
-            event_type = "EXPENSE_ADMIN_APPROVED" if action == "APPROVED" else "EXPENSE_ADMIN_REJECTED"
+            recorded = claim.admin_review(approver=user, action=action, remarks=remarks, approved_amount=approved_amount)
+            event_type = "EXPENSE_ADMIN_REJECTED" if recorded == "REJECTED" else "EXPENSE_ADMIN_APPROVED"
             notify_expense_event(claim, event_type, remarks=remarks)
-            return Response({"detail": f"Claim {action.lower()} successfully.", "status": claim.status})
+            return Response({"detail": review_message(claim, recorded), "status": claim.status, "amount": str(claim.amount)})
         except ValidationError as e:
             return Response({"detail": " ".join(e.messages)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -281,17 +282,18 @@ class ExpenseClaimDirectorApprovalView(APIView):
             return Response({"detail": "Only Directors can grant final expense approval."}, status=status.HTTP_403_FORBIDDEN)
 
         claim = get_object_or_404(ExpenseClaim, pk=pk)
-        if not user.can_access_branch(claim.branch):
-            return Response({"detail": "You do not have access to this branch."}, status=status.HTTP_403_FORBIDDEN)
+        if not user.can_manage_expenses_for(claim.branch):
+            return Response({"detail": "You are not an expense approver for this branch."}, status=status.HTTP_403_FORBIDDEN)
 
         action = request.data.get("action", "").upper()
         remarks = request.data.get("remarks", "")
+        approved_amount = request.data.get("approved_amount")
 
         try:
-            claim.director_review(approver=user, action=action, remarks=remarks)
-            event_type = "EXPENSE_DIRECTOR_APPROVED" if action == "APPROVED" else "EXPENSE_DIRECTOR_REJECTED"
+            recorded = claim.director_review(approver=user, action=action, remarks=remarks, approved_amount=approved_amount)
+            event_type = "EXPENSE_DIRECTOR_REJECTED" if recorded == "REJECTED" else "EXPENSE_DIRECTOR_APPROVED"
             notify_expense_event(claim, event_type, remarks=remarks)
-            return Response({"detail": f"Claim {action.lower()} successfully.", "status": claim.status})
+            return Response({"detail": review_message(claim, recorded), "status": claim.status, "amount": str(claim.amount)})
         except ValidationError as e:
             return Response({"detail": " ".join(e.messages)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -305,8 +307,10 @@ class ExpenseClaimRecordPaymentView(APIView):
             return Response({"detail": "Only Admin Managers can record reimbursement payments."}, status=status.HTTP_403_FORBIDDEN)
 
         claim = get_object_or_404(ExpenseClaim, pk=pk)
-        if not user.can_access_branch(claim.branch):
-            return Response({"detail": "You do not have access to this branch."}, status=status.HTTP_403_FORBIDDEN)
+        if not user.can_manage_expenses_for(claim.branch):
+            return Response({"detail": "You are not an expense approver for this branch."}, status=status.HTTP_403_FORBIDDEN)
+        if claim.employee_id == user.id and not user.is_superuser:
+            return Response({"detail": "Another Admin Manager must record payment of your own claim."}, status=status.HTTP_403_FORBIDDEN)
 
         payment_date = request.data.get("payment_date") or timezone.now().date()
         payment_mode = request.data.get("payment_mode", "BANK_TRANSFER")

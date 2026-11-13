@@ -56,8 +56,9 @@ def get_item_approver_info(item, item_type):
     if item_type == "expense":
         portal_url = f"/expenses/{item.id}/"
         legacy_url = f"/expenses/claims/{item.id}/"
+        from notifications.services import expense_approvers_for
         if item.status == ExpenseClaimStatus.UNDER_ADMIN_REVIEW:
-            approvers = get_scoped_approvers(item.branch, RoleChoices.ADMIN_MANAGER)
+            approvers = expense_approvers_for(item.branch, RoleChoices.ADMIN_MANAGER, exclude=item.employee)
             return {
                 "stage_label": "Admin Manager Review",
                 "stage_code": "ADMIN_REVIEW",
@@ -69,7 +70,7 @@ def get_item_approver_info(item, item_type):
                 "approval_url": "/expenses/approvals/",
             }
         if item.status == ExpenseClaimStatus.UNDER_DIRECTOR_REVIEW:
-            approvers = get_scoped_approvers(item.branch, RoleChoices.DIRECTOR)
+            approvers = expense_approvers_for(item.branch, RoleChoices.DIRECTOR, exclude=item.employee)
             return {
                 "stage_label": "Director Final Approval",
                 "stage_code": "DIRECTOR_APPROVAL",
@@ -80,7 +81,7 @@ def get_item_approver_info(item, item_type):
                 "portal_url": portal_url,
                 "approval_url": "/expenses/approvals/",
             }
-        approvers = get_scoped_approvers(item.branch, RoleChoices.ADMIN_MANAGER)
+        approvers = expense_approvers_for(item.branch, RoleChoices.ADMIN_MANAGER, exclude=item.employee)
         return {
             "stage_label": "Payment Disbursement",
             "stage_code": "DISBURSEMENT",

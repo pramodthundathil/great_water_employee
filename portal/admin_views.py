@@ -191,7 +191,7 @@ def expense_edit_view(request, pk):
                 return redirect("portal_expense_edit", pk=claim.pk)
 
         claim.category = category
-        claim.amount = amount
+        claim.set_claimed_amount(amount)
         claim.expense_date = expense_date
         claim.description = request.POST.get("description", "").strip()
         claim.project_reference = request.POST.get("project_reference", "").strip()
@@ -203,7 +203,7 @@ def expense_edit_view(request, pk):
                 file_type=f.content_type or "", file_size=f.size,
             )
 
-        if action == "save_submit" and claim.status != ExpenseClaimStatus.UNDER_ADMIN_REVIEW:
+        if action == "save_submit" and claim.status not in (ExpenseClaimStatus.UNDER_ADMIN_REVIEW, ExpenseClaimStatus.UNDER_DIRECTOR_REVIEW):
             try:
                 claim.submit()
                 notify_expense_event(claim, "EXPENSE_SUBMITTED")

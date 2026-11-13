@@ -49,7 +49,7 @@
                         </td>
                         <td><span class="badge bg-light text-dark border">{{ c.branch.code }}</span></td>
                         <td>{{ c.category.name }}</td>
-                        <td><span class="fs-6 fw-bold text-success">${{ c.amount|floatformat:2 }}</span></td>
+                        <td><span class="fs-6 fw-bold text-success">${{ c.amount|floatformat:2 }}</span>{% if c.is_partially_approved %}<div class="small text-warning-emphasis">Partial · claimed ${{ c.claimed_amount|floatformat:2 }}</div>{% endif %}</td>
                         <td>{{ c.updated_at|date:"M d, Y H:i" }}</td>
                         <td class="text-end">
                             <button class="btn btn-sm btn-gw-primary" onclick="openPaymentModal('{{ c.id }}', '{{ c.claim_number }}', '{{ c.amount|floatformat:2 }}', '{{ c.employee.full_name }}')">

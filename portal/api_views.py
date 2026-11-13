@@ -33,9 +33,13 @@ def _expense_item(c, stage, endpoint):
         "employee_name": c.employee.full_name,
         "employee_id": c.employee.employee_id,
         "branch_code": c.branch.code,
+        "branch_name": c.branch.name,
         "title": f"{c.category.name}",
         "subtitle": c.description[:120],
         "amount": float(c.amount),
+        "claimed_amount": float(c.claimed_amount),
+        "is_partially_approved": c.is_partially_approved,
+        "allows_partial": True,
         "date": c.expense_date.isoformat(),
         "status": c.status,
         "status_display": c.get_status_display(),
@@ -55,6 +59,7 @@ def _leave_item(a, stage, endpoint, positive_value, positive_label):
         "employee_name": a.employee.full_name,
         "employee_id": a.employee.employee_id,
         "branch_code": a.branch.code,
+        "branch_name": a.branch.name,
         "title": a.leave_type.name,
         "subtitle": a.reason[:120],
         "days": float(a.number_of_days),
@@ -86,8 +91,9 @@ def pending_items_for(user):
         items += [_leave_item(a, "Lead recommendation", "/leaves/applications/{id}/lead-recommend/", "RECOMMENDED", "Recommend")
                   for a in qs.exclude(employee=user)]
 
+    expense_branches = user.get_expense_branches()
     if user.is_admin_manager:
-        qs = ExpenseClaim.objects.filter(status=ExpenseClaimStatus.UNDER_ADMIN_REVIEW, branch__in=branches) \
+        qs = ExpenseClaim.objects.filter(status=ExpenseClaimStatus.UNDER_ADMIN_REVIEW, branch__in=expense_branches) \
             .exclude(employee=user).select_related("employee", "branch", "category")
         items += [_expense_item(c, "Admin Manager review", "/expenses/claims/{id}/admin-review/") for c in qs]
 
@@ -98,8 +104,8 @@ def pending_items_for(user):
                   for a in qs]
 
     if user.is_director:
-        qs = ExpenseClaim.objects.filter(status=ExpenseClaimStatus.UNDER_DIRECTOR_REVIEW, branch__in=branches) \
-            .select_related("employee", "branch", "category")
+        qs = ExpenseClaim.objects.filter(status=ExpenseClaimStatus.UNDER_DIRECTOR_REVIEW, branch__in=expense_branches) \
+            .exclude(employee=user).select_related("employee", "branch", "category")
         items += [_expense_item(c, "Director final approval", "/expenses/claims/{id}/director-approval/") for c in qs]
         qs = LeaveApplication.objects.filter(status=LeaveApplicationStatus.PENDING_DIRECTOR_APPROVAL, branch__in=branches) \
             .select_related("employee", "branch", "leave_type")
@@ -119,10 +125,16 @@ class PendingApprovalsView(APIView):
         awaiting_payment = []
         if user.is_admin_manager:
             qs = ExpenseClaim.objects.filter(
-                status=ExpenseClaimStatus.APPROVED_BY_DIRECTOR, branch__in=user.get_accessible_branches()
-            ).select_related("employee", "branch", "category").order_by("updated_at")
+                status=ExpenseClaimStatus.APPROVED_BY_DIRECTOR, branch__in=user.get_expense_branches()
+            ).exclude(employee=user).select_related("employee", "branch", "category").order_by("updated_at")
             awaiting_payment = ExpenseClaimListSerializer(qs[:50], many=True).data
-        return Response({"count": len(items), "items": items, "awaiting_payment": awaiting_payment})
+        return Response({
+            "count": len(items),
+            "expense_count": sum(1 for i in items if i["kind"] == "expense"),
+            "leave_count": sum(1 for i in items if i["kind"] == "leave"),
+            "items": items,
+            "awaiting_payment": awaiting_payment,
+        })
 
 
 class DashboardSummaryView(APIView):

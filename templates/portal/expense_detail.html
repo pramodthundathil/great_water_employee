@@ -26,7 +26,7 @@
             <button type="submit" class="btn btn-gw-primary"><i class="bi bi-send me-1"></i> Submit for Review</button>
         </form>
         {% endif %}
-        {% if claim.status in 'DRAFT,UNDER_ADMIN_REVIEW' and claim.employee == user %}
+        {% if can_withdraw %}
         <form method="post" onsubmit="return confirm('Are you sure you want to withdraw this claim?');">
             {% csrf_token %}
             <input type="hidden" name="action" value="withdraw">
@@ -46,8 +46,13 @@
             <div class="gw-card-body">
                 <div class="row g-3 mb-4">
                     <div class="col-md-4">
-                        <small class="text-muted text-uppercase fw-bold">Amount</small>
+                        <small class="text-muted text-uppercase fw-bold">{% if claim.is_partially_approved %}Approved Amount{% else %}Amount{% endif %}</small>
                         <div class="fs-4 fw-extrabold text-primary">${{ claim.amount|floatformat:2 }}</div>
+                        {% if claim.is_partially_approved %}
+                        <div class="small text-warning-emphasis fw-semibold">
+                            <i class="bi bi-dash-circle me-1"></i>Partially approved · claimed ${{ claim.claimed_amount|floatformat:2 }}
+                        </div>
+                        {% endif %}
                     </div>
                     <div class="col-md-4">
                         <small class="text-muted text-uppercase fw-bold">Category</small>
@@ -114,6 +119,26 @@
 
     <!-- Right Sidebar: Workflow Progression & Approval Trail -->
     <div class="col-lg-4">
+        {% if review_stage %}
+        <div class="gw-card border-primary mb-4">
+            <div class="gw-card-header bg-primary bg-opacity-10">
+                <h5 class="gw-card-title text-primary">
+                    <i class="bi bi-clipboard-check me-2"></i>Your Review · {% if review_stage == 'director' %}Director Final Approval{% else %}Admin Manager Review{% endif %}
+                </h5>
+            </div>
+            <div class="gw-card-body">
+                <p class="small text-muted mb-3">
+                    Check the receipts, then approve the full ${{ claim.amount|floatformat:2 }}, approve a lower amount, or reject with remarks.
+                    {% if claim.skips_admin_stage %}<br><span class="text-info-emphasis">This is an Admin Manager's own claim, so it came directly to you.</span>{% endif %}
+                </p>
+                <div class="d-flex flex-wrap gap-1">
+                    {% include "portal/_expense_review_buttons.html" with c=claim stage=review_stage %}
+                </div>
+            </div>
+        </div>
+        {% elif claim.employee == user and claim.status == 'UNDER_DIRECTOR_REVIEW' and claim.skips_admin_stage %}
+        <div class="alert alert-info small mb-4"><i class="bi bi-info-circle me-1"></i>As an Admin Manager, your claim goes directly to the Director for approval.</div>
+        {% endif %}
         <!-- Reimbursement Payment Details Card if Paid -->
         {% if claim.status == 'PAID' and claim.payment_record %}
         <div class="gw-card border-success mb-4" style="background: #F0FDF4;">
@@ -147,13 +172,16 @@
                     {% for h in approval_history %}
                     <div class="mb-3 pb-3 border-bottom">
                         <div class="d-flex justify-content-between align-items-center mb-1">
-                            <span class="badge {% if h.action == 'APPROVED' %}bg-success{% elif h.action == 'REJECTED' %}bg-danger{% elif h.action == 'PAID' %}bg-primary{% else %}bg-secondary{% endif %}">
-                                {% if h.action == 'PAID' %}<i class="bi bi-cash-coin me-1"></i>DISBURSED{% else %}{{ h.action }}{% endif %}
+                            <span class="badge {% if h.action == 'APPROVED' %}bg-success{% elif h.action == 'PARTIALLY_APPROVED' %}bg-warning text-dark{% elif h.action == 'REJECTED' %}bg-danger{% elif h.action == 'PAID' %}bg-primary{% else %}bg-secondary{% endif %}">
+                                {% if h.action == 'PAID' %}<i class="bi bi-cash-coin me-1"></i>DISBURSED{% elif h.action == 'PARTIALLY_APPROVED' %}PARTIALLY APPROVED{% else %}{{ h.action }}{% endif %}
                             </span>
                             <small class="text-muted">{{ h.created_at|date:"M d, H:i" }}</small>
                         </div>
                         <div class="fw-bold small text-dark">{{ h.approver.full_name }} ({{ h.approver.employee_id }})</div>
                         <div class="small text-muted">{% if h.stage == 'PAYMENT' %}Payment (Admin Manager){% elif h.stage == 'ADMIN_MANAGER' %}Admin Manager review{% elif h.stage == 'DIRECTOR' %}Director approval{% else %}{{ h.stage }}{% endif %}</div>
+                        {% if h.approved_amount %}
+                        <div class="small fw-semibold text-warning-emphasis mt-1">Approved ${{ h.approved_amount|floatformat:2 }}</div>
+                        {% endif %}
                         {% if h.remarks %}
                         <div class="p-2 bg-light rounded small mt-2 text-secondary">
                             <em>"{{ h.remarks }}"</em>
@@ -168,4 +196,5 @@
         </div>
     </div>
 </div>
+{% if review_stage %}{% include "portal/_expense_review_modal.html" %}{% endif %}
 {% endblock %}

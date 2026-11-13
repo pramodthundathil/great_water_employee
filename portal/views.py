@@ -6,6 +6,7 @@ from django.db.models import Sum, Count, Q, ProtectedError
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
+from django.utils.http import url_has_allowed_host_and_scheme
 from datetime import datetime, date, timedelta
 from decimal import Decimal
 
@@ -13,7 +14,7 @@ from accounts.models import User, RoleChoices, EmployeeProfile, UserBranchScope
 from organization.models import Branch, Department
 from expenses.models import (
     ExpenseClaim, ExpenseCategory, ExpenseAttachment,
-    ExpenseClaimStatus, ReimbursementPayment
+    ExpenseClaimStatus, ReimbursementPayment, review_message
 )
 from leaves.models import (
     LeaveApplication, LeaveType, LeavePolicy, LeaveLedgerEntry,
@@ -143,18 +144,7 @@ def _handle_director_dashboard_post(request, user, claim_qs, leave_qs):
     action_scope = request.POST.get("action_scope", "")
     if action_scope == "expense_decision":
         claim = get_object_or_404(ExpenseClaim, id=request.POST.get("claim_id"))
-        if not user.can_access_branch(claim.branch):
-            messages.error(request, "You do not have permission for this branch.")
-            return redirect("portal_dashboard")
-        decision = request.POST.get("action", "").upper()
-        remarks = request.POST.get("remarks", "")
-        try:
-            claim.director_review(approver=user, action=decision, remarks=remarks)
-            event_type = "EXPENSE_DIRECTOR_APPROVED" if decision == "APPROVED" else "EXPENSE_DIRECTOR_REJECTED"
-            notify_expense_event(claim, event_type, remarks=remarks)
-            messages.success(request, f"Expense {claim.claim_number} marked {decision}.")
-        except ValidationError as e:
-            messages.error(request, str(e))
+        _review_claim(request, user, claim)
         return redirect("portal_dashboard")
 
     if action_scope == "leave_decision":
@@ -270,7 +260,7 @@ def dashboard_view(request):
     if is_director_dashboard:
         pipeline_summary = build_director_pipeline_summary(claim_qs, leave_qs)
         director_expense_queue = (
-            claim_qs.filter(status=ExpenseClaimStatus.UNDER_DIRECTOR_REVIEW)
+            claim_qs.filter(status=ExpenseClaimStatus.UNDER_DIRECTOR_REVIEW, branch__in=user.get_expense_branches())
             .select_related("employee", "branch", "category")
             .prefetch_related("approval_history__approver", "attachments")
             .order_by("submitted_at", "created_at")
@@ -382,7 +372,8 @@ def expenses_list_view(request):
             try:
                 claim.submit()
                 notify_expense_event(claim, "EXPENSE_SUBMITTED")
-                messages.success(request, f"Claim {claim.claim_number} created and submitted for review!")
+                messages.success(request, f"Claim {claim.claim_number} created and submitted "
+                                          + ("directly to the Director for approval." if claim.status == ExpenseClaimStatus.UNDER_DIRECTOR_REVIEW else "for review!"))
             except ValidationError as e:
                 messages.warning(request, f"Claim created as draft: {e}")
         else:
@@ -427,6 +418,17 @@ def expenses_list_view(request):
     return render(request, "portal/expenses_list.html", context)
 
 
+def _claim_review_stage(user, claim):
+    """'admin' / 'director' when `user` can review this claim right now, else None."""
+    if claim.employee_id == user.id or not user.can_manage_expenses_for(claim.branch):
+        return None
+    if claim.status == ExpenseClaimStatus.UNDER_ADMIN_REVIEW and user.is_admin_manager:
+        return "admin"
+    if claim.status == ExpenseClaimStatus.UNDER_DIRECTOR_REVIEW and user.is_director:
+        return "director"
+    return None
+
+
 @login_required
 def expense_detail_view(request, pk):
     claim = get_object_or_404(ExpenseClaim, pk=pk)
@@ -443,7 +445,8 @@ def expense_detail_view(request, pk):
             try:
                 claim.submit()
                 notify_expense_event(claim, "EXPENSE_SUBMITTED")
-                messages.success(request, "Claim submitted for review.")
+                messages.success(request, "Claim submitted directly to the Director for approval."
+                                 if claim.status == ExpenseClaimStatus.UNDER_DIRECTOR_REVIEW else "Claim submitted for review.")
             except ValidationError as e:
                 messages.error(request, str(e))
         elif action == "withdraw":
@@ -463,62 +466,83 @@ def expense_detail_view(request, pk):
             ExpenseClaimStatus.DRAFT, ExpenseClaimStatus.UNDER_ADMIN_REVIEW,
             ExpenseClaimStatus.REJECTED_BY_ADMIN, ExpenseClaimStatus.REJECTED_BY_DIRECTOR,
         ],
+        "can_withdraw": claim.employee == user and claim.can_withdraw,
+        "review_stage": _claim_review_stage(user, claim),
     }
     return render(request, "portal/expense_detail.html", context)
+
+
+def _review_claim(request, user, claim):
+    """
+    Apply an Admin Manager / Director decision (full, partial amount or rejection) posted from a web
+    review form. Branch-aware: the reviewer must be an expense approver for the claim's branch.
+    """
+    if not user.can_manage_expenses_for(claim.branch):
+        messages.error(request, f"You are not an expense approver for {claim.branch.name}.")
+        return
+    action = request.POST.get("action", "").upper()
+    remarks = request.POST.get("remarks", "")
+    approved_amount = request.POST.get("approved_amount") if request.POST.get("partial") == "1" else None
+
+    if claim.status == ExpenseClaimStatus.UNDER_ADMIN_REVIEW and user.is_admin_manager:
+        review, stage = claim.admin_review, "ADMIN"
+    elif claim.status == ExpenseClaimStatus.UNDER_DIRECTOR_REVIEW and user.is_director:
+        review, stage = claim.director_review, "DIRECTOR"
+    else:
+        messages.info(request, f"Claim {claim.claim_number} is not awaiting your review ({claim.get_status_display()}).")
+        return
+    try:
+        recorded = review(approver=user, action=action, remarks=remarks, approved_amount=approved_amount)
+    except ValidationError as e:
+        messages.error(request, " ".join(e.messages))
+        return
+    notify_expense_event(claim, f"EXPENSE_{stage}_{'REJECTED' if recorded == 'REJECTED' else 'APPROVED'}", remarks=remarks)
+    messages.success(request, review_message(claim, recorded))
+
+
+def _safe_next(request, fallback):
+    nxt = request.POST.get("next") or ""
+    if nxt and url_has_allowed_host_and_scheme(nxt, allowed_hosts={request.get_host()}, require_https=request.is_secure()):
+        return redirect(nxt)
+    return redirect(fallback)
 
 
 @login_required
 def expense_approvals_view(request):
     user = request.user
-    if user.role == RoleChoices.EMPLOYEE:
-        messages.error(request, "Access restricted to approval authorities.")
+    if not (user.is_admin_manager or user.is_director):
+        messages.error(request, "Access restricted to expense approval authorities.")
         return redirect("portal_dashboard")
 
-    accessible_branches = user.get_accessible_branches()
+    expense_branches = user.get_expense_branches()
     selected_branch = request.session.get("selected_branch_id", "all")
+    requested = request.GET.get("branch")
+    if requested and (requested == "all" or expense_branches.filter(id=requested).exists()):
+        selected_branch = requested
+        request.session["selected_branch_id"] = requested
 
-    base_qs = ExpenseClaim.objects.filter(branch__in=accessible_branches)
+    base_qs = ExpenseClaim.objects.filter(branch__in=expense_branches).exclude(employee=user)
     if selected_branch and selected_branch != "all":
         base_qs = base_qs.filter(branch_id=selected_branch)
 
-    # Handle Decision Action POST
     if request.method == "POST":
-        claim_id = request.POST.get("claim_id")
-        action = request.POST.get("action", "").upper()
-        remarks = request.POST.get("remarks", "")
-        claim = get_object_or_404(ExpenseClaim, id=claim_id)
+        claim = get_object_or_404(ExpenseClaim, id=request.POST.get("claim_id"))
+        _review_claim(request, user, claim)
+        return _safe_next(request, "portal_expense_approvals")
 
-        if not user.can_access_branch(claim.branch):
-            messages.error(request, "You do not have permission for this branch.")
-            return redirect("portal_expense_approvals")
-
-        if user.is_admin_manager and claim.status == ExpenseClaimStatus.UNDER_ADMIN_REVIEW:
-            try:
-                claim.admin_review(approver=user, action=action, remarks=remarks)
-                event_type = "EXPENSE_ADMIN_APPROVED" if action == "APPROVED" else "EXPENSE_ADMIN_REJECTED"
-                notify_expense_event(claim, event_type, remarks=remarks)
-                messages.success(request, f"Claim {claim.claim_number} Stage-1 review: {action}!")
-            except ValidationError as e:
-                messages.error(request, str(e))
-
-        elif user.is_director and claim.status == ExpenseClaimStatus.UNDER_DIRECTOR_REVIEW:
-            try:
-                claim.director_review(approver=user, action=action, remarks=remarks)
-                event_type = "EXPENSE_DIRECTOR_APPROVED" if action == "APPROVED" else "EXPENSE_DIRECTOR_REJECTED"
-                notify_expense_event(claim, event_type, remarks=remarks)
-                messages.success(request, f"Claim {claim.claim_number} Final Decision: {action}!")
-            except ValidationError as e:
-                messages.error(request, str(e))
-
-        return redirect("portal_expense_approvals")
-
-    admin_queue = base_qs.filter(status=ExpenseClaimStatus.UNDER_ADMIN_REVIEW).order_by("-submitted_at")
-    director_queue = base_qs.filter(status=ExpenseClaimStatus.UNDER_DIRECTOR_REVIEW).order_by("-submitted_at")
+    related = ("employee", "branch", "category")
+    admin_queue = (base_qs.filter(status=ExpenseClaimStatus.UNDER_ADMIN_REVIEW)
+                   .select_related(*related).prefetch_related("attachments").order_by("-submitted_at"))
+    director_queue = (base_qs.filter(status=ExpenseClaimStatus.UNDER_DIRECTOR_REVIEW)
+                      .select_related(*related).prefetch_related("attachments", "approval_history__approver")
+                      .order_by("-submitted_at"))
 
     context = {
         "active_nav": "expense_approvals",
         "admin_queue": admin_queue,
         "director_queue": director_queue,
+        "expense_branches": expense_branches,
+        "selected_branch": str(selected_branch),
     }
     return render(request, "portal/expense_approvals.html", context)
 
@@ -530,10 +554,10 @@ def reimbursements_view(request):
         messages.error(request, "Access restricted.")
         return redirect("portal_dashboard")
 
-    accessible_branches = user.get_accessible_branches()
+    expense_branches = user.get_expense_branches()
     selected_branch = request.session.get("selected_branch_id", "all")
 
-    base_qs = ExpenseClaim.objects.filter(branch__in=accessible_branches)
+    base_qs = ExpenseClaim.objects.filter(branch__in=expense_branches)
     if selected_branch and selected_branch != "all":
         base_qs = base_qs.filter(branch_id=selected_branch)
 
@@ -552,8 +576,11 @@ def reimbursements_view(request):
             messages.error(request, "Only the Admin Manager can mark claims as paid.")
             return redirect("portal_reimbursements")
         claim = get_object_or_404(ExpenseClaim, id=claim_id)
-        if not user.can_access_branch(claim.branch):
-            messages.error(request, "You do not have permission for this branch.")
+        if not user.can_manage_expenses_for(claim.branch):
+            messages.error(request, f"You are not an expense approver for {claim.branch.name}.")
+            return redirect("portal_reimbursements")
+        if claim.employee_id == user.id and not user.is_superuser:
+            messages.error(request, "Another Admin Manager must record payment of your own claim.")
             return redirect("portal_reimbursements")
         try:
             claim.record_payment(
