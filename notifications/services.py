@@ -151,12 +151,19 @@ def notify_expense_event(claim, event_type, remarks=""):
         )
 
 
+def _hr_coordinators_for(branch):
+    return User.objects.filter(is_active=True, role=RoleChoices.HR_COORDINATOR).filter(
+        Q(is_global_scope=True) | Q(primary_branch=branch) |
+        Q(branch_scopes__branch=branch, branch_scopes__is_active=True)
+    ).distinct()
+
+
 def notify_leave_event(application, event_type, remarks="", partial=False):
-    from leaves.models import fmt_days
     """
     Dispatches role-aware notifications across leave workflow stages.
     partial=True means the approver at this stage granted fewer days than were pending.
     """
+    from leaves.models import fmt_days
     emp = application.employee
     branch = application.branch
 
@@ -173,29 +180,28 @@ def notify_leave_event(application, event_type, remarks="", partial=False):
             link_url=f"/leaves/{application.id}/"
         )
 
-    if event_type == "LEAVE_RESUBMITTED":
-        lead = getattr(emp.profile, "reporting_lead", None) if hasattr(emp, "profile") else None
-        if lead:
+    if event_type in ("LEAVE_SUBMITTED", "LEAVE_RESUBMITTED"):
+        verb = "resubmitted" if event_type == "LEAVE_RESUBMITTED" else "applied for"
+        summary = (f"{emp.full_name} {verb} {application.number_of_days} days of {application.leave_type.name} "
+                   f"({application.start_date} to {application.end_date}).")
+        status = application.status
+        if status == "PENDING_HR_VERIFICATION":
+            recipients = _hr_coordinators_for(branch).exclude(id=emp.id)
+            title = f"Leave from {emp.get_role_display()} {emp.full_name}: {application.application_number}"
+            summary += " Sent directly to HR verification."
+        elif status == "PENDING_DIRECTOR_APPROVAL":
+            recipients = User.objects.filter(is_active=True, role=RoleChoices.DIRECTOR).exclude(id=emp.id)
+            title = f"Leave from HR Coordinator {emp.full_name}: {application.application_number}"
+            summary += " Sent directly for your approval."
+        else:
+            lead = getattr(emp.profile, "reporting_lead", None) if hasattr(emp, "profile") else None
+            recipients = [lead] if lead else []
+            title = (f"Leave Resubmitted by {emp.full_name}" if event_type == "LEAVE_RESUBMITTED"
+                     else f"Leave Request from {emp.full_name}")
+        for r in recipients:
             send_system_notification(
-                recipient=lead,
-                title=f"Leave Resubmitted by {emp.full_name}",
-                message=(f"{emp.full_name} corrected and resubmitted {application.application_number}: "
-                         f"{application.number_of_days} days of {application.leave_type.name} "
-                         f"({application.start_date} to {application.end_date})."),
-                event_type=event_type,
-                link_url=f"/leaves/{application.id}/"
-            )
-
-    elif event_type == "LEAVE_SUBMITTED":
-        # Notify direct reporting lead
-        lead = getattr(emp.profile, "reporting_lead", None) if hasattr(emp, "profile") else None
-        if lead:
-            send_system_notification(
-                recipient=lead,
-                title=f"Leave Request from {emp.full_name}",
-                message=f"{emp.full_name} applied for {application.number_of_days} days of {application.leave_type.name} ({application.start_date} to {application.end_date}).",
-                event_type=event_type,
-                link_url=f"/leaves/{application.id}/"
+                recipient=r, title=title, message=summary, event_type=event_type,
+                link_url=f"/leaves/{application.id}/",
             )
 
     elif event_type == "LEAVE_LEAD_RECOMMENDED":

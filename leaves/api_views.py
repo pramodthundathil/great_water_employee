@@ -22,6 +22,8 @@ from leaves.services import (
     get_employee_leave_balances, record_manual_leave_adjustment,
     validate_leave_request, LeaveRequestError, calculate_leave_days,
     log_leave_audit, client_ip, resubmit_leave_application,
+    initial_leave_route, visible_leave_applications, can_view_leave_application,
+    filter_leave_track, leave_track_counts,
 )
 from leaves.models import LeaveAuditAction, fmt_days
 from leaves.models import Holiday
@@ -83,11 +85,7 @@ def review_response(app, recorded):
 
 
 def can_view_application(user, application):
-    is_owner = application.employee_id == user.id
-    is_lead = getattr(getattr(application.employee, "profile", None), "reporting_lead_id", None) == user.id
-    has_branch_access = user.can_access_branch(application.branch) and user.role in [
-        RoleChoices.HR_COORDINATOR, RoleChoices.DIRECTOR, RoleChoices.ADMIN_MANAGER]
-    return is_owner or is_lead or has_branch_access or user.is_superuser
+    return can_view_leave_application(user, application)
 
 
 class LeaveTypeListView(APIView):
@@ -148,14 +146,13 @@ class LeaveApplicationListCreateView(APIView):
         user = request.user
         accessible_branches = user.get_accessible_branches()
 
-        if user.role == RoleChoices.EMPLOYEE or request.query_params.get("scope") == "mine":
+        scope = request.query_params.get("scope")
+        if user.role == RoleChoices.EMPLOYEE or scope == "mine":
             qs = LeaveApplication.objects.filter(employee=user)
-        elif user.role == RoleChoices.LEAD_MANAGER:
-            # Direct reports of this Lead Manager, or in accessible branch
-            qs = LeaveApplication.objects.filter(employee__profile__reporting_lead=user)
         else:
-            # HR and Director see applications in authorized branches
-            qs = LeaveApplication.objects.filter(branch__in=accessible_branches)
+            # team: everyone else's leave this user may track (location-scoped)
+            qs = visible_leave_applications(user, include_own=scope != "team")
+        qs = filter_leave_track(qs, request.query_params.get("stage"), user)
 
         branch_id = request.query_params.get("branch_id")
         if branch_id and user.can_access_branch(get_object_or_404(accessible_branches, id=branch_id)):
@@ -169,8 +166,8 @@ class LeaveApplicationListCreateView(APIView):
         if leave_type_id:
             qs = qs.filter(leave_type_id=leave_type_id)
 
-        qs = qs.select_related("leave_type", "branch", "employee")
-        serializer = LeaveApplicationListSerializer(qs[:50], many=True)
+        qs = qs.select_related("leave_type", "branch", "employee").prefetch_related("approval_history__approver")
+        serializer = LeaveApplicationListSerializer(qs[:100], many=True, context={"request": request})
         return Response(serializer.data)
 
     @transaction.atomic
@@ -213,6 +210,7 @@ class LeaveApplicationListCreateView(APIView):
             payload.update(e.extra)
             return Response(payload, status=status.HTTP_400_BAD_REQUEST)
 
+        route = initial_leave_route(user)
         application = LeaveApplication.objects.create(
             employee=user,
             branch=branch,
@@ -224,9 +222,10 @@ class LeaveApplicationListCreateView(APIView):
             number_of_days=number_of_days,
             reason=reason,
             attachment=attachment,
-            status=LeaveApplicationStatus.PENDING_LEAD_RECOMMENDATION
+            status=route["status"],
+            starts_at_stage=route["stage"],
         )
-        log_leave_audit(application, user, LeaveAuditAction.CREATED, stage="EMPLOYEE",
+        log_leave_audit(application, user, LeaveAuditAction.CREATED, stage="EMPLOYEE", remarks=route["note"],
                         source=API_SOURCE, ip_address=client_ip(request))
 
         notify_leave_event(application, "LEAVE_SUBMITTED")
@@ -424,6 +423,31 @@ class LeaveApplicationResubmitView(APIView):
         result = dict(LeaveApplicationDetailSerializer(app, context={"request": request}).data)
         result["warnings"] = warnings
         return Response(result)
+
+
+class LeaveTrackView(APIView):
+    """
+    GET /api/v1/leaves/track/?stage=<filter>&branch_id=<id>
+    Approval tracker: other staff's leave this user may see, with the current stage of each.
+    Filters: all, pending, awaiting_lead, awaiting_hr, awaiting_director, approved, rejected,
+    withdrawn, acted_by_me. Returns {counts, results}.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        if user.role == RoleChoices.EMPLOYEE and not user.is_superuser:
+            return Response({"detail": "Only approvers can track team leave."}, status=status.HTTP_403_FORBIDDEN)
+        qs = visible_leave_applications(user, include_own=False)
+        branch_id = request.query_params.get("branch_id")
+        if branch_id:
+            qs = qs.filter(branch_id=branch_id)
+        counts = leave_track_counts(qs, user)
+        qs = filter_leave_track(qs, request.query_params.get("stage"), user)
+        qs = qs.select_related("leave_type", "branch", "employee").prefetch_related("approval_history__approver") \
+            .order_by("-submitted_at")
+        data = LeaveApplicationListSerializer(qs[:200], many=True, context={"request": request}).data
+        return Response({"counts": counts, "results": data})
 
 
 class LeaveApplicationAuditTrailView(APIView):

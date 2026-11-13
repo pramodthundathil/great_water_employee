@@ -208,6 +208,78 @@
 </div>
 {% endif %}
 
+<!-- Approval Tracker -->
+<div class="gw-card mt-4" id="tracker">
+    <div class="gw-card-header">
+        <div>
+            <h5 class="gw-card-title"><i class="bi bi-diagram-3 me-2"></i>Approval Tracker</h5>
+            <small class="text-muted">
+                Follow every leave you are allowed to see{% if user.is_global_scope %} across all regions{% elif user.is_lead_manager %} for your team and leave you have acted on{% else %} in your branches{% endif %}, including after you have acted on it.
+            </small>
+        </div>
+    </div>
+    <div class="gw-card-body pb-0">
+        <div class="d-flex flex-wrap gap-2 mb-3">
+            {% for key, label, count in track_filters %}
+            <a href="?track={{ key }}#tracker" class="btn btn-sm {% if track == key %}btn-primary{% else %}btn-light border{% endif %}">
+                {{ label }} <span class="badge {% if track == key %}bg-white text-primary{% else %}bg-secondary-subtle text-dark{% endif %} ms-1">{{ count }}</span>
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+    <div class="gw-card-body p-0">
+        <div class="table-responsive">
+            <table class="table gw-table m-0 align-middle">
+                <thead>
+                    <tr>
+                        <th>Application #</th>
+                        <th>Employee</th>
+                        <th>Branch</th>
+                        <th>Dates</th>
+                        <th>Days</th>
+                        <th>Current stage</th>
+                        <th>Last step</th>
+                        <th>Your action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for a in tracked %}
+                    <tr>
+                        <td><a href="{% url 'portal_leave_detail' a.pk %}" class="fw-bold text-decoration-none text-primary">{{ a.application_number }}</a></td>
+                        <td>
+                            <div class="fw-semibold">{{ a.employee.full_name }}</div>
+                            <small class="text-muted">{{ a.employee.employee_id }} &middot; {{ a.employee.get_role_display }}</small>
+                        </td>
+                        <td><span class="badge bg-light text-dark border">{{ a.branch.code }}</span></td>
+                        <td class="small text-nowrap">{{ a.start_date|date:"M d" }} &ndash; {{ a.end_date|date:"M d, Y" }}</td>
+                        <td class="small">
+                            {{ a.number_of_days|floatformat:"-1" }}{% if a.is_reduced %} <span class="text-muted">of {{ a.requested_number_of_days|floatformat:"-1" }}</span>{% endif %}
+                        </td>
+                        <td>
+                            <span class="status-badge {% if 'REJECTED' in a.status %}badge-rejected{% elif a.status == 'APPROVED' %}badge-approved{% else %}badge-pending{% endif %}">{{ a.current_stage }}</span>
+                            {% if a.starts_at_stage != 'LEAD_MANAGER' %}<div class="small text-muted mt-1"><i class="bi bi-skip-forward"></i> Direct to {% if a.starts_at_stage == 'DIRECTOR' %}Director{% else %}HR{% endif %}</div>{% endif %}
+                        </td>
+                        <td class="small">
+                            {% if a.last_step %}
+                            <div class="fw-semibold">{{ a.last_step.action_label }}</div>
+                            <div class="text-muted">{{ a.last_step.approver.full_name }} &middot; {{ a.last_step.created_at|date:"M d, H:i" }}</div>
+                            {% else %}<span class="text-muted">Submitted {{ a.submitted_at|date:"M d" }}</span>{% endif %}
+                        </td>
+                        <td class="small">
+                            {% if a.my_step %}<span class="badge {% if a.my_step.action == 'REJECTED' %}bg-danger{% elif 'PARTIALLY' in a.my_step.action %}bg-warning text-dark{% else %}bg-success{% endif %}">{{ a.my_step.action_label }}</span>
+                            <div class="text-muted">{{ a.my_step.created_at|date:"M d, H:i" }}</div>
+                            {% else %}<span class="text-muted">&mdash;</span>{% endif %}
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="8" class="text-center text-muted py-4">No leave applications match this filter.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
 <!-- Leave Decision Modal -->
 <div class="modal fade" id="leaveDecisionModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">

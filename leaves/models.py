@@ -30,6 +30,37 @@ REJECTED_LEAVE_STATUSES = [
 ]
 
 
+APPROVAL_STAGES = ["LEAD_MANAGER", "HR_COORDINATOR", "DIRECTOR"]
+
+STAGE_PENDING_STATUS = {
+    "LEAD_MANAGER": LeaveApplicationStatus.PENDING_LEAD_RECOMMENDATION,
+    "HR_COORDINATOR": LeaveApplicationStatus.PENDING_HR_VERIFICATION,
+    "DIRECTOR": LeaveApplicationStatus.PENDING_DIRECTOR_APPROVAL,
+}
+
+STAGE_LABELS = {
+    "LEAD_MANAGER": "Lead / Manager",
+    "HR_COORDINATOR": "HR Coordinator",
+    "DIRECTOR": "Director",
+    "EMPLOYEE": "Employee",
+}
+
+
+def initial_approval_stage(employee):
+    """
+    First approval stage for a leave raised by `employee`:
+      Lead / Manager or Admin Manager -> straight to HR Coordinator
+      HR Coordinator                  -> straight to Director
+      Everyone else                   -> reporting Lead / Manager
+    """
+    role = getattr(employee, "role", "")
+    if role == "HR_COORDINATOR":
+        return "DIRECTOR"
+    if role in ("LEAD_MANAGER", "ADMIN_MANAGER"):
+        return "HR_COORDINATOR"
+    return "LEAD_MANAGER"
+
+
 class LeaveAuditAction(models.TextChoices):
     CREATED = "CREATED", "Application Submitted"
     RECORDED_BY_HR = "RECORDED_BY_HR", "Recorded by HR"
@@ -210,6 +241,8 @@ class LeaveApplication(models.Model):
     requested_end_date = models.DateField(null=True, blank=True)
     requested_number_of_days = models.DecimalField(max_digits=4, decimal_places=2, null=True, blank=True)
     resubmission_count = models.PositiveIntegerField(default=0)
+    # First approval stage, decided by the applicant's role when the leave is submitted / resubmitted.
+    starts_at_stage = models.CharField(max_length=20, default="LEAD_MANAGER")
     submitted_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -264,6 +297,30 @@ class LeaveApplication(models.Model):
         if self.is_partially_approved:
             return "Partially Approved"
         return self.get_status_display()
+
+    @property
+    def skipped_stages(self):
+        """Approval stages this application does not pass through because of who applied."""
+        if self.starts_at_stage not in APPROVAL_STAGES:
+            return []
+        return APPROVAL_STAGES[:APPROVAL_STAGES.index(self.starts_at_stage)]
+
+    @property
+    def route_note(self):
+        if self.starts_at_stage == "HR_COORDINATOR":
+            return "Applied by a Lead / Manager or Admin Manager: Lead recommendation is not required, sent directly to HR Coordinator."
+        if self.starts_at_stage == "DIRECTOR":
+            return "Applied by an HR Coordinator: sent directly to the Director for approval."
+        return ""
+
+    @property
+    def current_stage(self):
+        """Short, user-facing description of where the application stands right now."""
+        return {
+            LeaveApplicationStatus.PENDING_LEAD_RECOMMENDATION: "Awaiting Lead / Manager",
+            LeaveApplicationStatus.PENDING_HR_VERIFICATION: "Awaiting HR Coordinator",
+            LeaveApplicationStatus.PENDING_DIRECTOR_APPROVAL: "Awaiting Director",
+        }.get(self.status, self.display_status)
 
     def can_resubmit(self, user):
         return self.is_rejected and self.employee_id == user.id

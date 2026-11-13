@@ -79,6 +79,8 @@ class LeaveApplicationListSerializer(serializers.ModelSerializer):
     employee_name = serializers.CharField(source="employee.full_name", read_only=True)
     employee_id_str = serializers.CharField(source="employee.employee_id", read_only=True)
     status_display = serializers.CharField(source="display_status", read_only=True)
+    my_last_action = serializers.SerializerMethodField()
+    last_action = serializers.SerializerMethodField()
 
     class Meta:
         model = LeaveApplication
@@ -88,7 +90,30 @@ class LeaveApplicationListSerializer(serializers.ModelSerializer):
             "status", "status_display", "leave_type_code", "leave_type_name",
             "branch_code", "employee_name", "employee_id_str", "submitted_at",
             "requested_number_of_days", "is_partially_approved", "resubmission_count",
+            "current_stage", "starts_at_stage", "my_last_action", "last_action",
         ]
+
+    def _history(self, obj):
+        # Uses the prefetched approval_history when available.
+        return list(obj.approval_history.all())
+
+    def get_my_last_action(self, obj):
+        request = self.context.get("request")
+        if not request or obj.employee_id == request.user.id:
+            return None
+        mine = [h for h in self._history(obj) if h.approver_id == request.user.id]
+        if not mine:
+            return None
+        h = mine[-1]
+        return {"action": h.action, "label": h.action_label, "stage": h.stage, "created_at": h.created_at}
+
+    def get_last_action(self, obj):
+        history = self._history(obj)
+        if not history:
+            return None
+        h = history[-1]
+        return {"action": h.action, "label": h.action_label, "stage": h.stage_label,
+                "by": h.approver.full_name, "created_at": h.created_at}
 
 
 class LeaveApplicationDetailSerializer(serializers.ModelSerializer):
@@ -110,6 +135,7 @@ class LeaveApplicationDetailSerializer(serializers.ModelSerializer):
             "leave_type", "branch", "employee", "approval_history", "audit_trail",
             "requested_start_date", "requested_end_date", "requested_number_of_days",
             "is_partially_approved", "is_reduced", "resubmission_count", "can_resubmit",
+            "starts_at_stage", "skipped_stages", "route_note", "current_stage",
             "submitted_at", "updated_at"
         ]
 

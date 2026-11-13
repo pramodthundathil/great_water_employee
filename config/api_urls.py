@@ -27,6 +27,7 @@ from leaves.api_views import (
     LeaveApplicationHrVerifyView, LeaveApplicationDirectorApprovalView,
     LeaveManualAdjustmentView, LeavePreviewView, HolidayListView,
     LeaveApplicationResubmitView, LeaveApplicationAuditTrailView, LeaveApplicationRangeDaysView,
+    LeaveTrackView,
 )
 from notifications.api_views import (
     NotificationListView, NotificationMarkReadView,
@@ -93,6 +94,7 @@ urlpatterns = [
     path("leaves/applications/<int:pk>/lead-recommend/", LeaveApplicationLeadRecommendView.as_view(), name="api_leave_lead_recommend"),
     path("leaves/applications/<int:pk>/hr-verify/", LeaveApplicationHrVerifyView.as_view(), name="api_leave_hr_verify"),
     path("leaves/applications/<int:pk>/director-approval/", LeaveApplicationDirectorApprovalView.as_view(), name="api_leave_director_approval"),
+    path("leaves/track/", LeaveTrackView.as_view(), name="api_leave_track"),
     path("leaves/preview/", LeavePreviewView.as_view(), name="api_leave_preview"),
     path("leaves/holidays/", HolidayListView.as_view(), name="api_leave_holidays"),
     path("leaves/adjust-balance/", LeaveManualAdjustmentView.as_view(), name="api_leave_adjust_balance"),

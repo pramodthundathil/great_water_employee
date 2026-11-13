@@ -9,6 +9,7 @@ from leaves.models import (
     LeaveType, LeavePolicy, LeaveAccrualRun, LeaveLedgerEntry,
     LeaveLedgerEntryType, LeaveApplication, LeaveApplicationStatus,
     LeaveAuditLog, LeaveAuditAction, LeaveApproval, fmt_days,
+    initial_approval_stage, STAGE_PENDING_STATUS, STAGE_LABELS,
 )
 
 
@@ -375,6 +376,86 @@ def log_leave_audit(application, actor, action, from_status="", stage="", remark
 
 
 # ---------------------------------------------------------------------------
+# Approval routing and visibility
+# ---------------------------------------------------------------------------
+
+def initial_leave_route(employee):
+    """Initial status / stage for a new or resubmitted application, based on the applicant's role."""
+    stage = initial_approval_stage(employee)
+    note = ""
+    if stage != "LEAD_MANAGER":
+        note = f"Routed directly to {STAGE_LABELS[stage]} (applicant is {employee.get_role_display()})."
+    return {"stage": stage, "status": STAGE_PENDING_STATUS[stage], "note": note}
+
+
+def visible_leave_applications(user, include_own=True):
+    """
+    Leave applications a user may track, with their current status and history.
+      Employee        : own applications only
+      Lead / Manager  : own + direct reports + anything they have acted on
+      HR / Director / : every application in their accessible branches (all regions for
+      Admin Manager     global-scope users) + anything they have acted on
+    """
+    from django.db.models import Q
+    from accounts.models import RoleChoices
+
+    own = Q(employee=user)
+    acted = Q(approval_history__approver=user)
+    if user.is_superuser:
+        scope = Q()
+    elif user.role == RoleChoices.EMPLOYEE:
+        scope = own
+    elif user.role == RoleChoices.LEAD_MANAGER:
+        scope = own | Q(employee__profile__reporting_lead=user) | acted
+    else:
+        scope = own | Q(branch__in=user.get_accessible_branches()) | acted
+
+    qs = LeaveApplication.objects.filter(scope)
+    if not include_own:
+        qs = qs.exclude(employee=user)
+    return qs.distinct()
+
+
+def can_view_leave_application(user, application):
+    if user.is_superuser or application.employee_id == user.id:
+        return True
+    return visible_leave_applications(user).filter(pk=application.pk).exists()
+
+
+LEAVE_TRACK_FILTERS = {
+    "awaiting_lead": {"status": LeaveApplicationStatus.PENDING_LEAD_RECOMMENDATION},
+    "awaiting_hr": {"status": LeaveApplicationStatus.PENDING_HR_VERIFICATION},
+    "awaiting_director": {"status": LeaveApplicationStatus.PENDING_DIRECTOR_APPROVAL},
+    "approved": {"status": LeaveApplicationStatus.APPROVED},
+    "rejected": {"status__in": [
+        LeaveApplicationStatus.REJECTED_BY_LEAD,
+        LeaveApplicationStatus.REJECTED_BY_HR,
+        LeaveApplicationStatus.REJECTED_BY_DIRECTOR,
+    ]},
+    "withdrawn": {"status": LeaveApplicationStatus.WITHDRAWN},
+}
+
+
+def filter_leave_track(qs, stage, user):
+    """Applies a tracker filter: a stage key from LEAVE_TRACK_FILTERS, 'pending' or 'acted_by_me'."""
+    if not stage or stage == "all":
+        return qs
+    if stage == "acted_by_me":
+        return qs.filter(approval_history__approver=user).exclude(employee=user).distinct()
+    if stage == "pending":
+        return qs.filter(status__in=list(STAGE_PENDING_STATUS.values()))
+    return qs.filter(**LEAVE_TRACK_FILTERS.get(stage, {}))
+
+
+def leave_track_counts(qs, user):
+    counts = {key: qs.filter(**flt).count() for key, flt in LEAVE_TRACK_FILTERS.items()}
+    counts["all"] = qs.count()
+    counts["pending"] = counts["awaiting_lead"] + counts["awaiting_hr"] + counts["awaiting_director"]
+    counts["acted_by_me"] = qs.filter(approval_history__approver=user).exclude(employee=user).distinct().count()
+    return counts
+
+
+# ---------------------------------------------------------------------------
 # Resubmission of rejected applications
 # ---------------------------------------------------------------------------
 
@@ -434,7 +515,9 @@ def resubmit_leave_application(application, user, leave_type, start_date, end_da
     if user.primary_branch_id:
         application.branch = user.primary_branch
     from_status = application.status
-    application.status = LeaveApplicationStatus.PENDING_LEAD_RECOMMENDATION
+    route = initial_leave_route(user)
+    application.status = route["status"]
+    application.starts_at_stage = route["stage"]
     application.resubmission_count += 1
     application.save()
 
@@ -451,6 +534,8 @@ def resubmit_leave_application(application, user, leave_type, start_date, end_da
     changes = {k: [before[k], after[k]] for k in before if before[k] != after[k]}
 
     note = (resubmit_note or "").strip() or f"Resubmitted after rejection (attempt {application.resubmission_count + 1})"
+    if route["note"]:
+        note = f"{note} {route['note']}"
     LeaveApproval.objects.create(
         application=application, stage="EMPLOYEE", approver=user, action="RESUBMITTED", remarks=note,
     )

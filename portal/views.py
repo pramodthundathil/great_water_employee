@@ -23,6 +23,8 @@ from leaves.services import (
     get_employee_leave_balances, record_manual_leave_adjustment,
     validate_leave_request, LeaveRequestError,
     log_leave_audit, client_ip, resubmit_leave_application,
+    initial_leave_route, visible_leave_applications, can_view_leave_application,
+    filter_leave_track, leave_track_counts,
 )
 from portal.admin_views import validate_upload, can_manage_users, get_default_organization
 from accounts.services import EmployeeError, can_reset_passwords, create_employee, set_employee_password
@@ -620,6 +622,7 @@ def leaves_list_view(request):
         for w in warnings:
             messages.warning(request, w)
 
+        route = initial_leave_route(user)
         app = LeaveApplication.objects.create(
             employee=user,
             branch=user.primary_branch or accessible_branches.first(),
@@ -631,27 +634,20 @@ def leaves_list_view(request):
             number_of_days=number_of_days,
             reason=reason,
             attachment=attachment,
-            status=LeaveApplicationStatus.PENDING_LEAD_RECOMMENDATION
+            status=route["status"],
+            starts_at_stage=route["stage"],
         )
-        log_leave_audit(app, user, LeaveAuditAction.CREATED, stage="EMPLOYEE",
+        log_leave_audit(app, user, LeaveAuditAction.CREATED, stage="EMPLOYEE", remarks=route["note"],
                         source="WEB", ip_address=client_ip(request))
 
         notify_leave_event(app, "LEAVE_SUBMITTED")
-        messages.success(request, f"Leave application {app.application_number} submitted for Lead recommendation!")
+        messages.success(request, f"Leave application {app.application_number} submitted - {app.current_stage}.")
         return redirect("portal_leaves")
 
     # GET
-    if user.role == RoleChoices.EMPLOYEE:
-        applications = LeaveApplication.objects.filter(employee=user)
-    elif user.role == RoleChoices.LEAD_MANAGER:
-        applications = LeaveApplication.objects.filter(
-            Q(employee=user) | Q(employee__profile__reporting_lead=user)
-        )
-    else:
-        if selected_branch and selected_branch != "all":
-            applications = LeaveApplication.objects.filter(branch_id=selected_branch)
-        else:
-            applications = LeaveApplication.objects.filter(branch__in=accessible_branches)
+    applications = visible_leave_applications(user)
+    if user.role not in (RoleChoices.EMPLOYEE, RoleChoices.LEAD_MANAGER) and selected_branch and selected_branch != "all":
+        applications = applications.filter(branch_id=selected_branch)
 
     applications = applications.select_related("leave_type", "branch", "employee").order_by("-submitted_at")
     leave_types = LeaveType.objects.filter(is_active=True)
@@ -671,11 +667,7 @@ def leave_detail_view(request, pk):
     app = get_object_or_404(LeaveApplication, pk=pk)
     user = request.user
 
-    is_owner = app.employee == user
-    is_lead = hasattr(app.employee, "profile") and app.employee.profile.reporting_lead == user
-    has_branch_access = user.can_access_branch(app.branch) and user.role != RoleChoices.EMPLOYEE
-
-    if not (is_owner or is_lead or has_branch_access or user.is_superuser):
+    if not can_view_leave_application(user, app):
         messages.error(request, "Permission denied.")
         return redirect("portal_leaves")
 
@@ -851,11 +843,37 @@ def leave_approvals_view(request):
         status=LeaveApplicationStatus.PENDING_DIRECTOR_APPROVAL
     ).order_by("-submitted_at")
 
+    # Approval tracker: everyone else's leave this user may follow, location-scoped.
+    track = request.GET.get("track", "pending")
+    tracked = visible_leave_applications(user, include_own=False)
+    if user.role != RoleChoices.LEAD_MANAGER and selected_branch and selected_branch != "all":
+        tracked = tracked.filter(branch_id=selected_branch)
+    track_counts = leave_track_counts(tracked, user)
+    tracked = filter_leave_track(tracked, track, user) \
+        .select_related("employee", "branch", "leave_type") \
+        .prefetch_related("approval_history__approver") \
+        .order_by("-submitted_at")[:200]
+    tracked = list(tracked)
+    for a in tracked:
+        history = list(a.approval_history.all())
+        a.last_step = history[-1] if history else None
+        mine = [h for h in history if h.approver_id == user.id]
+        a.my_step = mine[-1] if mine else None
+
     context = {
         "active_nav": "leave_approvals",
         "lead_queue": lead_queue,
         "hr_queue": hr_queue,
         "director_queue": director_queue,
+        "track": track,
+        "track_filters": [
+            (key, label, track_counts.get(key, 0)) for key, label in [
+                ("pending", "In progress"), ("awaiting_lead", "Awaiting Lead"), ("awaiting_hr", "Awaiting HR"),
+                ("awaiting_director", "Awaiting Director"), ("approved", "Approved"), ("rejected", "Rejected"),
+                ("acted_by_me", "Acted on by me"), ("all", "All"),
+            ]
+        ],
+        "tracked": tracked,
     }
     return render(request, "portal/leave_approvals.html", context)
 

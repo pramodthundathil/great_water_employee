@@ -69,7 +69,8 @@
 <!-- 4-Stage Workflow Progress Card -->
 <div class="gw-card mb-4">
     <div class="gw-card-body p-4">
-        <h6 class="fw-bold text-dark mb-3">4-Stage Approval Sequence</h6>
+        <h6 class="fw-bold text-dark mb-3">4-Stage Approval Sequence <span class="badge bg-light text-dark border ms-2">{{ app.current_stage }}</span></h6>
+        {% if app.route_note %}<div class="small text-muted mb-3"><i class="bi bi-skip-forward me-1"></i>{{ app.route_note }}</div>{% endif %}
         <div class="row text-center g-2">
             <!-- Stage 1 -->
             <div class="col-md-3">
@@ -86,7 +87,9 @@
                     <div class="badge {% if app.status != 'PENDING_LEAD_RECOMMENDATION' %}bg-secondary{% else %}bg-primary{% endif %} mb-2">Stage 2</div>
                     <div class="fw-bold small">Lead Recommendation</div>
                     <small class="text-muted d-block">Reporting Manager</small>
-                    {% if 'REJECTED_BY_LEAD' in app.status %}
+                    {% if 'LEAD_MANAGER' in app.skipped_stages %}
+                    <small class="text-muted fw-semibold"><i class="bi bi-skip-forward-fill"></i> Not required</small>
+                    {% elif 'REJECTED_BY_LEAD' in app.status %}
                     <small class="text-danger fw-bold"><i class="bi bi-x-circle-fill"></i> Rejected</small>
                     {% elif app.status != 'PENDING_LEAD_RECOMMENDATION' %}
                     <small class="text-success fw-semibold"><i class="bi bi-check-circle-fill"></i> Recommended</small>
@@ -101,7 +104,9 @@
                     <div class="badge {% if app.status == 'PENDING_HR_VERIFICATION' %}bg-warning text-dark{% else %}bg-secondary{% endif %} mb-2">Stage 3</div>
                     <div class="fw-bold small">HR Policy Verification</div>
                     <small class="text-muted d-block">HR Coordinator</small>
-                    {% if 'REJECTED_BY_HR' in app.status %}
+                    {% if 'HR_COORDINATOR' in app.skipped_stages %}
+                    <small class="text-muted fw-semibold"><i class="bi bi-skip-forward-fill"></i> Not required</small>
+                    {% elif 'REJECTED_BY_HR' in app.status %}
                     <small class="text-danger fw-bold"><i class="bi bi-x-circle-fill"></i> Rejected</small>
                     {% elif app.status in 'PENDING_DIRECTOR_APPROVAL,APPROVED' %}
                     <small class="text-success fw-semibold"><i class="bi bi-check-circle-fill"></i> Verified</small>

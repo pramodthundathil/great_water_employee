@@ -228,6 +228,25 @@ Director Stage 3 final approval/rejection.
   }
   ```
 
+#### Approval route by applicant role
+| Applicant | First stage | Initial status |
+|---|---|---|
+| Employee | Lead / Manager | `PENDING_LEAD_RECOMMENDATION` |
+| Lead / Manager, Admin Manager | HR Coordinator | `PENDING_HR_VERIFICATION` |
+| HR Coordinator | Director | `PENDING_DIRECTOR_APPROVAL` |
+
+Applies to new applications and resubmissions. Applications expose `starts_at_stage`, `skipped_stages`,
+`route_note` and `current_stage` (e.g. `"Awaiting HR Coordinator"`).
+
+### `GET /api/v1/leaves/track/?stage=<filter>&branch_id=<id>`
+Approval tracker for approvers: other staff's leave the user may follow, including after they have acted.
+Scope: Lead / Manager = direct reports + leave they acted on; HR / Director / Admin Manager = their accessible
+branches (all regions when global scope) + leave they acted on. Employees get 403.
+Filters: `pending`, `awaiting_lead`, `awaiting_hr`, `awaiting_director`, `approved`, `rejected`, `withdrawn`,
+`acted_by_me`, `all`. Response: `{"counts": {...per filter}, "results": [leave list items]}`; each item includes
+`current_stage`, `starts_at_stage`, `last_action` and `my_last_action`.
+`GET /api/v1/leaves/applications/?scope=team&stage=<filter>` returns the same list without counts.
+
 #### Partial approval (all three review stages)
 Any approver may forward / approve only part of the leave by sending a narrower date range that lies
 inside the application's current dates. `remarks` is then mandatory. Half-day leave cannot be partially approved.
