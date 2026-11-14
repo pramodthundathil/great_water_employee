@@ -1,18 +1,19 @@
 {% extends "base.html" %}
 {% load static %}
 
-{% block title %}Expense Approval Queues — Great Waters{% endblock %}
+{% block title %}Expense Approvals — Great Waters{% endblock %}
 
 {% block content %}
 <div class="page-title-box">
     <div>
-        <h1 class="page-title">Expense Approval Queues</h1>
-        <p class="page-subtitle">Review claims for your branches. Approve in full, approve a partial amount, or reject with remarks.</p>
+        <h1 class="page-title">Expense Approvals</h1>
+        <p class="page-subtitle">Review claims for your branches — approve in full, approve part of a claim, or reject with a reason. Select several to decide in bulk.</p>
     </div>
     {% if expense_branches.count > 1 %}
-    <form method="get" class="d-flex align-items-center gap-2">
-        <label for="branchFilter" class="small text-muted text-nowrap"><i class="bi bi-geo-alt me-1"></i>Branch</label>
-        <select id="branchFilter" name="branch" class="form-select form-select-sm" onchange="this.form.submit()">
+    <form method="get" class="gw-approvals-branch">
+        <input type="hidden" name="stage" value="{{ stage }}">
+        <label for="branchFilter"><i class="bi bi-geo-alt"></i></label>
+        <select id="branchFilter" name="branch" class="form-select form-select-sm" onchange="this.form.submit()" aria-label="Branch">
             <option value="all" {% if selected_branch == 'all' %}selected{% endif %}>All my branches</option>
             {% for b in expense_branches %}
             <option value="{{ b.id }}" {% if selected_branch == b.id|stringformat:'s' %}selected{% endif %}>{{ b.name }} ({{ b.code }})</option>
@@ -22,145 +23,296 @@
     {% endif %}
 </div>
 
-{% if user.is_admin_manager %}
-<!-- Stage 1: Admin Manager Queue -->
-<div class="gw-card mb-4">
-    <div class="gw-card-header bg-warning bg-opacity-10">
-        <div>
-            <h5 class="gw-card-title text-warning-emphasis">
-                <i class="bi bi-person-badge-fill me-2"></i>Stage 1: Admin Manager Review Queue ({{ admin_queue.count }})
-            </h5>
-            <small class="text-muted">Claims awaiting first-tier receipt verification. Your own claims go directly to the Director.</small>
-        </div>
-    </div>
-    <div class="gw-card-body p-0">
-        <div class="table-responsive">
-            <table class="table gw-table m-0">
-                <thead>
-                    <tr>
-                        <th>Claim #</th>
-                        <th>Employee</th>
-                        <th>Branch</th>
-                        <th>Category</th>
-                        <th>Amount</th>
-                        <th>Submitted</th>
-                        <th class="text-center">Receipts</th>
-                        <th class="text-end">Review</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for c in admin_queue %}
-                    <tr>
-                        <td data-label="Claim #">
-                            <a href="{% url 'portal_expense_detail' c.pk %}" class="fw-bold text-decoration-none text-primary">{{ c.claim_number }}</a>
-                        </td>
-                        <td data-label="Employee">
-                            <div class="fw-semibold">{{ c.employee.full_name }}</div>
-                            <small class="text-muted">{{ c.employee.employee_id }}</small>
-                        </td>
-                        <td data-label="Branch"><span class="badge bg-light text-dark border" title="{{ c.branch.name }}">{{ c.branch.code }}</span></td>
-                        <td data-label="Category">{{ c.category.name }}</td>
-                        <td data-label="Amount" class="fw-bold fs-6">${{ c.amount|floatformat:2 }}</td>
-                        <td data-label="Submitted">{{ c.submitted_at|date:"M d, H:i" }}</td>
-                        <td data-label="Receipts" class="text-center">
-                            {% for att in c.attachments.all %}
-                            <a href="{{ att.file.url }}" target="_blank" class="btn btn-sm btn-light border py-0 px-1 me-1" title="{{ att.original_filename }}">
-                                <i class="bi bi-paperclip"></i>
-                            </a>
-                            {% endfor %}
-                        </td>
-                        <td class="text-end text-nowrap">
-                            {% include "portal/_expense_review_buttons.html" with c=c stage="admin" %}
-                        </td>
-                    </tr>
-                    {% empty %}
-                    <tr>
-                        <td colspan="8" class="text-center text-muted py-4">No expense claims currently awaiting Admin Manager review.</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </div>
-</div>
-{% endif %}
+<!-- Stage tabs -->
+<nav class="gw-stage-tabs" aria-label="Approval stage">
+    {% for t in stage_tabs %}
+    <a href="?{% if tab_query_string %}{{ tab_query_string }}&{% endif %}stage={{ t.key }}" class="gw-stage-tab{% if t.key == stage %} is-active{% endif %}" {% if t.key == stage %}aria-current="page"{% endif %}>
+        <span class="gw-stage-tab-icon"><i class="bi {% if t.key == 'admin' %}bi-person-badge{% else %}bi-shield-check{% endif %}"></i></span>
+        <span class="gw-stage-tab-body">
+            <span class="gw-stage-tab-label">{% if stage_tabs|length > 1 %}Stage {{ forloop.counter }} · {% endif %}{{ t.label }}</span>
+            <span class="gw-stage-tab-meta"><strong>{{ t.count }}</strong> waiting · ${{ t.total|floatformat:2 }}</span>
+        </span>
+    </a>
+    {% endfor %}
+</nav>
 
-{% if user.is_director %}
-<!-- Stage 2: Director Final Approval Queue -->
-<div class="gw-card">
-    <div class="gw-card-header bg-primary bg-opacity-10">
+<div class="gw-card gw-dt">
+    <div class="gw-card-header">
         <div>
-            <h5 class="gw-card-title text-primary">
-                <i class="bi bi-shield-check me-2"></i>Stage 2: Director Final Approval Queue ({{ director_queue.count }})
+            <h5 class="gw-card-title">
+                <i class="bi {% if stage == 'admin' %}bi-person-badge{% else %}bi-shield-check{% endif %} text-primary me-2"></i>
+                {% if stage == 'admin' %}Awaiting Admin Manager review{% else %}Awaiting Director final approval{% endif %}
             </h5>
-            <small class="text-muted">Admin-verified claims, plus Admin Managers' own claims which come straight to you.</small>
+            <div class="gw-dt-sub mt-1">
+                {% if stage == 'admin' %}First-tier receipt verification. Admin Managers' own claims go straight to the Director.{% else %}Admin-verified claims, plus Admin Managers' own claims.{% endif %}
+            </div>
+        </div>
+        <div class="gw-queue-summary">
+            <span><strong>{{ filtered_count }}</strong> claim{{ filtered_count|pluralize }}</span>
+            <span><strong>${{ filtered_total|floatformat:2 }}</strong> total</span>
+            {% if overdue_count %}
+            <span class="is-overdue"><i class="bi bi-hourglass-split"></i><strong>{{ overdue_count }}</strong> waiting &gt; 7 days</span>
+            {% endif %}
         </div>
     </div>
+
+    <form method="get" class="gw-dt-toolbar" id="approvalsDtForm">
+        <input type="hidden" name="stage" value="{{ stage }}">
+        <input type="hidden" name="sort" value="{{ sort }}">
+        <input type="hidden" name="dir" value="{{ dir }}">
+        <div class="gw-dt-search">
+            <i class="bi bi-search"></i>
+            <input type="search" name="q" value="{{ q }}" class="form-control form-control-sm" placeholder="Search claim #, employee, ID, project..." autocomplete="off" data-dt-search>
+        </div>
+        <select name="category" class="form-select form-select-sm gw-dt-filter" data-dt-autosubmit aria-label="Category">
+            <option value="">All categories</option>
+            {% for cat in categories %}
+            <option value="{{ cat.id }}" {% if category_filter == cat.id|stringformat:"s" %}selected{% endif %}>{{ cat.name }}</option>
+            {% endfor %}
+        </select>
+        <select name="age" class="form-select form-select-sm gw-dt-filter" data-dt-autosubmit aria-label="Submitted">
+            <option value="">Submitted: any time</option>
+            <option value="today" {% if age_filter == "today" %}selected{% endif %}>Last 24 hours</option>
+            <option value="week" {% if age_filter == "week" %}selected{% endif %}>Last 7 days</option>
+            <option value="overdue" {% if age_filter == "overdue" %}selected{% endif %}>Waiting over 7 days</option>
+        </select>
+        <div class="gw-dt-range" title="Amount range">
+            <span>$</span>
+            <input type="number" name="min" value="{{ min_amount }}" min="0" step="0.01" class="form-control form-control-sm" placeholder="Min" data-dt-autosubmit aria-label="Minimum amount">
+            <span>–</span>
+            <input type="number" name="max" value="{{ max_amount }}" min="0" step="0.01" class="form-control form-control-sm" placeholder="Max" data-dt-autosubmit aria-label="Maximum amount">
+        </div>
+        {% if is_filtered %}
+        <a href="?stage={{ stage }}&page_size={{ page_size }}" class="btn btn-sm btn-light gw-dt-reset"><i class="bi bi-x-lg me-1"></i>Clear</a>
+        {% endif %}
+        <div class="gw-dt-pagesize ms-auto">
+            <span>Show</span>
+            <select name="page_size" class="form-select form-select-sm" data-dt-autosubmit aria-label="Rows per page">
+                {% for n in page_size_options %}
+                <option value="{{ n }}" {% if n == page_size %}selected{% endif %}>{{ n }}</option>
+                {% endfor %}
+            </select>
+            <span>rows</span>
+        </div>
+    </form>
+
+    <!-- Bulk decision bar (shown when rows are selected) -->
+    <form method="post" id="bulkForm" class="gw-dt-bulkbar" action="{% url 'portal_expense_approvals' %}">
+        {% csrf_token %}
+        <input type="hidden" name="bulk" value="1">
+        <input type="hidden" name="decision" id="bulkDecision">
+        <input type="hidden" name="remarks" id="bulkRemarksInput">
+        <input type="hidden" name="next" value="{{ request.get_full_path }}">
+        <span class="gw-dt-bulkbar-count"><i class="bi bi-check2-square"></i><span id="bulkCount">0</span> selected · <span id="bulkTotal">$0.00</span></span>
+        <button type="button" class="btn is-success" data-bulk-review="APPROVED"><i class="bi bi-check2-all"></i> {% if stage == 'director' %}Final approve{% else %}Approve{% endif %}</button>
+        <button type="button" class="btn is-danger" data-bulk-review="REJECTED"><i class="bi bi-x-circle"></i> Reject</button>
+        <button type="button" class="btn gw-dt-bulkbar-clear ms-auto" id="bulkClear"><i class="bi bi-x-lg"></i> Clear selection</button>
+    </form>
+
     <div class="gw-card-body p-0">
         <div class="table-responsive">
-            <table class="table gw-table m-0">
+            <table class="table gw-table gw-dt-table gw-dt-clickable m-0">
                 <thead>
                     <tr>
-                        <th>Claim #</th>
-                        <th>Employee</th>
-                        <th>Branch</th>
-                        <th>Category</th>
-                        <th>Amount</th>
-                        <th>Admin Reviewer</th>
-                        <th class="text-center">Receipts</th>
-                        <th class="text-end">Final Decision</th>
+                        <th class="gw-dt-check">
+                            <input type="checkbox" class="form-check-input" id="selectAll" aria-label="Select all claims on this page" {% if not claims %}disabled{% endif %}>
+                        </th>
+                        {% include "portal/_dt_sort_th.html" with col="number" label="Claim #" %}
+                        {% include "portal/_dt_sort_th.html" with col="employee" label="Employee" %}
+                        {% include "portal/_dt_sort_th.html" with col="category" label="Category" %}
+                        {% include "portal/_dt_sort_th.html" with col="amount" label="Amount" %}
+                        <th class="text-center">Proofs</th>
+                        {% if stage == 'director' %}<th>Admin review</th>{% endif %}
+                        {% include "portal/_dt_sort_th.html" with col="submitted" label="Waiting" %}
+                        <th class="text-end">Decision</th>
                     </tr>
                 </thead>
                 <tbody>
-                    {% for c in director_queue %}
-                    <tr>
-                        <td data-label="Claim #">
+                    {% for c in claims %}
+                    <tr data-href="{% url 'portal_expense_detail' c.pk %}" tabindex="0">
+                        <td class="gw-dt-check">
+                            <input type="checkbox" class="form-check-input" name="selected" value="{{ c.pk }}" form="bulkForm"
+                                   data-row-check data-amount="{{ c.amount|stringformat:'.2f' }}"
+                                   data-label="{{ c.claim_number }} · {{ c.employee.full_name }} · ${{ c.amount|floatformat:2 }}"
+                                   aria-label="Select {{ c.claim_number }}">
+                        </td>
+                        <td>
                             <a href="{% url 'portal_expense_detail' c.pk %}" class="fw-bold text-decoration-none text-primary">{{ c.claim_number }}</a>
+                            <div class="gw-dt-sub">{% if c.project_reference %}Proj: {{ c.project_reference }}{% else %}Spent {{ c.expense_date|date:"M d, Y" }}{% endif %}</div>
                         </td>
-                        <td data-label="Employee">
-                            <div class="fw-semibold">{{ c.employee.full_name }}</div>
-                            <small class="text-muted">{{ c.employee.employee_id }}</small>
+                        <td>
+                            <div class="gw-dt-employee">
+                                <span class="gw-dt-avatar">{{ c.employee.first_name|default:c.employee.employee_id|first|upper }}{{ c.employee.last_name|first|upper }}</span>
+                                <div>
+                                    <div class="gw-dt-employee-name">{{ c.employee.full_name }}</div>
+                                    <div class="gw-dt-employee-id">{{ c.employee.employee_id }} · {{ c.branch.code }}</div>
+                                </div>
+                            </div>
                         </td>
-                        <td data-label="Branch"><span class="badge bg-light text-dark border" title="{{ c.branch.name }}">{{ c.branch.code }}</span></td>
-                        <td data-label="Category">{{ c.category.name }}</td>
-                        <td data-label="Amount">
-                            <div class="fw-bold fs-6 text-primary">${{ c.amount|floatformat:2 }}</div>
-                            {% if c.is_partially_approved %}
-                            <small class="text-warning-emphasis">of ${{ c.claimed_amount|floatformat:2 }} claimed</small>
-                            {% endif %}
+                        <td>
+                            <span class="gw-dt-dept">{{ c.category.name }}</span>
+                            {% if c.description %}<div class="gw-dt-sub gw-dt-ellipsis" title="{{ c.description }}">{{ c.description|truncatechars:42 }}</div>{% endif %}
                         </td>
-                        <td data-label="Admin Reviewer">
-                            {% if c.skips_admin_stage %}
-                            <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle">Direct · Admin Manager's own claim</span>
+                        <td class="text-nowrap">
+                            <span class="gw-amount">${{ c.amount|floatformat:2 }}</span>
+                            {% if c.is_partially_approved %}<div class="gw-dt-sub text-warning-emphasis">of ${{ c.claimed_amount|floatformat:2 }} claimed</div>{% endif %}
+                        </td>
+                        <td class="text-center">
+                            {% with n=c.attachments.all|length %}
+                            {% if n %}
+                            <div class="dropdown d-inline-block">
+                                <button type="button" class="badge bg-light text-primary border gw-proof-btn" data-bs-toggle="dropdown" aria-expanded="false" title="View receipts">
+                                    <i class="bi bi-paperclip me-1"></i>{{ n }}
+                                </button>
+                                <ul class="dropdown-menu dropdown-menu-end shadow-sm border-0 p-2" style="border-radius: 12px; min-width: 220px;">
+                                    {% for att in c.attachments.all %}
+                                    <li><a class="dropdown-item rounded small text-truncate" href="{{ att.file.url }}" target="_blank" rel="noopener"><i class="bi bi-file-earmark-text me-2"></i>{{ att.original_filename|default:"Receipt" }}</a></li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
                             {% else %}
-                            {% with last_app=c.approval_history.last %}
-                            <small class="fw-semibold">{{ last_app.approver.full_name }}</small>
-                            <div class="text-muted" style="font-size: 0.75rem;">{{ last_app.remarks|truncatechars:30 }}</div>
+                            <span class="badge bg-danger-subtle text-danger">None</span>
+                            {% endif %}
                             {% endwith %}
+                        </td>
+                        {% if stage == 'director' %}
+                        <td>
+                            {% if c.skips_admin_stage %}
+                            <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle">Direct · Admin Manager's own</span>
+                            {% elif c.admin_approval %}
+                            <div class="fw-semibold small">{{ c.admin_approval.approver.full_name }}</div>
+                            <div class="gw-dt-sub" title="{{ c.admin_approval.remarks }}">{{ c.admin_approval.remarks|default:"Approved"|truncatechars:30 }}</div>
+                            {% else %}
+                            <span class="gw-dt-muted">—</span>
                             {% endif %}
                         </td>
-                        <td data-label="Receipts" class="text-center">
-                            {% for att in c.attachments.all %}
-                            <a href="{{ att.file.url }}" target="_blank" class="btn btn-sm btn-light border py-0 px-1 me-1" title="{{ att.original_filename }}">
-                                <i class="bi bi-paperclip"></i>
-                            </a>
-                            {% endfor %}
+                        {% endif %}
+                        <td class="text-nowrap">
+                            <span class="gw-wait {% if c.waiting_days > 7 %}is-overdue{% elif c.waiting_days >= 3 %}is-aging{% endif %}" title="Submitted {{ c.submitted_at|date:'M d, Y H:i' }}">
+                                {% if c.waiting_days == 0 %}Today{% elif c.waiting_days == 1 %}1 day{% else %}{{ c.waiting_days }} days{% endif %}
+                            </span>
+                            <div class="gw-dt-sub">{{ c.submitted_at|date:"M d" }}</div>
                         </td>
                         <td class="text-end text-nowrap">
-                            {% include "portal/_expense_review_buttons.html" with c=c stage="director" %}
+                            <div class="gw-dt-actions">
+                                {% include "portal/_expense_review_buttons.html" with c=c stage=stage compact=True %}
+                            </div>
                         </td>
                     </tr>
                     {% empty %}
                     <tr>
-                        <td colspan="8" class="text-center text-muted py-4">No expense claims currently awaiting Director final approval.</td>
+                        <td colspan="{% if stage == 'director' %}9{% else %}8{% endif %}">
+                            <div class="empty-state">
+                                {% if is_filtered %}
+                                <i class="bi bi-funnel empty-state-icon"></i>
+                                <div class="empty-state-title">No claims match these filters</div>
+                                <p class="empty-state-desc">Try a different search or clear the filters.</p>
+                                <a href="?stage={{ stage }}" class="btn btn-light">Clear filters</a>
+                                {% else %}
+                                <i class="bi bi-check2-circle empty-state-icon text-success"></i>
+                                <div class="empty-state-title">All caught up</div>
+                                <p class="empty-state-desc">No claims are waiting for {% if stage == 'admin' %}Admin Manager review{% else %}Director approval{% endif %}.</p>
+                                {% endif %}
+                            </div>
+                        </td>
                     </tr>
                     {% endfor %}
                 </tbody>
             </table>
         </div>
     </div>
+
+    {% include "portal/_dt_pagination.html" %}
 </div>
-{% endif %}
+
+<!-- Bulk decision modal -->
+<div class="modal fade gw-confirm" id="bulkReviewModal" tabindex="-1" aria-labelledby="bulkReviewTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-body">
+                <div class="gw-confirm-icon" id="bulkReviewIcon"><i class="bi bi-check2-all"></i></div>
+                <h5 class="gw-confirm-title" id="bulkReviewTitle">Approve claims?</h5>
+                <p class="gw-confirm-message" id="bulkReviewMessage"></p>
+                <ul class="gw-confirm-list" id="bulkReviewList"></ul>
+                <div class="text-start">
+                    <label class="form-label small fw-bold" for="bulkRemarks" id="bulkRemarksLabel">Remarks</label>
+                    <textarea id="bulkRemarks" class="form-control" rows="3" placeholder="Visible to each employee"></textarea>
+                    <div class="invalid-feedback">Enter the reason for rejection. Employees will see it.</div>
+                </div>
+            </div>
+            <div class="gw-confirm-actions">
+                <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-gw-primary" id="bulkReviewSubmit">Confirm</button>
+            </div>
+        </div>
+    </div>
+</div>
 
 {% include "portal/_expense_review_modal.html" %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{% static 'js/gw-datatable.js' %}?v=20261114d"></script>
+<script>
+(function () {
+    const bulk = GwDatatable.init({ toolbar: '#approvalsDtForm', bulkForm: '#bulkForm' });
+    if (!bulk) return;
+
+    const isDirector = '{{ stage }}' === 'director';
+    const money = n => '$' + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const sum = boxes => boxes.reduce((t, b) => t + parseFloat(b.dataset.amount || 0), 0);
+    const $ = id => document.getElementById(id);
+
+    function updateTotal() { $('bulkTotal').textContent = money(sum(bulk.selected())); }
+    bulk.onChange(updateTotal);
+    updateTotal();
+
+    const modalEl = $('bulkReviewModal');
+    const remarks = $('bulkRemarks');
+    let decision = 'APPROVED';
+
+    document.querySelectorAll('[data-bulk-review]').forEach(btn => btn.addEventListener('click', () => {
+        const sel = bulk.selected();
+        if (!sel.length) return;
+        decision = btn.dataset.bulkReview;
+        const reject = decision === 'REJECTED';
+        const n = sel.length;
+
+        modalEl.dataset.variant = reject ? 'danger' : 'success';
+        $('bulkReviewIcon').innerHTML = '<i class="bi ' + (reject ? 'bi-x-circle' : 'bi-check2-all') + '"></i>';
+        $('bulkReviewTitle').textContent = (reject ? 'Reject ' : (isDirector ? 'Final approve ' : 'Approve ')) + n + ' claim' + (n > 1 ? 's' : '') + '?';
+        $('bulkReviewMessage').textContent = reject
+            ? 'The selected claims will be returned to the employees, who can correct and resubmit them.'
+            : 'Each claim will be approved for its full amount (' + money(sum(sel)) + ' in total)' + (isDirector ? ' and move to payment.' : ' and move to Director approval.');
+
+        const list = $('bulkReviewList');
+        list.innerHTML = '';
+        sel.slice(0, 6).forEach(b => { const li = document.createElement('li'); li.textContent = b.dataset.label; list.appendChild(li); });
+        if (n > 6) { const li = document.createElement('li'); li.className = 'is-more'; li.textContent = '+ ' + (n - 6) + ' more'; list.appendChild(li); }
+
+        $('bulkRemarksLabel').innerHTML = reject ? 'Reason for rejection <span class="text-danger">*</span>' : 'Remarks <span class="text-muted">(optional)</span>';
+        remarks.value = '';
+        remarks.classList.remove('is-invalid');
+        const submit = $('bulkReviewSubmit');
+        submit.className = 'btn ' + (reject ? 'btn-gw-danger' : 'btn-gw-success');
+        submit.textContent = reject ? 'Reject ' + n : (isDirector ? 'Final approve ' : 'Approve ') + n;
+        bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    }));
+
+    modalEl.addEventListener('shown.bs.modal', () => remarks.focus());
+    $('bulkReviewSubmit').addEventListener('click', () => {
+        if (decision === 'REJECTED' && !remarks.value.trim()) {
+            remarks.classList.add('is-invalid');
+            remarks.focus();
+            return;
+        }
+        $('bulkDecision').value = decision;
+        $('bulkRemarksInput').value = remarks.value.trim();
+        const btn = $('bulkReviewSubmit');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Processing…';
+        $('bulkForm').submit();
+    });
+})();
+</script>
 {% endblock %}

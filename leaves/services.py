@@ -450,11 +450,39 @@ def leave_review_options(user, application):
         "stage_label": label,
         "endpoint": f"/leaves/applications/{application.id}/{path}/",
         "can_partial": can_partial,
+        # Approvers may change the leave type / whole date range while forwarding or approving.
+        "can_amend": True,
+        # Earlier stages this approver may send the leave back to (action RETURNED + return_to).
+        "return_targets": [
+            {"value": t, "label": STAGE_LABELS[t]} for t in application.return_targets(stage)
+        ],
         "actions": [
             {"value": positive, "label": positive_label, "requires_remarks": False, "tone": "positive"},
             {"value": "REJECTED", "label": "Reject", "requires_remarks": True, "tone": "negative"},
         ],
     }
+
+
+REVIEW_EVENTS = {
+    # stage: (positive event, rejected event)
+    "LEAD_MANAGER": ("LEAVE_LEAD_RECOMMENDED", "LEAVE_LEAD_REJECTED"),
+    "HR_COORDINATOR": ("LEAVE_HR_VERIFIED", "LEAVE_HR_REJECTED"),
+    "DIRECTOR": ("LEAVE_DIRECTOR_APPROVED", "LEAVE_DIRECTOR_REJECTED"),
+}
+
+
+def notify_leave_review(application, stage, recorded, remarks="", actor=None):
+    """Sends the notifications for one review decision (web and mobile API share this)."""
+    from notifications.services import notify_leave_event
+    amendment = getattr(application, "last_amendment", None)
+    if amendment:
+        notify_leave_event(application, "LEAVE_AMENDED", remarks=remarks, changes=amendment, actor=actor)
+    if recorded == "RETURNED":
+        notify_leave_event(application, "LEAVE_RETURNED", remarks=remarks, actor=actor)
+        return
+    positive, rejected = REVIEW_EVENTS[stage]
+    notify_leave_event(application, rejected if recorded == "REJECTED" else positive,
+                       remarks=remarks, partial=recorded.startswith("PARTIALLY_"))
 
 
 def can_view_leave_application(user, application):

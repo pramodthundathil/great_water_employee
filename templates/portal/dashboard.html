@@ -43,7 +43,7 @@
 <div class="row g-3 mb-4">
     <div class="col-12 col-sm-6 col-xl-3">
         <div class="kpi-card">
-            <div class="kpi-icon-wrapper" style="background: rgba(91, 69, 224, 0.1); color: var(--gw-primary);">
+            <div class="kpi-icon-wrapper kpi-icon--primary">
                 <i class="bi bi-people-fill"></i>
             </div>
             <div class="kpi-value">{{ total_active_employees }}</div>
@@ -55,7 +55,7 @@
     <div class="col-12 col-sm-6 col-xl-3">
         <a href="#directorWorkspaceCard" class="text-decoration-none d-block h-100">
             <div class="kpi-card {% if pipeline_summary.director_action_total > 0 %}kpi-card-attention{% endif %}">
-                <div class="kpi-icon-wrapper" style="background: rgba(217, 119, 6, 0.12); color: #D97706;">
+                <div class="kpi-icon-wrapper kpi-icon--warning">
                     <i class="bi bi-clipboard2-check-fill"></i>
                 </div>
                 <div class="kpi-value">{{ pipeline_summary.director_action_total }}</div>
@@ -67,7 +67,7 @@
 
     <div class="col-12 col-sm-6 col-xl-3">
         <div class="kpi-card">
-            <div class="kpi-icon-wrapper" style="background: rgba(239, 68, 68, 0.1); color: #DC2626;">
+            <div class="kpi-icon-wrapper kpi-icon--danger">
                 <i class="bi bi-bell-fill"></i>
             </div>
             <div class="kpi-value">{{ pipeline_summary.upstream_pending_total }}</div>
@@ -84,7 +84,7 @@
 
     <div class="col-12 col-sm-6 col-xl-3">
         <div class="kpi-card">
-            <div class="kpi-icon-wrapper" style="background: rgba(0, 210, 132, 0.12); color: #059669;">
+            <div class="kpi-icon-wrapper kpi-icon--success">
                 <i class="bi bi-cash-stack"></i>
             </div>
             <div class="kpi-value">${{ total_paid_expenses|floatformat:2 }}</div>
@@ -625,7 +625,7 @@
     {% if user.role != 'EMPLOYEE' %}
     <div class="col-12 col-sm-6 col-xl-3">
         <div class="kpi-card">
-            <div class="kpi-icon-wrapper" style="background: rgba(21, 107, 158, 0.1); color: var(--gw-primary);">
+            <div class="kpi-icon-wrapper kpi-icon--primary">
                 <i class="bi bi-people-fill"></i>
             </div>
             <div class="kpi-value">{{ total_active_employees }}</div>
@@ -636,7 +636,7 @@
 
     <div class="col-12 col-sm-6 col-xl-3">
         <div class="kpi-card">
-            <div class="kpi-icon-wrapper" style="background: rgba(217, 119, 6, 0.1); color: #D97706;">
+            <div class="kpi-icon-wrapper kpi-icon--warning">
                 <i class="bi bi-receipt-cutoff"></i>
             </div>
             <div class="kpi-value">{{ pending_expense_claims }}</div>
@@ -646,7 +646,7 @@
 
     <div class="col-12 col-sm-6 col-xl-3">
         <div class="kpi-card">
-            <div class="kpi-icon-wrapper" style="background: rgba(13, 148, 136, 0.1); color: #0D9488;">
+            <div class="kpi-icon-wrapper kpi-icon--neutral">
                 <i class="bi bi-cash-stack"></i>
             </div>
             <div class="kpi-value">{{ approved_awaiting_payment }}</div>
@@ -656,7 +656,7 @@
 
     <div class="col-12 col-sm-6 col-xl-3">
         <div class="kpi-card">
-            <div class="kpi-icon-wrapper" style="background: rgba(79, 70, 229, 0.1); color: #4F46E5;">
+            <div class="kpi-icon-wrapper kpi-icon--neutral">
                 <i class="bi bi-calendar-check"></i>
             </div>
             <div class="kpi-value">{{ pending_leaves_count }}</div>
@@ -667,7 +667,7 @@
     {% if user.role == 'EMPLOYEE' %}
     <div class="col-12 col-sm-6 col-xl-3">
         <div class="kpi-card">
-            <div class="kpi-icon-wrapper" style="background: rgba(5, 150, 105, 0.1); color: #059669;">
+            <div class="kpi-icon-wrapper kpi-icon--success">
                 <i class="bi bi-wallet2"></i>
             </div>
             <div class="kpi-value">${{ total_paid_expenses|floatformat:2 }}</div>
@@ -870,6 +870,10 @@
 
 {% block extra_scripts %}
 <script>
+    if (window.Chart) {
+        Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
+        Chart.defaults.color = '#6B7785';
+    }
     const expenseChartPayload = JSON.parse(document.getElementById('expense-chart-data').textContent);
     const leaveChartPayload = JSON.parse(document.getElementById('leave-chart-data').textContent);
 
@@ -877,8 +881,8 @@
     if (expenseCanvas) {
         const ctxExpense = expenseCanvas.getContext('2d');
         const expenseGrad = ctxExpense.createLinearGradient(0, 0, 0, 240);
-        expenseGrad.addColorStop(0, 'rgba(91, 69, 224, 0.16)');
-        expenseGrad.addColorStop(1, 'rgba(91, 69, 224, 0.0)');
+        expenseGrad.addColorStop(0, 'rgba(21, 107, 158, 0.10)');
+        expenseGrad.addColorStop(1, 'rgba(21, 107, 158, 0.0)');
 
         new Chart(ctxExpense, {
             type: 'line',
@@ -888,18 +892,18 @@
                     {
                         label: 'Claimed ($)',
                         data: expenseChartPayload.claimed,
-                        borderColor: '#5B45E0',
+                        borderColor: '#156B9E',
                         backgroundColor: expenseGrad,
                         fill: true,
                         tension: 0.35,
-                        borderWidth: 2.5,
-                        pointRadius: 3.5,
+                        borderWidth: 2,
+                        pointRadius: 2.5,
                         pointHoverRadius: 5
                     },
                     {
                         label: 'Reimbursed ($)',
                         data: expenseChartPayload.reimbursed,
-                        borderColor: '#00D284',
+                        borderColor: '#D9730D',
                         backgroundColor: 'transparent',
                         borderDash: [5, 5],
                         borderWidth: 2.2,
@@ -920,13 +924,13 @@
                         labels: { usePointStyle: true, boxWidth: 10, padding: 14 }
                     },
                     tooltip: {
-                        backgroundColor: '#161D2D',
+                        backgroundColor: '#1A2330',
                         padding: 10,
                         cornerRadius: 8
                     }
                 },
                 scales: {
-                    y: { beginAtZero: true, grid: { color: '#F1F5F9' }, ticks: { callback: v => '$' + v } },
+                    y: { beginAtZero: true, grid: { color: '#EEF2F6' }, ticks: { callback: v => '$' + v } },
                     x: { grid: { display: false } }
                 }
             }
@@ -942,7 +946,7 @@
                 labels: leaveChartPayload.labels,
                 datasets: [{
                     data: leaveChartPayload.values,
-                    backgroundColor: ['#5B45E0', '#00D284', '#0EA5E9', '#F59E0B', '#64748B'],
+                    backgroundColor: ['#156B9E', '#D9730D', '#0F8A5F', '#00A3E0', '#9AA5B1'],
                     borderWidth: 2,
                     borderColor: '#FFFFFF'
                 }]
@@ -957,7 +961,7 @@
                         labels: { usePointStyle: true, boxWidth: 10, padding: 14 }
                     },
                     tooltip: {
-                        backgroundColor: '#161D2D',
+                        backgroundColor: '#1A2330',
                         padding: 10,
                         cornerRadius: 8
                     }

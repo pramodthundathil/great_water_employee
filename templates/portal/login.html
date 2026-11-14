@@ -7,17 +7,16 @@
 <!-- Left Hero Side -->
 <div class="auth-hero">
     <div>
-        <div class="d-flex align-items-center gap-3 mb-4">
-            <img src="{% static 'img/logo.png' %}" alt="Great Waters Logo" style="height: 54px; background: white; border-radius: 8px; padding: 4px;">
-            <div class="fs-3 fw-bold tracking-tight">GREAT<span style="color: #00A3E0;">WATERS</span></div>
+        <div class="auth-hero-brand d-flex align-items-center gap-3 mb-4">
+            <img src="{% static 'img/logo.png' %}" alt="Great Waters Logo">
+            <div class="brand-word">GREAT<span>WATERS</span></div>
         </div>
-        <span class="badge bg-primary bg-opacity-25 text-info px-3 py-2 rounded-pill mb-3">Enterprise Workforce Portal</span>
-        <h1 class="display-5 fw-extrabold text-white mb-3">Employee Expense & Leave Management</h1>
-        <p class="text-light opacity-75 fs-6" style="max-width: 500px;">
-            Streamlined multi-branch expense claims, automated earned-leave accrual, hierarchical approval workflows, and executive analytics.
+        <h1 class="display-6 text-white mb-3">Expenses &amp; Leave, in one place</h1>
+        <p class="text-white opacity-75 fs-6" style="max-width: 460px;">
+            Submit claims, request time off and approve your team's requests — the same account works on the mobile app.
         </p>
     </div>
-    <div class="border-top border-secondary pt-3 text-white-50 small">
+    <div class="pt-3 text-white-50 small" style="border-top: 1px solid rgba(255,255,255,0.15);">
         &copy; 2026 Great Waters Maritime & Engineering. All rights reserved.
     </div>
 </div>
@@ -26,7 +25,7 @@
 <div class="auth-form-side">
     <div class="mb-4">
         <h2 class="fw-bold text-dark mb-1">Welcome back</h2>
-        <p class="text-muted small">Sign in to your Great Waters employee account</p>
+        <p class="text-muted small mb-0">Sign in with your employee ID or work email</p>
     </div>
 
     {% if messages %}
@@ -41,41 +40,37 @@
     <form method="post" action="{% url 'portal_login' %}" id="loginForm">
         {% csrf_token %}
         <div class="mb-3">
-            <label class="form-label small fw-semibold text-secondary">Employee ID or Corporate Email</label>
+            <label class="form-label small" for="usernameInput">Employee ID or email</label>
             <div class="input-group">
-                <span class="input-group-text bg-light border-end-0 text-muted"><i class="bi bi-person"></i></span>
-                <input type="text" name="username" id="usernameInput" class="form-control bg-light border-start-0" placeholder="e.g. GW-001 or name@greatwaters.com" required autofocus>
+                <span class="input-group-text border-end-0"><i class="bi bi-person"></i></span>
+                <input type="text" name="username" id="usernameInput" class="form-control border-start-0" placeholder="GW-001 or name@greatwaters.com" autocomplete="username" required autofocus>
             </div>
         </div>
 
         <div class="mb-4">
             <div class="d-flex justify-content-between align-items-center mb-1">
-                <label class="form-label small fw-semibold text-secondary m-0">Password</label>
+                <label class="form-label small m-0" for="passwordInput">Password</label>
                 <a href="{% url 'password_reset' %}" class="small text-decoration-none">Forgot password?</a>
             </div>
             <div class="input-group">
-                <span class="input-group-text bg-light border-end-0 text-muted"><i class="bi bi-shield-lock"></i></span>
-                <input type="password" name="password" id="passwordInput" class="form-control bg-light border-start-0" placeholder="••••••••••••" required>
+                <span class="input-group-text border-end-0"><i class="bi bi-lock"></i></span>
+                <input type="password" name="password" id="passwordInput" class="form-control border-start-0" placeholder="Enter your password" autocomplete="current-password" required>
             </div>
         </div>
 
-        <button type="submit" class="btn btn-gw-primary w-100 py-2 mb-3">
-            Sign In to Portal <i class="bi bi-arrow-right ms-2"></i>
-        </button>
+        <button type="submit" class="btn btn-gw-primary w-100 mb-3">Sign in</button>
     </form>
 
     <!-- Quick Role Switcher for Testing/Review (shown only when DEBUG=True) -->
     {% if show_demo_logins %}
     <div class="border-top pt-3 mt-2">
-        <div class="small fw-bold text-muted mb-2 text-uppercase" style="font-size: 0.7rem; letter-spacing: 0.05em;">
-            ⚡ Quick-fill Demo Roles (Password: Password@123):
-        </div>
+        <div class="small text-muted mb-2">Demo accounts (dev only)</div>
         <div class="d-flex flex-wrap gap-2">
-            <button type="button" class="btn btn-sm btn-outline-primary" onclick="fillCreds('GW-DIR-001', 'Password@123')">Director (Global)</button>
-            <button type="button" class="btn btn-sm btn-outline-info" onclick="fillCreds('GW-ADM-001', 'Password@123')">Admin Manager</button>
-            <button type="button" class="btn btn-sm btn-outline-warning" onclick="fillCreds('GW-HRC-001', 'Password@123')">HR Coordinator</button>
-            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="fillCreds('GW-ENG-001', 'Password@123')">Lead Manager</button>
-            <button type="button" class="btn btn-sm btn-outline-success" onclick="fillCreds('GW-EMP-001', 'Password@123')">Employee</button>
+            <button type="button" class="btn btn-sm auth-demo-chip" onclick="fillCreds('GW-DIR-001', 'Password@123')">Director (Global)</button>
+            <button type="button" class="btn btn-sm auth-demo-chip" onclick="fillCreds('GW-ADM-001', 'Password@123')">Admin Manager</button>
+            <button type="button" class="btn btn-sm auth-demo-chip" onclick="fillCreds('GW-HRC-001', 'Password@123')">HR Coordinator</button>
+            <button type="button" class="btn btn-sm auth-demo-chip" onclick="fillCreds('GW-ENG-001', 'Password@123')">Lead Manager</button>
+            <button type="button" class="btn btn-sm auth-demo-chip" onclick="fillCreds('GW-EMP-001', 'Password@123')">Employee</button>
         </div>
     </div>
     {% endif %}

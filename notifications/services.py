@@ -183,7 +183,7 @@ def _hr_coordinators_for(branch):
     ).distinct()
 
 
-def notify_leave_event(application, event_type, remarks="", partial=False):
+def notify_leave_event(application, event_type, remarks="", partial=False, changes=None, actor=None):
     """
     Dispatches role-aware notifications across leave workflow stages.
     partial=True means the approver at this stage granted fewer days than were pending.
@@ -277,6 +277,42 @@ def notify_leave_event(application, event_type, remarks="", partial=False):
             message=message,
             event_type=event_type,
             link_url=f"/leaves/{application.id}/"
+        )
+
+    elif event_type == "LEAVE_RETURNED":
+        # Sent back to an earlier approver instead of the employee: tell that stage's approvers.
+        last = application.approval_history.filter(action="RETURNED").order_by("-created_at").first()
+        target = getattr(last, "returned_to", "")
+        by = last.approver.full_name if last else "An approver"
+        if target == "LEAD_MANAGER":
+            lead = getattr(getattr(emp, "profile", None), "reporting_lead", None)
+            recipients = [lead] if lead else []
+        elif target == "HR_COORDINATOR":
+            recipients = list(_hr_coordinators_for(branch).exclude(id=emp.id))
+        else:
+            recipients = []
+        for r in recipients:
+            send_system_notification(
+                recipient=r,
+                title=f"Leave Returned for Review: {application.application_number}",
+                message=(f"{by} returned {emp.full_name}'s leave ({fmt_days(application.number_of_days)} day(s), "
+                         f"{application.start_date} to {application.end_date}) to you for another review. Remarks: {remarks}"),
+                event_type=event_type,
+                link_url=f"/leaves/{application.id}/",
+            )
+
+    elif event_type == "LEAVE_AMENDED":
+        parts = []
+        for field, label in (("leave_type", "type"), ("start_date", "from"), ("end_date", "to"), ("number_of_days", "days")):
+            if changes and field in changes:
+                parts.append(f"{label} {changes[field][0]} → {changes[field][1]}")
+        send_system_notification(
+            recipient=emp,
+            title=f"Leave Changed by Approver: {application.application_number}",
+            message=(f"{actor.full_name if actor else 'Your approver'} changed your leave: {', '.join(parts)}. "
+                     f"Remarks: {remarks}"),
+            event_type=event_type,
+            link_url=f"/leaves/{application.id}/",
         )
 
     elif event_type in ["LEAVE_LEAD_REJECTED", "LEAVE_HR_REJECTED", "LEAVE_DIRECTOR_REJECTED"]:

@@ -7,21 +7,17 @@
     <title>{% block title %}Enterprise Portal{% endblock %} — Great Waters</title>
     <!-- Favicon -->
     <link rel="icon" type="image/png" href="{% static 'img/logo.png' %}">
-    <!-- Google Fonts -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <!-- Bootstrap 5 CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <!-- Bootstrap Icons -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     <!-- Custom Portal CSS & Design System -->
-    <link rel="stylesheet" href="{% static 'css/portal.css' %}?v=20261113a">
+    <link rel="stylesheet" href="{% static 'css/portal.css' %}?v=20261114o">
     {% block extra_head %}{% endblock %}
 </head>
 <body>
 <div class="app-container">
-    <!-- Royal Violet Sidebar (Reference Design Style) -->
+    <!-- Sidebar -->
     <aside class="app-sidebar" id="appSidebar" aria-label="Primary Navigation">
         <!-- Sidebar Brand Header -->
         <div class="sidebar-header">
@@ -31,7 +27,7 @@
                 </div>
                 <div class="brand-info">
                     <div class="brand-title">GREAT<span>WATERS</span></div>
-                    <div class="brand-badge">Maritime & Offshore</div>
+                    <div class="brand-badge">Expenses &amp; Leave</div>
                 </div>
             </a>
             <button class="btn-sidebar-close d-lg-none" id="sidebarClose" type="button" aria-label="Close Navigation">
@@ -172,7 +168,7 @@
                     <div class="branch-selector-pill">
                         <i class="bi bi-globe-americas flex-shrink-0"></i>
                         <span class="text-muted me-1 d-none d-sm-inline flex-shrink-0">Branch:</span>
-                        <select name="branch_filter" aria-label="Filter by branch" class="form-select form-select-sm border-0 bg-transparent fw-bold text-dark branch-select-input" onchange="this.form.submit()">
+                        <select name="branch_filter" aria-label="Filter by branch" class="form-select form-select-sm border-0 bg-transparent fw-semibold text-dark branch-select-input" onchange="this.form.submit()">
                             <option value="all" {% if selected_branch_id == 'all' %}selected{% endif %}>All Branches (Consolidated)</option>
                             {% for b in user_accessible_branches %}
                             <option value="{{ b.id }}" {% if selected_branch_id == b.id|stringformat:"s" %}selected{% endif %}>{{ b.name }} ({{ b.code }})</option>
@@ -198,7 +194,7 @@
 
                 <div class="dropdown">
                     <button class="btn btn-link text-decoration-none dropdown-toggle d-flex align-items-center gap-2 p-0 text-dark header-user-btn" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Account menu">
-                        <div class="avatar-circle avatar-gradient-2" style="width: 36px; height: 36px; font-size: 0.8rem;">
+                        <div class="avatar-circle" style="width: 36px; height: 36px; font-size: 0.8rem; background: var(--gw-primary); color: #fff;">
                             {{ user.first_name|default:user.employee_id|slice:":1"|upper }}
                         </div>
                         <span class="small fw-semibold d-none d-md-inline text-dark">{{ user.employee_id }}</span>
@@ -218,8 +214,8 @@
         {% if messages %}
         <div class="flash-messages-wrap">
             {% for message in messages %}
-            <div class="alert alert-{{ message.tags|default:'info' }} alert-dismissible fade show shadow-sm border-0 d-flex align-items-center" role="alert" style="border-radius: 12px;">
-                <i class="bi {% if message.tags == 'success' %}bi-check-circle-fill text-success{% elif message.tags == 'danger' %}bi-exclamation-triangle-fill text-danger{% else %}bi-info-circle-fill text-primary{% endif %} me-2 fs-5"></i>
+            <div class="alert alert-{% if message.tags == 'error' %}danger{% else %}{{ message.tags|default:'info' }}{% endif %} alert-dismissible fade show shadow-sm border-0 d-flex align-items-center" role="alert" style="border-radius: 12px;">
+                <i class="bi {% if message.tags == 'success' %}bi-check-circle-fill text-success{% elif message.tags == 'warning' %}bi-exclamation-circle-fill text-warning{% elif message.tags == 'danger' or message.tags == 'error' %}bi-exclamation-triangle-fill text-danger{% else %}bi-info-circle-fill text-primary{% endif %} me-2 fs-5"></i>
                 <div class="flex-grow-1">{{ message }}</div>
                 <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
             </div>
@@ -246,7 +242,7 @@
                 <p class="text-secondary small mb-3">Compose a quick communication to <strong id="quickMsgRecipientName" class="text-dark">Colleague</strong> (<span id="quickMsgRecipientEmail" class="text-primary"></span>).</p>
                 <div class="mb-3">
                     <label class="form-label small fw-semibold text-muted">Subject</label>
-                    <input type="text" class="form-control form-control-sm rounded-pill px-3" value="Great Waters Internal Inquiry">
+                    <input type="text" class="form-control form-control-sm px-3" value="Great Waters Internal Inquiry">
                 </div>
                 <div class="mb-3">
                     <label class="form-label small fw-semibold text-muted">Message</label>
@@ -254,23 +250,26 @@
                 </div>
             </div>
             <div class="modal-footer border-0 pt-0">
-                <button type="button" class="btn btn-sm btn-light rounded-pill px-3" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-sm btn-light px-3" data-bs-dismiss="modal">Cancel</button>
                 <button type="button" class="btn btn-sm btn-cta-purple" onclick="alert('Message dispatched securely.'); bootstrap.Modal.getInstance(document.getElementById('quickMessageModal')).hide();">
-                    <i class="bi bi-send me-1"></i> Send Dispatch
+                    <i class="bi bi-send me-1"></i> Send
                 </button>
             </div>
         </div>
     </div>
 </div>
 
+{% include "portal/_confirm_modal.html" %}
+
 <!-- Bootstrap 5 Bundle JS -->
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <!-- Chart.js -->
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <!-- GSAP 3.12 (HyperFrames & Antigravity Motion Engine) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
 <!-- Portal Motion Scripts -->
-<script src="{% static 'js/portal-motion.js' %}?v=20261112b"></script>
+<script src="{% static 'js/portal-motion.js' %}?v=20261114a"></script>
+<script src="{% static 'js/gw-confirm.js' %}?v=20261114a"></script>
 {% block extra_scripts %}{% endblock %}
 </body>
 </html>

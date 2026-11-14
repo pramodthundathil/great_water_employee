@@ -1,0 +1,18 @@
+{# Reusable themed confirmation dialog. Open from JS with gwConfirm({...}) — see static/js/gw-confirm.js #}
+<div class="modal fade gw-confirm" id="gwConfirmModal" tabindex="-1" aria-labelledby="gwConfirmTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-body">
+                <div class="gw-confirm-icon" data-gw-confirm-icon><i class="bi bi-exclamation-triangle"></i></div>
+                <h5 class="gw-confirm-title" id="gwConfirmTitle" data-gw-confirm-title>Are you sure?</h5>
+                <p class="gw-confirm-message" data-gw-confirm-message></p>
+                <ul class="gw-confirm-list d-none" data-gw-confirm-list></ul>
+                <div class="gw-confirm-note d-none" data-gw-confirm-note></div>
+            </div>
+            <div class="gw-confirm-actions">
+                <button type="button" class="btn btn-light" data-bs-dismiss="modal" data-gw-confirm-cancel>Cancel</button>
+                <button type="button" class="btn" data-gw-confirm-ok>Confirm</button>
+            </div>
+        </div>
+    </div>
+</div>

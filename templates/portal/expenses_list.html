@@ -7,7 +7,7 @@
 <div class="page-title-box">
     <div>
         <h1 class="page-title">Expense Reimbursements</h1>
-        <p class="page-subtitle">Track, submit, and manage business expense claims with verified proofs.</p>
+        <p class="page-subtitle">Submit business expenses with proofs and track every claim through review and payment.</p>
     </div>
     <div>
         <button class="btn btn-gw-primary" data-bs-toggle="modal" data-bs-target="#newExpenseModal">
@@ -16,107 +16,145 @@
     </div>
 </div>
 
-<!-- Filter Bar -->
-<div class="gw-card mb-4">
-    <div class="gw-card-body py-3">
-        <form method="get" class="row g-2 align-items-center">
-            <div class="col-md-4">
-                <div class="input-group input-group-sm">
-                    <span class="input-group-text bg-light text-muted"><i class="bi bi-funnel"></i></span>
-                    <select name="status" class="form-select" onchange="this.form.submit()">
-                        <option value="">All Statuses</option>
-                        <option value="DRAFT" {% if selected_status == 'DRAFT' %}selected{% endif %}>Draft</option>
-                        <option value="UNDER_ADMIN_REVIEW" {% if selected_status == 'UNDER_ADMIN_REVIEW' %}selected{% endif %}>Under Admin Review</option>
-                        <option value="UNDER_DIRECTOR_REVIEW" {% if selected_status == 'UNDER_DIRECTOR_REVIEW' %}selected{% endif %}>Under Director Review</option>
-                        <option value="APPROVED_BY_DIRECTOR" {% if selected_status == 'APPROVED_BY_DIRECTOR' %}selected{% endif %}>Approved (Awaiting Payment)</option>
-                        <option value="PAID" {% if selected_status == 'PAID' %}selected{% endif %}>Paid / Reimbursed</option>
-                        <option value="REJECTED_BY_ADMIN" {% if selected_status == 'REJECTED_BY_ADMIN' %}selected{% endif %}>Rejected by Admin</option>
-                        <option value="REJECTED_BY_DIRECTOR" {% if selected_status == 'REJECTED_BY_DIRECTOR' %}selected{% endif %}>Rejected by Director</option>
-                    </select>
-                </div>
-            </div>
-            <div class="col-md-4">
-                <div class="input-group input-group-sm">
-                    <span class="input-group-text bg-light text-muted"><i class="bi bi-search"></i></span>
-                    <input type="search" name="q" value="{{ search_q }}" class="form-control" placeholder="Claim no., employee ID or name">
-                </div>
-            </div>
-            <div class="col-md-auto ms-auto">
-                <a href="{% url 'portal_expenses' %}" class="btn btn-sm btn-light">Reset Filter</a>
-            </div>
-        </form>
+<!-- Expense Claims Datatable (server-side paginated) -->
+<div class="gw-card gw-dt">
+    <div class="gw-card-header">
+        <h5 class="gw-card-title"><i class="bi bi-receipt text-primary me-2"></i>Expense Claims <span class="badge rounded-pill bg-light text-secondary border ms-1">{{ paginator.count }}</span></h5>
+        {% if show_employee %}
+        <a href="{% url 'portal_reimbursements' %}" class="btn btn-sm btn-link text-decoration-none">Reimbursements <i class="bi bi-arrow-right"></i></a>
+        {% endif %}
     </div>
-</div>
 
-<!-- Claims Table -->
-<div class="gw-card">
+    <form method="get" class="gw-dt-toolbar" id="expensesDtForm">
+        <input type="hidden" name="sort" value="{{ sort }}">
+        <input type="hidden" name="dir" value="{{ dir }}">
+        <div class="gw-dt-search">
+            <i class="bi bi-search"></i>
+            <input type="search" name="q" value="{{ q }}" class="form-control form-control-sm" placeholder="Search claim #, employee, category, project..." autocomplete="off" data-dt-search>
+        </div>
+        <select name="status" class="form-select form-select-sm gw-dt-filter" data-dt-autosubmit>
+            <option value="">All statuses</option>
+            <option value="review" {% if status_filter == "review" %}selected{% endif %}>Under review</option>
+            <option value="approved" {% if status_filter == "approved" %}selected{% endif %}>Approved (awaiting payment)</option>
+            <option value="paid" {% if status_filter == "paid" %}selected{% endif %}>Paid</option>
+            <option value="rejected" {% if status_filter == "rejected" %}selected{% endif %}>Rejected</option>
+            <option value="withdrawn" {% if status_filter == "withdrawn" %}selected{% endif %}>Withdrawn</option>
+        </select>
+        <select name="category" class="form-select form-select-sm gw-dt-filter" data-dt-autosubmit>
+            <option value="">All categories</option>
+            {% for cat in categories %}
+            <option value="{{ cat.id }}" {% if category_filter == cat.id|stringformat:"s" %}selected{% endif %}>{{ cat.name }}</option>
+            {% endfor %}
+        </select>
+        {% if is_filtered %}
+        <a href="{% url 'portal_expenses' %}?page_size={{ page_size }}" class="btn btn-sm btn-light gw-dt-reset"><i class="bi bi-x-lg me-1"></i>Clear</a>
+        {% endif %}
+        <div class="gw-dt-pagesize ms-auto">
+            <span>Show</span>
+            <select name="page_size" class="form-select form-select-sm" data-dt-autosubmit>
+                {% for n in page_size_options %}
+                <option value="{{ n }}" {% if n == page_size %}selected{% endif %}>{{ n }}</option>
+                {% endfor %}
+            </select>
+            <span>rows</span>
+        </div>
+    </form>
+
+    <!-- Bulk action bar (shown when rows are selected) -->
+    <form method="post" id="bulkForm" class="gw-dt-bulkbar" action="{{ request.get_full_path }}">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="bulk_delete">
+        <span class="gw-dt-bulkbar-count"><i class="bi bi-check2-square"></i><span id="bulkCount">0</span> selected</span>
+        <button type="button" class="btn is-danger" data-bulk="delete"><i class="bi bi-trash3"></i> Delete</button>
+        <button type="button" class="btn gw-dt-bulkbar-clear ms-auto" id="bulkClear"><i class="bi bi-x-lg"></i> Clear selection</button>
+    </form>
+
     <div class="gw-card-body p-0">
         <div class="table-responsive">
-            <table class="table gw-table m-0">
+            <table class="table gw-table gw-dt-table gw-dt-clickable m-0">
                 <thead>
                     <tr>
-                        <th>Claim Number</th>
-                        <th>Date</th>
-                        <th>Employee</th>
-                        <th>Category</th>
-                        <th>Amount</th>
-                        <th class="text-center">Receipts</th>
-                        <th>Status</th>
+                        <th class="gw-dt-check">
+                            <input type="checkbox" class="form-check-input" id="selectAll" aria-label="Select all claims on this page" {% if not claims %}disabled{% endif %}>
+                        </th>
+                        {% include "portal/_dt_sort_th.html" with col="number" label="Claim #" %}
+                        {% if show_employee %}
+                        {% include "portal/_dt_sort_th.html" with col="employee" label="Employee" %}
+                        {% endif %}
+                        {% include "portal/_dt_sort_th.html" with col="category" label="Category" %}
+                        {% include "portal/_dt_sort_th.html" with col="date" label="Expense Date" %}
+                        {% include "portal/_dt_sort_th.html" with col="amount" label="Amount" %}
+                        <th class="text-center">Proofs</th>
+                        {% include "portal/_dt_sort_th.html" with col="status" label="Status" %}
                         <th class="text-end">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for c in claims %}
-                    <tr>
-                        <td>
-                            <a href="{% url 'portal_expense_detail' c.pk %}" class="fw-bold text-decoration-none text-primary">
-                                {{ c.claim_number }}
-                            </a>
-                            {% if c.project_reference %}
-                            <div class="small text-muted">Proj: {{ c.project_reference }}</div>
-                            {% endif %}
+                    <tr data-href="{% url 'portal_expense_detail' c.pk %}" tabindex="0">
+                        <td class="gw-dt-check">
+                            <input type="checkbox" class="form-check-input" name="selected" value="{{ c.pk }}" form="bulkForm"
+                                   data-row-check data-label="{{ c.claim_number }} · ${{ c.amount|floatformat:2 }}"
+                                   data-deletable="{{ c.deletable|yesno:'1,0' }}"
+                                   data-reason="{% if c.status == 'APPROVED_BY_DIRECTOR' or c.status == 'PAID' %}approved / paid{% else %}not permitted{% endif %}"
+                                   aria-label="Select {{ c.claim_number }}">
                         </td>
-                        <td>{{ c.expense_date|date:"M d, Y" }}</td>
                         <td>
-                            <div class="fw-semibold">{{ c.employee.full_name }}</div>
-                            <small class="text-muted">{{ c.branch.code }} &bull; {{ c.employee.employee_id }}</small>
+                            <a href="{% url 'portal_expense_detail' c.pk %}" class="fw-bold text-decoration-none text-primary">{{ c.claim_number }}</a>
+                            <div class="gw-dt-sub">{% if c.project_reference %}Proj: {{ c.project_reference }}{% else %}{{ c.submitted_at|default:c.created_at|date:"M d, Y" }}{% endif %}</div>
                         </td>
-                        <td>{{ c.category.name }}</td>
+                        {% if show_employee %}
                         <td>
-                            <span class="fs-6 fw-bold text-dark">${{ c.amount|floatformat:2 }}</span>{% if c.is_partially_approved %}<div class="small text-warning-emphasis">of ${{ c.claimed_amount|floatformat:2 }}</div>{% endif %}
+                            <div class="gw-dt-employee">
+                                <span class="gw-dt-avatar">{{ c.employee.first_name|default:c.employee.employee_id|first|upper }}{{ c.employee.last_name|first|upper }}</span>
+                                <div>
+                                    <div class="gw-dt-employee-name">{{ c.employee.full_name }}</div>
+                                    <div class="gw-dt-employee-id">{{ c.employee.employee_id }} · {{ c.branch.code }}</div>
+                                </div>
+                            </div>
+                        </td>
+                        {% endif %}
+                        <td><span class="gw-dt-dept">{{ c.category.name }}</span></td>
+                        <td class="text-nowrap">{{ c.expense_date|date:"M d, Y" }}</td>
+                        <td class="text-nowrap">
+                            <span class="fw-bold">${{ c.amount|floatformat:2 }}</span>
+                            {% if c.is_partially_approved %}<div class="gw-dt-sub text-warning-emphasis">of ${{ c.claimed_amount|floatformat:2 }}</div>{% endif %}
                         </td>
                         <td class="text-center">
-                            {% with att_count=c.attachments.count %}
-                                {% if att_count > 0 %}
-                                <span class="badge bg-light text-primary border">
-                                    <i class="bi bi-paperclip me-1"></i>{{ att_count }} proof{{ att_count|pluralize }}
-                                </span>
-                                {% else %}
-                                <span class="badge bg-danger-subtle text-danger">No proof</span>
-                                {% endif %}
-                            {% endwith %}
+                            {% if c.attachment_count %}
+                            <span class="badge bg-light text-primary border"><i class="bi bi-paperclip me-1"></i>{{ c.attachment_count }}</span>
+                            {% else %}
+                            <span class="badge bg-danger-subtle text-danger">None</span>
+                            {% endif %}
                         </td>
                         <td>
-                            <span class="status-badge {% if 'REJECTED' in c.status %}badge-rejected{% elif c.status == 'PAID' %}badge-paid{% elif 'APPROVED' in c.status %}badge-approved{% elif c.status == 'DRAFT' %}badge-draft{% else %}badge-pending{% endif %}">
+                            <span class="status-badge {% if 'REJECTED' in c.status %}badge-rejected{% elif c.status == 'PAID' %}badge-paid{% elif 'APPROVED' in c.status %}badge-approved{% elif c.status == 'WITHDRAWN' %}badge-draft{% else %}badge-pending{% endif %}">
                                 {{ c.get_status_display }}
                             </span>
                         </td>
                         <td class="text-end">
-                            <a href="{% url 'portal_expense_detail' c.pk %}" class="btn btn-sm btn-light" title="View Details">
-                                <i class="bi bi-eye"></i>
-                            </a>
+                            <div class="gw-dt-actions">
+                                <a href="{% url 'portal_expense_detail' c.pk %}" class="btn btn-sm btn-light" title="View details"><i class="bi bi-eye"></i></a>
+                                {% if c.deletable %}
+                                <button type="button" class="btn btn-sm btn-light text-danger" title="Delete claim" data-row-delete="{{ c.pk }}" data-label="{{ c.claim_number }} · ${{ c.amount|floatformat:2 }}"><i class="bi bi-trash3"></i></button>
+                                {% endif %}
+                            </div>
                         </td>
                     </tr>
                     {% empty %}
                     <tr>
-                        <td colspan="8">
+                        <td colspan="{% if show_employee %}9{% else %}8{% endif %}">
                             <div class="empty-state">
                                 <i class="bi bi-receipt empty-state-icon"></i>
-                                <div class="empty-state-title">No Expense Claims Found</div>
-                                <p class="empty-state-desc">You haven't submitted any expense claims matching the filter criteria.</p>
-                                <button class="btn btn-gw-primary" data-bs-toggle="modal" data-bs-target="#newExpenseModal">
-                                    <i class="bi bi-plus-lg me-1"></i> Create First Claim
-                                </button>
+                                {% if is_filtered %}
+                                <div class="empty-state-title">No matching claims</div>
+                                <p class="empty-state-desc">Try a different search or clear the filters.</p>
+                                <a href="{% url 'portal_expenses' %}" class="btn btn-light">Clear filters</a>
+                                {% else %}
+                                <div class="empty-state-title">No expense claims yet</div>
+                                <p class="empty-state-desc">Submitted claims will appear here.</p>
+                                <button class="btn btn-gw-primary" data-bs-toggle="modal" data-bs-target="#newExpenseModal"><i class="bi bi-plus-lg me-1"></i> New Expense Claim</button>
+                                {% endif %}
                             </div>
                         </td>
                     </tr>
@@ -125,6 +163,8 @@
             </table>
         </div>
     </div>
+
+    {% include "portal/_dt_pagination.html" %}
 </div>
 
 <!-- Modal: New Expense Claim -->
@@ -178,26 +218,40 @@
 
                         <div class="col-12">
                             <label class="form-label small fw-bold">Supporting Receipts / Proofs <span class="text-danger">*</span></label>
-                            <input type="file" name="receipts" class="form-control" multiple accept="image/*,application/pdf">
-                            <small class="text-muted">Multiple files allowed (JPEG, PNG, HEIC or PDF, up to 10MB each). Required to submit; a draft can be saved without it.</small>
+                            <input type="file" name="receipts" class="form-control" multiple accept="image/*,application/pdf" required>
+                            <small class="text-muted">Multiple files allowed (JPEG, PNG, HEIC or PDF, up to 10MB each).</small>
                         </div>
 
-                        <div class="col-12 mt-3">
-                            <div class="form-check">
-                                <input class="form-check-input" type="checkbox" name="submit_now" value="1" id="submitNowCheck" checked>
-                                <label class="form-check-label fw-semibold" for="submitNowCheck">
-                                    Submit immediately for Admin Review (uncheck to save as draft)
-                                </label>
-                            </div>
-                        </div>
                     </div>
                 </div>
                 <div class="modal-footer bg-light">
                     <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
-                    <button type="submit" class="btn btn-gw-primary px-4">Save & Proceed</button>
+                    <button type="submit" class="btn btn-gw-primary px-4"><i class="bi bi-send me-1"></i> Submit Claim</button>
                 </div>
             </form>
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{% static 'js/gw-datatable.js' %}?v=20261114d"></script>
+<script>
+GwDatatable.init({
+    toolbar: '#expensesDtForm',
+    bulkForm: '#bulkForm',
+    actions: {
+        delete: {
+            title: n => 'Delete ' + n + ' claim' + (n > 1 ? 's' : '') + '?',
+            message: 'The selected claims and their uploaded receipts will be permanently removed. This cannot be undone.',
+            note: 'Approved and paid claims are kept as financial records and cannot be deleted.',
+            confirmText: 'Delete',
+            variant: 'danger',
+            eligible: box => box.dataset.deletable === '1',
+            blockedTitle: 'These claims can\'t be deleted',
+            blockedMessage: 'Approved and paid claims are kept as financial records, and you can only delete your own claims before review.',
+        },
+    },
+});
+</script>
 {% endblock %}

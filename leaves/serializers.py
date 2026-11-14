@@ -20,7 +20,7 @@ class LeaveApprovalSerializer(serializers.ModelSerializer):
         model = LeaveApproval
         fields = [
             "id", "stage", "approver_name", "approver_id_str", "action", "remarks",
-            "approved_start_date", "approved_end_date", "approved_days", "created_at",
+            "approved_start_date", "approved_end_date", "approved_days", "returned_to", "changes", "created_at",
         ]
 
 

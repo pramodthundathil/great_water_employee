@@ -12,11 +12,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const rows = document.querySelectorAll('.data-table-row');
         if (rows.length > 0) {
             gsap.from(rows, {
-                y: 18,
                 opacity: 0,
-                duration: 0.42,
-                stagger: 0.035,
-                ease: 'power2.out',
+                duration: 0.25,
+                stagger: 0.02,
+                ease: 'power1.out',
                 clearProps: 'transform,opacity'
             });
         }
@@ -25,11 +24,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const kpis = document.querySelectorAll('.kpi-card');
         if (kpis.length > 0) {
             gsap.from(kpis, {
-                y: 20,
+                y: 6,
                 opacity: 0,
-                duration: 0.45,
-                stagger: 0.06,
-                ease: 'back.out(1.4)',
+                duration: 0.3,
+                stagger: 0.04,
+                ease: 'power1.out',
                 clearProps: 'transform,opacity'
             });
         }
@@ -38,11 +37,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const chips = document.querySelectorAll('.filter-chip');
         if (chips.length > 0) {
             gsap.from(chips, {
-                scale: 0.8,
                 opacity: 0,
-                duration: 0.3,
-                stagger: 0.04,
-                ease: 'back.out(1.6)',
+                duration: 0.2,
+                stagger: 0.02,
+                ease: 'power1.out',
                 clearProps: 'transform,opacity'
             });
         }

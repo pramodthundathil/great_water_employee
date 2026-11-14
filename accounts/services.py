@@ -221,3 +221,66 @@ def set_employee_password(actor, emp, new_password):
     emp.set_password(new_password)
     emp.save(update_fields=["password"])
     return emp
+
+
+def _bulk_block_reason(actor, emp):
+    if not can_access_employee(actor, emp):
+        return "outside your branch scope"
+    if emp.pk == actor.pk:
+        return "your own account"
+    if emp.is_superuser and not actor.is_superuser:
+        return "system administrator"
+    if emp.role == RoleChoices.DIRECTOR and not (actor.is_superuser or actor.role == RoleChoices.DIRECTOR):
+        return "Director account"
+    return None
+
+
+BULK_ACTIONS = ("delete", "activate", "deactivate")
+
+
+def bulk_employee_action(actor, ids, action):
+    """
+    Apply `action` (delete / activate / deactivate) to the employees in `ids`.
+
+    Deleting an employee who already has leave / expense history is not possible
+    without destroying audit records (those relations are PROTECT), so such
+    employees are deactivated instead and reported back in `archived`.
+
+    Returns a dict: {done: [User], archived: [User], skipped: [(User, reason)]}.
+    """
+    from django.db.models import ProtectedError
+
+    if not can_manage_users(actor):
+        raise EmployeeError("You are not authorised to manage employee records.")
+    if action not in BULK_ACTIONS:
+        raise EmployeeError("Unknown bulk action.")
+
+    clean_ids = [int(i) for i in ids if str(i).isdigit()]
+    if not clean_ids:
+        raise EmployeeError("Select at least one employee.")
+
+    result = {"done": [], "archived": [], "skipped": []}
+    for emp in User.objects.filter(pk__in=clean_ids).select_related("primary_branch"):
+        reason = _bulk_block_reason(actor, emp)
+        if reason:
+            result["skipped"].append((emp, reason))
+            continue
+
+        if action == "delete":
+            label = f"{emp.full_name} ({emp.employee_id})"
+            try:
+                with transaction.atomic():
+                    emp.delete()
+                result["done"].append(label)
+            except ProtectedError:
+                if emp.is_active:
+                    emp.is_active = False
+                    emp.save(update_fields=["is_active"])
+                result["archived"].append(label)
+        else:
+            target_state = action == "activate"
+            if emp.is_active != target_state:
+                emp.is_active = target_state
+                emp.save(update_fields=["is_active"])
+            result["done"].append(f"{emp.full_name} ({emp.employee_id})")
+    return result

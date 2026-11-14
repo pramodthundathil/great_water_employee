@@ -141,7 +141,7 @@
         {% endif %}
         <!-- Reimbursement Payment Details Card if Paid -->
         {% if claim.status == 'PAID' and claim.payment_record %}
-        <div class="gw-card border-success mb-4" style="background: #F0FDF4;">
+        <div class="gw-card border-success mb-4" style="background: var(--gw-success-soft);">
             <div class="gw-card-header bg-transparent border-success-subtle">
                 <h5 class="gw-card-title text-success"><i class="bi bi-cash-coin me-2"></i>Payment Disbursed</h5>
             </div>

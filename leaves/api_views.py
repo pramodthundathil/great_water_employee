@@ -23,7 +23,7 @@ from leaves.services import (
     validate_leave_request, LeaveRequestError, calculate_leave_days,
     log_leave_audit, client_ip, resubmit_leave_application,
     initial_leave_route, visible_leave_applications, can_view_leave_application,
-    filter_leave_track, leave_track_counts,
+    filter_leave_track, leave_track_counts, notify_leave_review,
 )
 from leaves.models import LeaveAuditAction, fmt_days
 from leaves.models import Holiday
@@ -62,12 +62,31 @@ def parse_optional_date(value, label):
         raise ValidationError(f"Invalid {label}. Use YYYY-MM-DD.")
 
 
+def parse_amend_leave_type(value):
+    if value in (None, ""):
+        return None
+    lt = LeaveType.objects.filter(pk=value).first() if str(value).isdigit() else None
+    if lt is None:
+        raise ValidationError("Unknown leave type.")
+    return lt
+
+
 def review_kwargs(request):
-    """Remarks plus the optional partial-approval range shared by every review stage."""
+    """
+    Remarks plus the optional extras shared by every review stage:
+      approved_start_date / approved_end_date   partial approval inside the current range
+      amend_leave_type / amend_start_date / amend_end_date   change the leave type and / or whole range
+      return_to   earlier stage (LEAD_MANAGER / HR_COORDINATOR) when action is RETURNED
+    """
+    d = request.data
     return {
-        "remarks": request.data.get("remarks", "") or "",
-        "approved_start_date": parse_optional_date(request.data.get("approved_start_date"), "approved start date"),
-        "approved_end_date": parse_optional_date(request.data.get("approved_end_date"), "approved end date"),
+        "remarks": d.get("remarks", "") or "",
+        "approved_start_date": parse_optional_date(d.get("approved_start_date"), "approved start date"),
+        "approved_end_date": parse_optional_date(d.get("approved_end_date"), "approved end date"),
+        "amend_leave_type": parse_amend_leave_type(d.get("amend_leave_type")),
+        "amend_start_date": parse_optional_date(d.get("amend_start_date"), "new start date"),
+        "amend_end_date": parse_optional_date(d.get("amend_end_date"), "new end date"),
+        "return_to": (d.get("return_to") or "").upper() or None,
         "source": API_SOURCE,
         "ip_address": client_ip(request),
     }
@@ -76,11 +95,16 @@ def review_kwargs(request):
 def review_response(app, recorded):
     if recorded == "REJECTED":
         detail = "Leave rejected and returned to the employee."
+    elif recorded == "RETURNED":
+        last = app.approval_history.filter(action="RETURNED").order_by("-created_at").first()
+        detail = f"Leave returned to {last.action_label.split('to ', 1)[-1] if last else 'an earlier stage'} for another review."
     elif recorded.startswith("PARTIALLY_"):
         detail = (f"Partially {recorded.split('_', 1)[1].lower()}: {fmt_days(app.number_of_days)} of "
                   f"{fmt_days(app.requested_number_of_days)} day(s) ({app.start_date:%d %b} to {app.end_date:%d %b %Y}).")
     else:
         detail = f"Leave {recorded.lower()} successfully."
+    if getattr(app, "last_amendment", None) and recorded != "RETURNED":
+        detail += f" Leave changed to {app.leave_type.name}, {app.start_date:%d %b} to {app.end_date:%d %b %Y} ({fmt_days(app.number_of_days)} day(s))."
     return Response({"detail": detail, "status": app.status, "action": recorded})
 
 
@@ -320,8 +344,7 @@ class LeaveApplicationLeadRecommendView(APIView):
         try:
             kwargs = review_kwargs(request)
             recorded = app.lead_review(approver=user, action=action, **kwargs)
-            notify_leave_event(app, "LEAVE_LEAD_REJECTED" if recorded == "REJECTED" else "LEAVE_LEAD_RECOMMENDED",
-                               remarks=kwargs["remarks"], partial=recorded.startswith("PARTIALLY_"))
+            notify_leave_review(app, "LEAD_MANAGER", recorded, remarks=kwargs["remarks"], actor=user)
             return review_response(app, recorded)
         except ValidationError as e:
             return Response({"detail": " ".join(e.messages)}, status=status.HTTP_400_BAD_REQUEST)
@@ -343,8 +366,7 @@ class LeaveApplicationHrVerifyView(APIView):
         try:
             kwargs = review_kwargs(request)
             recorded = app.hr_review(approver=user, action=action, **kwargs)
-            notify_leave_event(app, "LEAVE_HR_REJECTED" if recorded == "REJECTED" else "LEAVE_HR_VERIFIED",
-                               remarks=kwargs["remarks"], partial=recorded.startswith("PARTIALLY_"))
+            notify_leave_review(app, "HR_COORDINATOR", recorded, remarks=kwargs["remarks"], actor=user)
             return review_response(app, recorded)
         except ValidationError as e:
             return Response({"detail": " ".join(e.messages)}, status=status.HTTP_400_BAD_REQUEST)
@@ -366,8 +388,7 @@ class LeaveApplicationDirectorApprovalView(APIView):
         try:
             kwargs = review_kwargs(request)
             recorded = app.director_review(approver=user, action=action, **kwargs)
-            notify_leave_event(app, "LEAVE_DIRECTOR_REJECTED" if recorded == "REJECTED" else "LEAVE_DIRECTOR_APPROVED",
-                               remarks=kwargs["remarks"], partial=recorded.startswith("PARTIALLY_"))
+            notify_leave_review(app, "DIRECTOR", recorded, remarks=kwargs["remarks"], actor=user)
             return review_response(app, recorded)
         except ValidationError as e:
             return Response({"detail": " ".join(e.messages)}, status=status.HTTP_400_BAD_REQUEST)

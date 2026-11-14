@@ -1,289 +1,308 @@
 {% extends "base.html" %}
 {% load static %}
 
-{% block title %}Leave Approval Queues — Great Waters{% endblock %}
+{% block title %}Leave Approvals — Great Waters{% endblock %}
 
 {% block content %}
 <div class="page-title-box">
     <div>
-        <h1 class="page-title">Leave Approval Queues</h1>
-        <p class="page-subtitle">Multi-tier review sequence: Lead Recommendation &rarr; HR Verification &rarr; Director Approval & Balance Deduction. Every stage can approve the full request or only part of it.</p>
+        <h1 class="page-title">Leave Approvals</h1>
+        <p class="page-subtitle">Lead recommendation &rarr; HR verification &rarr; Director approval &amp; balance deduction. Approve in full, approve part of the dates, or reject with a reason — one at a time or in bulk.</p>
     </div>
 </div>
 
-{% if user.is_lead_manager or user.is_superuser %}
-<!-- Stage 1: Lead Manager Queue -->
-<div class="gw-card mb-4">
-    <div class="gw-card-header bg-info bg-opacity-10">
-        <div>
-            <h5 class="gw-card-title text-info-emphasis">
-                <i class="bi bi-people-fill me-2"></i>Stage 1: Lead / Manager Recommendations ({{ lead_queue.count }})
-            </h5>
-            <small class="text-muted">Applications from your direct reporting staff awaiting recommendation.</small>
-        </div>
-    </div>
-    <div class="gw-card-body p-0">
-        <div class="table-responsive">
-            <table class="table gw-table m-0">
-                <thead>
-                    <tr>
-                        <th>Application #</th>
-                        <th>Employee</th>
-                        <th>Leave Type</th>
-                        <th>Dates</th>
-                        <th>Days</th>
-                        <th>Reason</th>
-                        <th class="text-end">Action</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for a in lead_queue %}
-                    <tr>
-                        <td>
-                            <a href="{% url 'portal_leave_detail' a.pk %}" class="fw-bold text-decoration-none text-primary">
-                                {{ a.application_number }}
-                            </a>
-                        </td>
-                        <td>
-                            <div class="fw-semibold">{{ a.employee.full_name }}</div>
-                            <small class="text-muted">{{ a.employee.employee_id }}</small>
-                        </td>
-                        <td>{{ a.leave_type.name }}</td>
-                        <td>{{ a.start_date|date:"M d" }} - {{ a.end_date|date:"M d, Y" }}</td>
-                        <td><span class="fw-bold">{{ a.number_of_days|floatformat:1 }} days</span>{% if a.is_reduced %}<div class="small text-warning-emphasis">of {{ a.requested_number_of_days|floatformat:"-1" }} requested</div>{% endif %}{% if a.resubmission_count %}<div><span class="badge bg-info-subtle text-info-emphasis border"><i class="bi bi-arrow-repeat"></i> Resubmitted</span></div>{% endif %}</td>
-                        <td style="max-width: 200px;" class="text-truncate">{{ a.reason }}</td>
-                        <td class="text-end">
-                            <button class="btn btn-sm btn-primary me-1" onclick="openLeaveModal('{{ a.id }}', '{{ a.application_number }}', 'RECOMMENDED', 'Recommend', '{{ a.start_date|date:"Y-m-d" }}', '{{ a.end_date|date:"Y-m-d" }}', {% if a.is_half_day %}true{% else %}false{% endif %}, '{{ a.number_of_days|floatformat:"-1" }}')">
-                                <i class="bi bi-hand-thumbs-up me-1"></i> Recommend
-                            </button>
-                            <button class="btn btn-sm btn-outline-danger" onclick="openLeaveModal('{{ a.id }}', '{{ a.application_number }}', 'REJECTED', 'Return/Reject')">
-                                <i class="bi bi-x-lg me-1"></i> Return
-                            </button>
-                        </td>
-                    </tr>
-                    {% empty %}
-                    <tr>
-                        <td colspan="7" class="text-center text-muted py-4">No team leave requests awaiting your recommendation.</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </div>
-</div>
-{% endif %}
+<!-- Stage tabs + tracker -->
+<nav class="gw-stage-tabs" aria-label="Approval queues">
+    {% for t in tabs %}
+    <a href="?{% if tab_query_string %}{{ tab_query_string }}&{% endif %}view={{ t.key }}" class="gw-stage-tab{% if t.key == view %} is-active{% endif %}" {% if t.key == view %}aria-current="page"{% endif %}>
+        <span class="gw-stage-tab-icon"><i class="bi {% if t.key == 'lead' %}bi-people{% elif t.key == 'hr' %}bi-clipboard-check{% else %}bi-patch-check{% endif %}"></i></span>
+        <span class="gw-stage-tab-body">
+            <span class="gw-stage-tab-label">{{ t.label }}</span>
+            <span class="gw-stage-tab-meta"><strong>{{ t.count }}</strong> waiting · {{ t.days|floatformat:"-1" }} day{{ t.days|pluralize }}</span>
+        </span>
+    </a>
+    {% endfor %}
+    <a href="?{% if tab_query_string %}{{ tab_query_string }}&{% endif %}view=tracker" class="gw-stage-tab{% if view == 'tracker' %} is-active{% endif %}" {% if view == 'tracker' %}aria-current="page"{% endif %}>
+        <span class="gw-stage-tab-icon"><i class="bi bi-diagram-3"></i></span>
+        <span class="gw-stage-tab-body">
+            <span class="gw-stage-tab-label">Approval Tracker</span>
+            <span class="gw-stage-tab-meta"><strong>{{ tracker_count }}</strong> application{{ tracker_count|pluralize }} you can follow</span>
+        </span>
+    </a>
+</nav>
 
-{% if user.is_hr_coordinator or user.is_superuser %}
-<!-- Stage 2: HR Coordinator Queue -->
-<div class="gw-card mb-4">
-    <div class="gw-card-header bg-warning bg-opacity-10">
-        <div>
-            <h5 class="gw-card-title text-warning-emphasis">
-                <i class="bi bi-clipboard-check-fill me-2"></i>Stage 2: HR Coordinator Policy Verification ({{ hr_queue.count }})
-            </h5>
-            <small class="text-muted">Lead-recommended requests awaiting policy compliance check and balance verification.</small>
-        </div>
-    </div>
-    <div class="gw-card-body p-0">
-        <div class="table-responsive">
-            <table class="table gw-table m-0">
-                <thead>
-                    <tr>
-                        <th>Application #</th>
-                        <th>Employee</th>
-                        <th>Branch</th>
-                        <th>Leave Type</th>
-                        <th>Days</th>
-                        <th>Lead Recommendation</th>
-                        <th class="text-end">Verification Action</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for a in hr_queue %}
-                    <tr>
-                        <td>
-                            <a href="{% url 'portal_leave_detail' a.pk %}" class="fw-bold text-decoration-none text-primary">
-                                {{ a.application_number }}
-                            </a>
-                        </td>
-                        <td>
-                            <div class="fw-semibold">{{ a.employee.full_name }}</div>
-                            <small class="text-muted">{{ a.employee.employee_id }}</small>
-                        </td>
-                        <td><span class="badge bg-light text-dark border">{{ a.branch.code }}</span></td>
-                        <td>{{ a.leave_type.name }}</td>
-                        <td><span class="fw-bold">{{ a.number_of_days|floatformat:1 }} days</span>{% if a.is_reduced %}<div class="small text-warning-emphasis">of {{ a.requested_number_of_days|floatformat:"-1" }} requested</div>{% endif %}{% if a.resubmission_count %}<div><span class="badge bg-info-subtle text-info-emphasis border"><i class="bi bi-arrow-repeat"></i> Resubmitted</span></div>{% endif %}</td>
-                        <td>
-                            {% with last_app=a.approval_history.last %}
-                            <small class="fw-semibold text-success">{{ last_app.approver.full_name }}</small>
-                            <div class="text-muted" style="font-size: 0.75rem;">{{ last_app.remarks|truncatechars:30 }}</div>
-                            {% endwith %}
-                        </td>
-                        <td class="text-end">
-                            <button class="btn btn-sm btn-info text-white me-1" onclick="openLeaveModal('{{ a.id }}', '{{ a.application_number }}', 'VERIFIED', 'Verify', '{{ a.start_date|date:"Y-m-d" }}', '{{ a.end_date|date:"Y-m-d" }}', {% if a.is_half_day %}true{% else %}false{% endif %}, '{{ a.number_of_days|floatformat:"-1" }}')">
-                                <i class="bi bi-check2-all me-1"></i> Verify & Forward
-                            </button>
-                            <button class="btn btn-sm btn-outline-danger" onclick="openLeaveModal('{{ a.id }}', '{{ a.application_number }}', 'REJECTED', 'Reject')">
-                                <i class="bi bi-x-lg me-1"></i> Reject
-                            </button>
-                        </td>
-                    </tr>
-                    {% empty %}
-                    <tr>
-                        <td colspan="7" class="text-center text-muted py-4">No leave applications currently awaiting HR verification.</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </div>
-</div>
-{% endif %}
-
-{% if user.is_director or user.is_superuser %}
-<!-- Stage 3: Director Final Approval Queue -->
-<div class="gw-card">
-    <div class="gw-card-header bg-success bg-opacity-10">
-        <div>
-            <h5 class="gw-card-title text-success">
-                <i class="bi bi-patch-check-fill me-2"></i>Stage 3: Director Final Approval & Balance Deduction ({{ director_queue.count }})
-            </h5>
-            <small class="text-muted">HR-verified applications awaiting executive authorization. Balance will be officially deducted upon approval.</small>
-        </div>
-    </div>
-    <div class="gw-card-body p-0">
-        <div class="table-responsive">
-            <table class="table gw-table m-0">
-                <thead>
-                    <tr>
-                        <th>Application #</th>
-                        <th>Employee</th>
-                        <th>Branch</th>
-                        <th>Type</th>
-                        <th>Duration</th>
-                        <th>Dates</th>
-                        <th>HR Verifier</th>
-                        <th class="text-end">Final Decision</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for a in director_queue %}
-                    <tr>
-                        <td>
-                            <a href="{% url 'portal_leave_detail' a.pk %}" class="fw-bold text-decoration-none text-primary">
-                                {{ a.application_number }}
-                            </a>
-                        </td>
-                        <td>
-                            <div class="fw-semibold">{{ a.employee.full_name }}</div>
-                            <small class="text-muted">{{ a.employee.employee_id }}</small>
-                        </td>
-                        <td><span class="badge bg-light text-dark border">{{ a.branch.code }}</span></td>
-                        <td>{{ a.leave_type.name }}</td>
-                        <td><span class="fs-6 fw-extrabold text-primary">{{ a.number_of_days|floatformat:1 }} days</span>{% if a.is_reduced %}<div class="small text-warning-emphasis">of {{ a.requested_number_of_days|floatformat:"-1" }} requested</div>{% endif %}{% if a.resubmission_count %}<div><span class="badge bg-info-subtle text-info-emphasis border"><i class="bi bi-arrow-repeat"></i> Resubmitted</span></div>{% endif %}</td>
-                        <td>{{ a.start_date|date:"M d" }} - {{ a.end_date|date:"M d, Y" }}</td>
-                        <td>
-                            {% with last_app=a.approval_history.last %}
-                            <small class="fw-semibold">{{ last_app.approver.full_name }}</small>
-                            {% endwith %}
-                        </td>
-                        <td class="text-end">
-                            <button class="btn btn-sm btn-success me-1" onclick="openLeaveModal('{{ a.id }}', '{{ a.application_number }}', 'APPROVED', 'Approve (Deduct Balance)', '{{ a.start_date|date:"Y-m-d" }}', '{{ a.end_date|date:"Y-m-d" }}', {% if a.is_half_day %}true{% else %}false{% endif %}, '{{ a.number_of_days|floatformat:"-1" }}')">
-                                <i class="bi bi-check-lg me-1"></i> Final Approve
-                            </button>
-                            <button class="btn btn-sm btn-outline-danger" onclick="openLeaveModal('{{ a.id }}', '{{ a.application_number }}', 'REJECTED', 'Reject')">
-                                <i class="bi bi-x-lg me-1"></i> Reject
-                            </button>
-                        </td>
-                    </tr>
-                    {% empty %}
-                    <tr>
-                        <td colspan="8" class="text-center text-muted py-4">No leave applications currently awaiting Director final approval.</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </div>
-</div>
-{% endif %}
-
-<!-- Approval Tracker -->
-<div class="gw-card mt-4" id="tracker">
+<div class="gw-card gw-dt">
     <div class="gw-card-header">
         <div>
-            <h5 class="gw-card-title"><i class="bi bi-diagram-3 me-2"></i>Approval Tracker</h5>
-            <small class="text-muted">
-                Follow every leave you are allowed to see{% if user.is_global_scope %} across all regions{% elif user.is_lead_manager %} for your team and leave you have acted on{% else %} in your branches{% endif %}, including after you have acted on it.
-            </small>
+            <h5 class="gw-card-title">
+                {% if is_queue %}
+                <i class="bi {% if view == 'lead' %}bi-people{% elif view == 'hr' %}bi-clipboard-check{% else %}bi-patch-check{% endif %} text-primary me-2"></i>
+                {% if view == 'lead' %}Awaiting your recommendation{% elif view == 'hr' %}Awaiting HR verification{% else %}Awaiting Director final approval{% endif %}
+                {% else %}
+                <i class="bi bi-diagram-3 text-primary me-2"></i>Approval Tracker
+                {% endif %}
+            </h5>
+            <div class="gw-dt-sub mt-1">
+                {% if view == 'lead' %}Leave requests from your direct reports.
+                {% elif view == 'hr' %}Check policy compliance and balances, then forward to the Director.
+                {% elif view == 'director' %}Approving deducts the approved days from the employee's balance.
+                {% else %}Follow every leave you are allowed to see{% if user.is_global_scope %} across all regions{% elif user.is_lead_manager %} for your team and leave you have acted on{% else %} in your branches{% endif %}, including after you have acted on it.{% endif %}
+            </div>
+        </div>
+        <div class="gw-queue-summary">
+            <span><strong>{{ paginator.count }}</strong> application{{ paginator.count|pluralize }}</span>
+            {% if is_queue %}
+            <span><strong>{{ filtered_days|floatformat:"-1" }}</strong> day{{ filtered_days|pluralize }}</span>
+            {% if urgent_count %}<span class="is-overdue"><i class="bi bi-alarm"></i><strong>{{ urgent_count }}</strong> start{{ urgent_count|pluralize:"s," }} within 3 days</span>{% endif %}
+            {% endif %}
         </div>
     </div>
-    <div class="gw-card-body pb-0">
-        <div class="d-flex flex-wrap gap-2 mb-3">
-            {% for key, label, count in track_filters %}
-            <a href="?track={{ key }}#tracker" class="btn btn-sm {% if track == key %}btn-primary{% else %}btn-light border{% endif %}">
-                {{ label }} <span class="badge {% if track == key %}bg-white text-primary{% else %}bg-secondary-subtle text-dark{% endif %} ms-1">{{ count }}</span>
-            </a>
+
+    {% if not is_queue %}
+    <div class="gw-dt-chips">
+        {% for key, label, count in track_filters %}
+        <a href="?view=tracker&track={{ key }}{% if q %}&q={{ q|urlencode }}{% endif %}{% if leave_type_filter %}&leave_type={{ leave_type_filter }}{% endif %}{% if starts_filter %}&starts={{ starts_filter }}{% endif %}&page_size={{ page_size }}" class="gw-dt-chip{% if track == key %} is-active{% endif %}">
+            {{ label }} <span>{{ count }}</span>
+        </a>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <form method="get" class="gw-dt-toolbar" id="leaveApprovalsDtForm">
+        <input type="hidden" name="view" value="{{ view }}">
+        {% if not is_queue %}<input type="hidden" name="track" value="{{ track }}">{% endif %}
+        <input type="hidden" name="sort" value="{{ sort }}">
+        <input type="hidden" name="dir" value="{{ dir }}">
+        <div class="gw-dt-search">
+            <i class="bi bi-search"></i>
+            <input type="search" name="q" value="{{ q }}" class="form-control form-control-sm" placeholder="Search employee, ID, application #, reason..." autocomplete="off" data-dt-search>
+        </div>
+        <select name="leave_type" class="form-select form-select-sm gw-dt-filter" data-dt-autosubmit aria-label="Leave type">
+            <option value="">All leave types</option>
+            {% for lt in leave_types %}
+            <option value="{{ lt.id }}" {% if leave_type_filter == lt.id|stringformat:"s" %}selected{% endif %}>{{ lt.name }}</option>
             {% endfor %}
+        </select>
+        <select name="starts" class="form-select form-select-sm gw-dt-filter" data-dt-autosubmit aria-label="Leave starts">
+            <option value="">Starts: any time</option>
+            <option value="started" {% if starts_filter == "started" %}selected{% endif %}>Already started / past</option>
+            <option value="week" {% if starts_filter == "week" %}selected{% endif %}>Next 7 days</option>
+            <option value="month" {% if starts_filter == "month" %}selected{% endif %}>Next 30 days</option>
+            <option value="later" {% if starts_filter == "later" %}selected{% endif %}>Later than 30 days</option>
+        </select>
+        {% if is_filtered %}
+        <a href="?view={{ view }}{% if not is_queue %}&track={{ track }}{% endif %}&page_size={{ page_size }}" class="btn btn-sm btn-light gw-dt-reset"><i class="bi bi-x-lg me-1"></i>Clear</a>
+        {% endif %}
+        <div class="gw-dt-pagesize ms-auto">
+            <span>Show</span>
+            <select name="page_size" class="form-select form-select-sm" data-dt-autosubmit aria-label="Rows per page">
+                {% for n in page_size_options %}
+                <option value="{{ n }}" {% if n == page_size %}selected{% endif %}>{{ n }}</option>
+                {% endfor %}
+            </select>
+            <span>rows</span>
         </div>
-    </div>
+    </form>
+
+    {% if is_queue %}
+    <!-- Bulk decision bar -->
+    <form method="post" id="bulkForm" class="gw-dt-bulkbar" action="{% url 'portal_leave_approvals' %}">
+        {% csrf_token %}
+        <input type="hidden" name="bulk" value="1">
+        <input type="hidden" name="decision" id="bulkDecision">
+        <input type="hidden" name="remarks" id="bulkRemarksInput">
+        <input type="hidden" name="next" value="{{ request.get_full_path }}">
+        <span class="gw-dt-bulkbar-count"><i class="bi bi-check2-square"></i><span id="bulkCount">0</span> selected · <span id="bulkTotal">0</span> days</span>
+        <button type="button" class="btn is-success" data-bulk-review="POSITIVE"><i class="bi bi-check2-all"></i> {{ current_tab.positive_label }}</button>
+        <button type="button" class="btn is-danger" data-bulk-review="REJECTED"><i class="bi bi-x-circle"></i> Reject</button>
+        <button type="button" class="btn gw-dt-bulkbar-clear ms-auto" id="bulkClear"><i class="bi bi-x-lg"></i> Clear selection</button>
+    </form>
+    {% endif %}
+
     <div class="gw-card-body p-0">
         <div class="table-responsive">
-            <table class="table gw-table m-0 align-middle">
+            <table class="table gw-table gw-dt-table gw-dt-clickable m-0">
                 <thead>
                     <tr>
-                        <th>Application #</th>
-                        <th>Employee</th>
-                        <th>Branch</th>
-                        <th>Dates</th>
-                        <th>Days</th>
-                        <th>Current stage</th>
+                        {% if is_queue %}
+                        <th class="gw-dt-check"><input type="checkbox" class="form-check-input" id="selectAll" aria-label="Select all applications on this page" {% if not rows %}disabled{% endif %}></th>
+                        {% endif %}
+                        {% include "portal/_dt_sort_th.html" with col="number" label="Application #" %}
+                        {% include "portal/_dt_sort_th.html" with col="employee" label="Employee" %}
+                        {% if is_queue %}{% include "portal/_dt_sort_th.html" with col="type" label="Leave Type" %}{% endif %}
+                        {% include "portal/_dt_sort_th.html" with col="dates" label="Dates" %}
+                        {% include "portal/_dt_sort_th.html" with col="days" label="Days" %}
+                        {% if is_queue %}
+                        <th>Reason</th>
+                        {% if view != 'lead' %}<th>{% if view == 'hr' %}Lead recommendation{% else %}HR verification{% endif %}</th>{% endif %}
+                        {% include "portal/_dt_sort_th.html" with col="submitted" label="Waiting" %}
+                        <th class="text-end">Decision</th>
+                        {% else %}
+                        {% include "portal/_dt_sort_th.html" with col="status" label="Current stage" %}
                         <th>Last step</th>
                         <th>Your action</th>
+                        {% endif %}
                     </tr>
                 </thead>
                 <tbody>
-                    {% for a in tracked %}
-                    <tr>
-                        <td><a href="{% url 'portal_leave_detail' a.pk %}" class="fw-bold text-decoration-none text-primary">{{ a.application_number }}</a></td>
-                        <td>
-                            <div class="fw-semibold">{{ a.employee.full_name }}</div>
-                            <small class="text-muted">{{ a.employee.employee_id }} &middot; {{ a.employee.get_role_display }}</small>
+                    {% for a in rows %}
+                    <tr data-href="{% url 'portal_leave_detail' a.pk %}" tabindex="0">
+                        {% if is_queue %}
+                        <td class="gw-dt-check">
+                            <input type="checkbox" class="form-check-input" name="selected" value="{{ a.pk }}" form="bulkForm"
+                                   data-row-check data-days="{{ a.number_of_days|stringformat:'s' }}"
+                                   data-label="{{ a.application_number }} · {{ a.employee.full_name }} · {{ a.number_of_days|floatformat:'-1' }}d {{ a.leave_type.name }}"
+                                   aria-label="Select {{ a.application_number }}">
                         </td>
-                        <td><span class="badge bg-light text-dark border">{{ a.branch.code }}</span></td>
-                        <td class="small text-nowrap">{{ a.start_date|date:"M d" }} &ndash; {{ a.end_date|date:"M d, Y" }}</td>
-                        <td class="small">
-                            {{ a.number_of_days|floatformat:"-1" }}{% if a.is_reduced %} <span class="text-muted">of {{ a.requested_number_of_days|floatformat:"-1" }}</span>{% endif %}
+                        {% endif %}
+                        <td>
+                            <a href="{% url 'portal_leave_detail' a.pk %}" class="fw-bold text-decoration-none text-primary text-nowrap">{{ a.application_number }}</a>
+                            <div class="gw-dt-sub">{% if a.resubmission_count %}<i class="bi bi-arrow-repeat"></i> Resubmitted{% else %}{{ a.branch.code }}{% endif %}</div>
                         </td>
                         <td>
-                            <span class="status-badge {% if 'REJECTED' in a.status %}badge-rejected{% elif a.status == 'APPROVED' %}badge-approved{% else %}badge-pending{% endif %}">{{ a.current_stage }}</span>
-                            {% if a.starts_at_stage != 'LEAD_MANAGER' %}<div class="small text-muted mt-1"><i class="bi bi-skip-forward"></i> Direct to {% if a.starts_at_stage == 'DIRECTOR' %}Director{% else %}HR{% endif %}</div>{% endif %}
+                            <div class="gw-dt-employee">
+                                <span class="gw-dt-avatar">{{ a.employee.first_name|default:a.employee.employee_id|first|upper }}{{ a.employee.last_name|first|upper }}</span>
+                                <div>
+                                    <div class="gw-dt-employee-name">{{ a.employee.full_name }}</div>
+                                    <div class="gw-dt-employee-id">{{ a.employee.employee_id }}</div>
+                                </div>
+                            </div>
+                        </td>
+                        {% if is_queue %}
+                        <td>
+                            <span class="gw-dt-dept">{{ a.leave_type.name }}</span>
+                            {% if a.attachment %}<a href="{{ a.attachment.url }}" target="_blank" rel="noopener" class="ms-1 text-primary" title="Attachment"><i class="bi bi-paperclip"></i></a>{% endif %}
+                        </td>
+                        {% endif %}
+                        <td class="text-nowrap">
+                            <div class="fw-semibold">{{ a.start_date|date:"M d" }}{% if a.end_date != a.start_date %} – {{ a.end_date|date:"M d, Y" }}{% else %}, {{ a.start_date|date:"Y" }}{% endif %}</div>
+                            {% if not is_queue %}<div class="gw-dt-sub">{{ a.leave_type.name }}{% if a.is_half_day %} · Half-day{% endif %}</div>
+                            {% elif a.is_half_day %}<span class="gw-dt-sub">Half-day · {{ a.get_half_day_period_display }}</span>
+                            {% elif is_queue %}
+                            <span class="gw-wait {% if a.starts_in <= 3 %}is-overdue{% elif a.starts_in <= 7 %}is-aging{% else %}is-neutral{% endif %}">
+                                {% if a.starts_in < 0 %}Started {{ a.started_days_ago }}d ago{% elif a.starts_in == 0 %}Starts today{% elif a.starts_in == 1 %}Starts tomorrow{% else %}In {{ a.starts_in }} days{% endif %}
+                            </span>
+                            {% endif %}
+                        </td>
+                        <td class="text-nowrap">
+                            <span class="fw-bold">{{ a.number_of_days|floatformat:"-1" }}</span>
+                            {% if a.is_reduced %}<div class="gw-dt-sub text-warning-emphasis">of {{ a.requested_number_of_days|floatformat:"-1" }}</div>{% endif %}
+                        </td>
+                        {% if is_queue %}
+                        <td><div class="gw-dt-sub gw-dt-ellipsis" title="{{ a.reason }}">{{ a.reason|default:"—" }}</div></td>
+                        {% if view != 'lead' %}
+                        <td>
+                            {% if a.prev_step %}
+                            <div class="fw-semibold small">{{ a.prev_step.approver.full_name }}</div>
+                            <div class="gw-dt-sub" title="{{ a.prev_step.remarks }}">{{ a.prev_step.action_label }}</div>
+                            {% else %}
+                            <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle"><i class="bi bi-skip-forward"></i> Direct</span>
+                            {% endif %}
+                        </td>
+                        {% endif %}
+                        <td class="text-nowrap">
+                            <span class="gw-wait {% if a.waiting_days > 7 %}is-overdue{% elif a.waiting_days >= 3 %}is-aging{% endif %}" title="Submitted {{ a.submitted_at|date:'M d, Y H:i' }}">
+                                {% if a.waiting_days == 0 %}Today{% elif a.waiting_days == 1 %}1 day{% else %}{{ a.waiting_days }} days{% endif %}
+                            </span>
+                        </td>
+                        <td class="text-end text-nowrap">
+                            <div class="gw-dt-actions">
+                                <button type="button" class="btn btn-sm btn-success gw-review-btn" title="{{ current_tab.positive_label }}"
+                                        data-leave-review data-action="{% if view == 'lead' %}RECOMMENDED{% elif view == 'hr' %}VERIFIED{% else %}APPROVED{% endif %}"
+                                        data-label="{{ current_tab.positive_label }}" data-id="{{ a.id }}" data-number="{{ a.application_number }}"
+                                        data-start="{{ a.start_date|date:'Y-m-d' }}" data-end="{{ a.end_date|date:'Y-m-d' }}"
+                                        data-half="{{ a.is_half_day|yesno:'1,0' }}" data-days="{{ a.number_of_days|floatformat:'-1' }}"
+                                        data-type="{{ a.leave_type_id }}">
+                                    <i class="bi bi-check-lg"></i>
+                                </button>
+                                {% if a.return_targets_attr %}
+                                <button type="button" class="btn btn-sm btn-outline-warning text-dark gw-review-btn" title="Return to an earlier stage"
+                                        data-leave-review data-action="RETURNED" data-label="Return" data-id="{{ a.id }}" data-number="{{ a.application_number }}"
+                                        data-targets="{{ a.return_targets_attr }}">
+                                    <i class="bi bi-arrow-return-left"></i>
+                                </button>
+                                {% endif %}
+                                <button type="button" class="btn btn-sm btn-outline-danger gw-review-btn" title="Reject"
+                                        data-leave-review data-action="REJECTED" data-label="Reject" data-id="{{ a.id }}" data-number="{{ a.application_number }}">
+                                    <i class="bi bi-x-lg"></i>
+                                </button>
+                            </div>
+                        </td>
+                        {% else %}
+                        <td>
+                            <span class="status-badge text-nowrap {% if 'REJECTED' in a.status %}badge-rejected{% elif a.status == 'APPROVED' %}badge-approved{% elif a.status == 'WITHDRAWN' %}badge-draft{% else %}badge-pending{% endif %}">{{ a.current_stage }}</span>
+                            {% if a.starts_at_stage != 'LEAD_MANAGER' %}<div class="gw-dt-sub mt-1"><i class="bi bi-skip-forward"></i> Direct to {% if a.starts_at_stage == 'DIRECTOR' %}Director{% else %}HR{% endif %}</div>{% endif %}
                         </td>
                         <td class="small">
                             {% if a.last_step %}
-                            <div class="fw-semibold">{{ a.last_step.action_label }}</div>
-                            <div class="text-muted">{{ a.last_step.approver.full_name }} &middot; {{ a.last_step.created_at|date:"M d, H:i" }}</div>
-                            {% else %}<span class="text-muted">Submitted {{ a.submitted_at|date:"M d" }}</span>{% endif %}
+                            <div class="fw-semibold text-nowrap">{{ a.last_step.action_label }}</div>
+                            <div class="gw-dt-sub text-nowrap" title="{{ a.last_step.created_at|date:'M d, Y H:i' }}">{{ a.last_step.approver.full_name|truncatechars:18 }} · {{ a.last_step.created_at|date:"M d" }}</div>
+                            {% else %}<span class="gw-dt-muted text-nowrap">Submitted {{ a.submitted_at|date:"M d" }}</span>{% endif %}
                         </td>
                         <td class="small">
-                            {% if a.my_step %}<span class="badge {% if a.my_step.action == 'REJECTED' %}bg-danger{% elif 'PARTIALLY' in a.my_step.action %}bg-warning text-dark{% else %}bg-success{% endif %}">{{ a.my_step.action_label }}</span>
-                            <div class="text-muted">{{ a.my_step.created_at|date:"M d, H:i" }}</div>
-                            {% else %}<span class="text-muted">&mdash;</span>{% endif %}
+                            {% if a.my_step %}<span class="badge {% if a.my_step.action == 'REJECTED' %}bg-danger{% elif 'PARTIALLY' in a.my_step.action %}bg-warning text-dark{% else %}bg-success{% endif %}" title="{{ a.my_step.created_at|date:'M d, Y H:i' }}">{{ a.my_step.action_label }}</span>
+                            {% else %}<span class="gw-dt-muted">—</span>{% endif %}
                         </td>
+                        {% endif %}
                     </tr>
                     {% empty %}
-                    <tr><td colspan="8" class="text-center text-muted py-4">No leave applications match this filter.</td></tr>
+                    <tr>
+                        <td colspan="{% if is_queue %}{% if view == 'lead' %}9{% else %}10{% endif %}{% else %}7{% endif %}">
+                            <div class="empty-state">
+                                {% if is_filtered %}
+                                <i class="bi bi-funnel empty-state-icon"></i>
+                                <div class="empty-state-title">Nothing matches these filters</div>
+                                <p class="empty-state-desc">Try a different search or clear the filters.</p>
+                                <a href="?view={{ view }}{% if not is_queue %}&track={{ track }}{% endif %}" class="btn btn-light">Clear filters</a>
+                                {% elif is_queue %}
+                                <i class="bi bi-check2-circle empty-state-icon text-success"></i>
+                                <div class="empty-state-title">All caught up</div>
+                                <p class="empty-state-desc">No leave applications are waiting for your {% if view == 'lead' %}recommendation{% elif view == 'hr' %}verification{% else %}approval{% endif %}.</p>
+                                {% else %}
+                                <i class="bi bi-diagram-3 empty-state-icon"></i>
+                                <div class="empty-state-title">No leave applications match this filter</div>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
                     {% endfor %}
                 </tbody>
             </table>
         </div>
     </div>
+
+    {% include "portal/_dt_pagination.html" %}
 </div>
+
+{% if is_queue %}
+<!-- Bulk decision modal -->
+<div class="modal fade gw-confirm" id="bulkReviewModal" tabindex="-1" aria-labelledby="bulkReviewTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-body">
+                <div class="gw-confirm-icon" id="bulkReviewIcon"><i class="bi bi-check2-all"></i></div>
+                <h5 class="gw-confirm-title" id="bulkReviewTitle"></h5>
+                <p class="gw-confirm-message" id="bulkReviewMessage"></p>
+                <ul class="gw-confirm-list" id="bulkReviewList"></ul>
+                <div class="text-start">
+                    <label class="form-label small fw-bold" for="bulkRemarks" id="bulkRemarksLabel">Remarks</label>
+                    <textarea id="bulkRemarks" class="form-control" rows="3" placeholder="Visible to each employee"></textarea>
+                    <div class="invalid-feedback">Enter the reason for rejection. Employees will see it.</div>
+                </div>
+            </div>
+            <div class="gw-confirm-actions">
+                <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-gw-primary" id="bulkReviewSubmit">Confirm</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
 
 <!-- Leave Decision Modal -->
 <div class="modal fade" id="leaveDecisionModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
-        <div class="modal-content border-0 shadow">
+        <div class="modal-content border-0 shadow" style="border-radius: 16px; overflow: hidden;">
             <div class="modal-header bg-light">
                 <h5 class="modal-title fw-bold" id="leaveModalTitle">Leave Review Decision</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
@@ -292,6 +311,7 @@
                 {% csrf_token %}
                 <input type="hidden" name="app_id" id="modalAppId">
                 <input type="hidden" name="action" id="modalLeaveAction">
+                <input type="hidden" name="next" value="{{ request.get_full_path }}">
                 <div class="modal-body p-4">
                     <p class="small text-secondary mb-3" id="leavePrompt"></p>
                     <div id="partialBlock" class="mb-3 d-none">
@@ -314,6 +334,36 @@
                             <div class="small mt-2 fw-semibold" id="partialDays"></div>
                         </div>
                     </div>
+                    <div id="returnBlock" class="mb-3 d-none">
+                        <label class="form-label small fw-bold" for="returnToSelect">Return to</label>
+                        <select name="return_to" id="returnToSelect" class="form-select form-select-sm"></select>
+                        <div class="small text-muted mt-1">The leave goes back to that approver for another review. The employee does not need to resubmit.</div>
+                    </div>
+                    <div id="amendBlock" class="mb-3 d-none">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" name="amend" value="1" id="amendToggle">
+                            <label class="form-check-label small fw-bold" for="amendToggle">Change leave type or dates</label>
+                        </div>
+                        <div id="amendFields" class="border rounded-3 p-3 mt-2 d-none" style="background: var(--gw-primary-light);">
+                            <div class="row g-2">
+                                <div class="col-12">
+                                    <label class="form-label small fw-bold mb-1" for="amendType">Leave type</label>
+                                    <select name="amend_leave_type" id="amendType" class="form-select form-select-sm">
+                                        {% for lt in leave_types %}<option value="{{ lt.id }}">{{ lt.name }}</option>{% endfor %}
+                                    </select>
+                                </div>
+                                <div class="col-6">
+                                    <label class="form-label small fw-bold mb-1" for="amendStart">From</label>
+                                    <input type="date" name="amend_start_date" id="amendStart" class="form-control form-control-sm">
+                                </div>
+                                <div class="col-6">
+                                    <label class="form-label small fw-bold mb-1" for="amendEnd">To</label>
+                                    <input type="date" name="amend_end_date" id="amendEnd" class="form-control form-control-sm">
+                                </div>
+                            </div>
+                            <div class="small text-muted mt-2">Days are recalculated. The original request stays on record and the employee is notified.</div>
+                        </div>
+                    </div>
                     <div class="mb-3">
                         <label class="form-label small fw-bold" id="leaveRemarksLabel">Review Remarks</label>
                         <textarea name="remarks" id="modalLeaveRemarks" class="form-control" rows="3" placeholder="Enter review remarks..."></textarea>
@@ -330,7 +380,9 @@
 {% endblock %}
 
 {% block extra_scripts %}
+<script src="{% static 'js/gw-datatable.js' %}?v=20261114d"></script>
 <script>
+
     let currentLeaveId = null;
     let currentDays = null;
 
@@ -376,7 +428,19 @@
         }
     }
 
-    function openLeaveModal(appId, appNumber, action, label, startDate, endDate, isHalfDay, days) {
+    function syncAmend() {
+        const on = document.getElementById('amendToggle').checked;
+        document.getElementById('amendFields').classList.toggle('d-none', !on);
+        if (on) {
+            document.getElementById('partialToggle').checked = false;
+            document.getElementById('partialFields').classList.add('d-none');
+            setRemarksRequired(true, 'Reason for the change <span class="text-danger">*</span>');
+        } else {
+            syncPartial();
+        }
+    }
+
+    function openLeaveModal(appId, appNumber, action, label, startDate, endDate, isHalfDay, days, leaveTypeId, targets) {
         currentLeaveId = appId;
         currentDays = days;
         document.getElementById('modalAppId').value = appId;
@@ -391,7 +455,7 @@
         const pe = document.getElementById('partialEnd');
 
         title.textContent = `${label} for Application ${appNumber}`;
-        prompt.textContent = `Are you sure you want to execute action "${label}" on ${appNumber}?`;
+        prompt.textContent = action === 'REJECTED' ? `The employee will see your reason and can correct and resubmit ${appNumber}.` : `${label} ${appNumber} (${days || ''} day(s)). You can approve only part of the dates below.`;
         partialToggle.checked = false;
 
         const canPartial = action !== 'REJECTED' && startDate && endDate && !isHalfDay && startDate !== endDate;
@@ -405,7 +469,38 @@
                 `Requested ${startDate} to ${endDate} (${days} day(s)). Choose the dates you approve; only those days are deducted.`;
         }
 
-        if (action === 'REJECTED') {
+        // Return-to-stage
+        const returnBlock = document.getElementById('returnBlock');
+        const returnSel = document.getElementById('returnToSelect');
+        returnSel.innerHTML = '';
+        (targets || '').split(',').filter(Boolean).forEach(function (pair) {
+            const [value, text] = pair.split(':');
+            const opt = document.createElement('option'); opt.value = value; opt.textContent = text; returnSel.appendChild(opt);
+        });
+        returnBlock.classList.toggle('d-none', action !== 'RETURNED');
+        returnSel.disabled = action !== 'RETURNED';
+
+        // Amend type / dates (positive decisions only)
+        const amendBlock = document.getElementById('amendBlock');
+        const amendToggle = document.getElementById('amendToggle');
+        const positive = action !== 'REJECTED' && action !== 'RETURNED';
+        amendToggle.checked = false;
+        document.getElementById('amendFields').classList.add('d-none');
+        amendBlock.classList.toggle('d-none', !positive || !startDate);
+        if (positive && startDate) {
+            document.getElementById('amendType').value = leaveTypeId || '';
+            document.getElementById('amendStart').value = startDate;
+            document.getElementById('amendEnd').value = endDate;
+            document.getElementById('amendEnd').min = startDate;
+        }
+
+        if (action === 'RETURNED') {
+            title.textContent = `Return ${appNumber} to an earlier stage`;
+            prompt.textContent = 'Choose who should review it again and explain why.';
+            submitBtn.className = 'btn btn-warning px-4';
+            submitBtn.textContent = 'Return';
+            setRemarksRequired(true, 'Reason for returning <span class="text-danger">*</span>');
+        } else if (action === 'REJECTED') {
             submitBtn.className = 'btn btn-danger px-4';
             submitBtn.textContent = 'Confirm Rejection';
             setRemarksRequired(true, 'Rejection Reason / Remarks <span class="text-danger">*</span>');
@@ -414,12 +509,21 @@
             submitBtn.textContent = 'Confirm ' + label;
             setRemarksRequired(false, 'Review Remarks <span class="text-muted">(Optional)</span>');
         }
-        syncPartial();
+        if (positive) syncPartial();
 
-        new bootstrap.Modal(document.getElementById('leaveDecisionModal')).show();
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('leaveDecisionModal')).show();
     }
 
-    document.getElementById('partialToggle').addEventListener('change', syncPartial);
+    document.getElementById('partialToggle').addEventListener('change', function () {
+        if (this.checked) { document.getElementById('amendToggle').checked = false; document.getElementById('amendFields').classList.add('d-none'); }
+        syncPartial();
+    });
+    document.getElementById('amendToggle').addEventListener('change', syncAmend);
+    document.getElementById('amendStart').addEventListener('change', function () {
+        const e = document.getElementById('amendEnd');
+        if (e.value < this.value) e.value = this.value;
+        e.min = this.value;
+    });
     ['partialStart', 'partialEnd'].forEach(function (id) {
         document.getElementById(id).addEventListener('change', function () {
             const ps = document.getElementById('partialStart');
@@ -429,5 +533,77 @@
             refreshPartialDays();
         });
     });
+
+    // Decision buttons -> single review modal
+    document.addEventListener('click', function (e) {
+        const btn = e.target.closest('[data-leave-review]');
+        if (!btn) return;
+        const d = btn.dataset;
+        openLeaveModal(d.id, d.number, d.action, d.label, d.start, d.end, d.half === '1', d.days, d.type, d.targets);
+    });
+
+    (function () {
+        const bulk = GwDatatable.init({ toolbar: '#leaveApprovalsDtForm', bulkForm: '#bulkForm' });
+        if (!bulk || !document.getElementById('bulkReviewModal')) return;
+        const positiveLabel = '{{ current_tab.positive_label|default:"Approve"|escapejs }}';
+        const isDirector = '{{ view }}' === 'director';
+        const $ = id => document.getElementById(id);
+        const fmt = n => (Math.round(n * 10) / 10).toString();
+        const sumDays = boxes => boxes.reduce((t, b) => t + parseFloat(b.dataset.days || 0), 0);
+
+        function updateTotal() { $('bulkTotal').textContent = fmt(sumDays(bulk.selected())); }
+        bulk.onChange(updateTotal);
+        updateTotal();
+
+        const modalEl = $('bulkReviewModal');
+        const remarks = $('bulkRemarks');
+        let decision = 'POSITIVE';
+
+        document.querySelectorAll('[data-bulk-review]').forEach(btn => btn.addEventListener('click', () => {
+            const sel = bulk.selected();
+            if (!sel.length) return;
+            decision = btn.dataset.bulkReview;
+            const reject = decision === 'REJECTED';
+            const n = sel.length;
+            const noun = n + ' application' + (n > 1 ? 's' : '');
+
+            modalEl.dataset.variant = reject ? 'danger' : 'success';
+            $('bulkReviewIcon').innerHTML = '<i class="bi ' + (reject ? 'bi-x-circle' : 'bi-check2-all') + '"></i>';
+            $('bulkReviewTitle').textContent = (reject ? 'Reject ' : positiveLabel + ' ') + noun + '?';
+            $('bulkReviewMessage').textContent = reject
+                ? 'The selected applications will be returned to the employees, who can correct and resubmit them.'
+                : 'Each application is ' + (isDirector ? 'approved' : 'forwarded') + ' for its full dates (' + fmt(sumDays(sel)) + ' days in total).'
+                  + (isDirector ? ' The approved days are deducted from each employee\'s balance.' : ' Use the single review to approve only part of a request.');
+
+            const list = $('bulkReviewList');
+            list.innerHTML = '';
+            sel.slice(0, 6).forEach(b => { const li = document.createElement('li'); li.textContent = b.dataset.label; list.appendChild(li); });
+            if (n > 6) { const li = document.createElement('li'); li.className = 'is-more'; li.textContent = '+ ' + (n - 6) + ' more'; list.appendChild(li); }
+
+            $('bulkRemarksLabel').innerHTML = reject ? 'Reason for rejection <span class="text-danger">*</span>' : 'Remarks <span class="text-muted">(optional)</span>';
+            remarks.value = '';
+            remarks.classList.remove('is-invalid');
+            const submit = $('bulkReviewSubmit');
+            submit.disabled = false;
+            submit.className = 'btn ' + (reject ? 'btn-gw-danger' : 'btn-gw-success');
+            submit.textContent = (reject ? 'Reject ' : positiveLabel + ' ') + n;
+            bootstrap.Modal.getOrCreateInstance(modalEl).show();
+        }));
+
+        modalEl.addEventListener('shown.bs.modal', () => remarks.focus());
+        $('bulkReviewSubmit').addEventListener('click', () => {
+            if (decision === 'REJECTED' && !remarks.value.trim()) {
+                remarks.classList.add('is-invalid');
+                remarks.focus();
+                return;
+            }
+            $('bulkDecision').value = decision;
+            $('bulkRemarksInput').value = remarks.value.trim();
+            const btn = $('bulkReviewSubmit');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Processing…';
+            $('bulkForm').submit();
+        });
+    })();
 </script>
 {% endblock %}

@@ -1,297 +1,229 @@
 {% extends "base.html" %}
 {% load static %}
 
-{% block title %}Employees & Candidates — Great Waters{% endblock %}
+{% block title %}Employees — Great Waters{% endblock %}
 
 {% block content %}
-<!-- Top Header & Panel Controls (Reference Design Style) -->
-<div class="panel-header-row anim-header">
-    <div class="panel-title-wrapper">
-        <h1 class="panel-title">Employees</h1>
-        <span class="panel-count-badge">{{ total_count }}</span>
+<div class="page-title-box">
+    <div>
+        <h1 class="page-title">Employees</h1>
+        <p class="page-subtitle">Manage the staff roster, roles, reporting lines and access across your authorised locations.</p>
     </div>
-
-    <div class="panel-controls-wrapper">
-        <!-- Live Search Bar -->
-        <form method="get" class="panel-search-box m-0">
-            <i class="bi bi-search panel-search-icon"></i>
-            <input type="text"
-                   name="q"
-                   value="{{ search_q }}"
-                   class="panel-search-input"
-                   placeholder="Search..."
-                   autocomplete="off">
-            {% if branch_filter %}<input type="hidden" name="branch" value="{{ branch_filter }}">{% endif %}
-            {% if dept_filter %}<input type="hidden" name="dept" value="{{ dept_filter }}">{% endif %}
-            {% if role_filter %}<input type="hidden" name="role" value="{{ role_filter }}">{% endif %}
-            {% if status_filter %}<input type="hidden" name="status" value="{{ status_filter }}">{% endif %}
-        </form>
-
-        <!-- Filter Trigger Modal Button -->
-        <button type="button"
-                class="btn-filter-trigger"
-                data-bs-toggle="modal"
-                data-bs-target="#filterDrawerModal"
-                title="Filter Employee Roster">
-            <i class="bi bi-sliders2"></i>
-            {% if active_filters %}
-            <span class="filter-active-dot"></span>
-            {% endif %}
+    {% if can_manage_employees %}
+    <div>
+        <button type="button" class="btn btn-gw-primary" data-bs-toggle="modal" data-bs-target="#addEmployeeModal">
+            <i class="bi bi-person-plus me-1"></i> Add Employee
         </button>
-
-        {% if can_manage_employees %}
-        <!-- Primary Action Button (+ Add Employee) -->
-        <button type="button"
-                class="btn-cta-vibrant"
-                data-bs-toggle="modal"
-                data-bs-target="#addEmployeeModal">
-            <i class="bi bi-plus-lg fs-6"></i>
-            <span>Add Employee</span>
-        </button>
-        {% endif %}
     </div>
-</div>
-
-<!-- Filter Chips / Tags Row (Reference Design Style) -->
-<div class="filter-chips-row">
-    <span class="filter-chips-label">Filters</span>
-
-    {% if active_filters %}
-        {% for f in active_filters %}
-        <div class="filter-chip">
-            <span>{{ f.label }}</span>
-            <a href="?{% if f.key != 'q' and search_q %}q={{ search_q }}&{% endif %}{% if f.key != 'branch' and branch_filter %}branch={{ branch_filter }}&{% endif %}{% if f.key != 'dept' and dept_filter %}dept={{ dept_filter }}&{% endif %}{% if f.key != 'role' and role_filter %}role={{ role_filter }}&{% endif %}{% if f.key != 'status' and status_filter %}status={{ status_filter }}{% endif %}" class="filter-chip-remove" title="Remove filter">
-                <i class="bi bi-x"></i>
-            </a>
-        </div>
-        {% endfor %}
-        <a href="{% url 'portal_employees' %}" class="filter-chips-clear">Clear</a>
-    {% else %}
-        <!-- Default Quick Sample Filters when none active -->
-        <div class="filter-chip text-muted" style="border-style: dashed; background: transparent;">
-            <span>Source: Internal Master</span>
-        </div>
-        <div class="filter-chip text-muted" style="border-style: dashed; background: transparent;">
-            <span>Scope: Authorized Branches</span>
-        </div>
-        <span class="text-muted small ms-1">(All filters clear)</span>
     {% endif %}
 </div>
 
-<!-- Data Table / Panel (Reference Design Style) -->
-<div class="data-panel-card">
-    <div class="table-responsive">
-        <table class="data-panel-table">
-            <thead>
-                <tr>
-                    <th style="width: 44px;" class="text-center">
-                        <i class="bi bi-bookmark text-muted"></i>
-                    </th>
-                    <th>Candidate / Employee</th>
-                    <th>Sex / ID</th>
-                    <th>Tenure</th>
-                    <th>Source / Dept</th>
-                    <th>Specialization / Role</th>
-                    <th>Reporting Lead</th>
-                    <th>Location</th>
-                    <th>Portfolio & Proofs</th>
-                    <th class="text-end" style="min-width: 90px;">Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for emp in employees %}
-                <tr class="data-table-row">
-                    <!-- Bookmark / Pin Toggle (Col 1) -->
-                    <td class="text-center">
-                        <button type="button" class="btn-bookmark" title="Bookmark / Pin Candidate">
-                            <i class="bi bi-bookmark"></i>
-                        </button>
-                    </td>
-
-                    <!-- Candidate Name & Avatar (Col 2) -->
-                    <td>
-                        <div class="employee-cell">
-                            <div class="avatar-circle {% cycle 'avatar-gradient-1' 'avatar-gradient-2' 'avatar-gradient-3' 'avatar-gradient-4' 'avatar-gradient-5' 'avatar-gradient-6' %}">
-                                {{ emp.first_name|default:emp.employee_id|slice:":1"|upper }}{{ emp.last_name|slice:":1"|upper }}
-                            </div>
-                            <div class="employee-cell-meta">
-                                <a href="{% url 'portal_employees' %}?q={{ emp.employee_id }}" class="employee-name">
-                                    {{ emp.full_name }}
-                                </a>
-                                <span class="employee-subtext">{{ emp.email }}</span>
-                            </div>
-                        </div>
-                    </td>
-
-                    <!-- Sex / ID (Col 3) -->
-                    <td>
-                        <span class="badge bg-light text-dark border font-monospace px-2 py-1" style="font-size: 0.75rem;">
-                            {{ emp.employee_id }}
-                        </span>
-                        <div class="text-muted small mt-1">Full-time</div>
-                    </td>
-
-                    <!-- Tenure / Experience (Col 4) -->
-                    <td>
-                        <div class="fw-semibold text-dark">
-                            {% if emp.profile.date_of_joining %}
-                                {{ emp.profile.date_of_joining|timesince }}
-                            {% else %}
-                                2 years
-                            {% endif %}
-                        </div>
-                        <span class="text-muted small">Roster</span>
-                    </td>
-
-                    <!-- Department / Source Pill (Col 5) -->
-                    <td>
-                        <span class="dept-pill {% cycle 'dept-pill' 'dept-pill-cyan' 'dept-pill-green' 'dept-pill-amber' %}">
-                            {{ emp.profile.department.name|default:"General Operations" }}
-                        </span>
-                    </td>
-
-                    <!-- Specialization / Designation (Col 6) -->
-                    <td>
-                        <div class="fw-semibold text-dark">{{ emp.profile.designation|default:"Staff Specialist" }}</div>
-                        <div class="small text-muted">{{ emp.get_role_display }}</div>
-                    </td>
-
-                    <!-- Reporting Lead (Col 7) -->
-                    <td>
-                        {% if emp.profile.reporting_lead %}
-                        <div class="d-flex align-items-center gap-2">
-                            <div class="avatar-circle avatar-gradient-4" style="width: 24px; height: 24px; font-size: 0.65rem;">
-                                {{ emp.profile.reporting_lead.first_name|slice:":1"|upper }}
-                            </div>
-                            <div>
-                                <div class="fw-semibold small text-dark">{{ emp.profile.reporting_lead.full_name }}</div>
-                                <div class="text-muted" style="font-size: 0.7rem;">Lead</div>
-                            </div>
-                        </div>
-                        {% else %}
-                        <span class="badge bg-light text-muted border">Direct / Exec</span>
-                        {% endif %}
-                    </td>
-
-                    <!-- Location / Branch with Flag (Col 8) -->
-                    <td>
-                        <div class="location-tag">
-                            <span class="flag-icon">
-                                {% if "Dubai" in emp.primary_branch.city or "UAE" in emp.primary_branch.country %}
-                                🇦🇪
-                                {% elif "Kochi" in emp.primary_branch.city or "India" in emp.primary_branch.country %}
-                                🇮🇳
-                                {% elif "Singapore" in emp.primary_branch.city or "Singapore" in emp.primary_branch.country %}
-                                🇸🇬
-                                {% else %}
-                                🌐
-                                {% endif %}
-                            </span>
-                            <div>
-                                <div class="fw-semibold text-dark">{{ emp.primary_branch.city|default:"Dubai" }}</div>
-                                <div class="text-muted" style="font-size: 0.7rem;">{{ emp.primary_branch.code }}</div>
-                            </div>
-                        </div>
-                    </td>
-
-                    <!-- Portfolio / Direct Contacts (Col 9) -->
-                    <td>
-                        <div class="portfolio-links-group">
-                            <a href="mailto:{{ emp.email }}" class="portfolio-link-btn dribbble" title="Send Direct Email to {{ emp.full_name }}">
-                                <i class="bi bi-envelope"></i>
-                            </a>
-                            {% if emp.phone %}
-                            <a href="tel:{{ emp.phone }}" class="portfolio-link-btn behance" title="Call {{ emp.phone }}">
-                                <i class="bi bi-telephone"></i>
-                            </a>
-                            {% else %}
-                            <span class="portfolio-link-btn web" title="Verified Staff Record">
-                                <i class="bi bi-shield-check text-success"></i>
-                            </span>
-                            {% endif %}
-                            <a href="{% url 'portal_expenses' %}?q={{ emp.employee_id }}" class="portfolio-link-btn web" title="View Related Claims">
-                                <i class="bi bi-receipt"></i>
-                            </a>
-                        </div>
-                    </td>
-
-                    <!-- Quick Actions (Col 10) -->
-                    <td class="text-end">
-                        <div class="action-buttons-group">
-                            <!-- Direct Chat Trigger -->
-                            <button type="button"
-                                    class="btn-action-icon btn-direct-chat"
-                                    data-name="{{ emp.full_name }}"
-                                    data-email="{{ emp.email }}"
-                                    title="Message {{ emp.full_name }}">
-                                <i class="bi bi-chat-square-text-fill"></i>
-                            </button>
-
-                            <!-- Dropdown 3 Dots Menu -->
-                            <div class="dropdown">
-                                <button type="button" class="btn-action-icon" data-bs-toggle="dropdown" title="More Options">
-                                    <i class="bi bi-three-dots-vertical"></i>
-                                </button>
-                                <ul class="dropdown-menu dropdown-menu-end shadow-sm border-0 p-2" style="border-radius: 12px; min-width: 180px;">
-                                    <li><h6 class="dropdown-header">{{ emp.employee_id }}</h6></li>
-                                    {% if can_manage_employees %}
-                                    <li>
-                                        <a class="dropdown-item rounded small" href="{% url 'portal_employee_edit' emp.pk %}">
-                                            <i class="bi bi-pencil-square me-2 text-primary"></i> Edit / Deactivate
-                                        </a>
-                                    </li>
-                                    {% endif %}
-                                    {% if can_reset_passwords and emp != user %}
-                                    <li>
-                                        <button type="button" class="dropdown-item rounded small btn-change-password"
-                                                data-bs-toggle="modal" data-bs-target="#changePasswordModal"
-                                                data-pk="{{ emp.pk }}" data-name="{{ emp.full_name }}" data-empid="{{ emp.employee_id }}">
-                                            <i class="bi bi-key me-2 text-warning"></i> Change Password
-                                        </button>
-                                    </li>
-                                    {% endif %}
-                                    <li>
-                                        <a class="dropdown-item rounded small" href="{% url 'portal_leave_ledger' %}?emp_id={{ emp.id }}">
-                                            <i class="bi bi-wallet2 me-2 text-primary"></i> Leave Balances
-                                        </a>
-                                    </li>
-                                    <li>
-                                        <a class="dropdown-item rounded small" href="{% url 'portal_expenses' %}?q={{ emp.employee_id }}">
-                                            <i class="bi bi-receipt me-2 text-info"></i> Claims History
-                                        </a>
-                                    </li>
-                                    <li><hr class="dropdown-divider my-1"></li>
-                                    <li>
-                                        <a class="dropdown-item rounded small text-secondary" href="mailto:{{ emp.email }}">
-                                            <i class="bi bi-envelope me-2"></i> Mail Profile
-                                        </a>
-                                    </li>
-                                </ul>
-                            </div>
-                        </div>
-                    </td>
-                </tr>
-                {% empty %}
-                <tr>
-                    <td colspan="10" class="text-center py-5">
-                        <div class="empty-state">
-                            <div class="empty-state-icon">
-                                <i class="bi bi-people"></i>
-                            </div>
-                            <h4 class="empty-state-title">No employees matched your criteria</h4>
-                            <p class="empty-state-desc">Try clearing active filters or searching with a different employee name, ID, or department.</p>
-                            <a href="{% url 'portal_employees' %}" class="btn btn-sm btn-cta-purple">Reset All Filters</a>
-                        </div>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+<!-- Employees Datatable (server-side paginated) -->
+<div class="gw-card gw-dt">
+    <div class="gw-card-header">
+        <h5 class="gw-card-title"><i class="bi bi-people text-primary me-2"></i>Staff Directory <span class="badge rounded-pill bg-light text-secondary border ms-1">{{ total_count }}</span></h5>
     </div>
+
+    <form method="get" class="gw-dt-toolbar" id="employeesDtForm">
+        <input type="hidden" name="sort" value="{{ sort }}">
+        <input type="hidden" name="dir" value="{{ dir }}">
+        <div class="gw-dt-search">
+            <i class="bi bi-search"></i>
+            <input type="search" name="q" value="{{ q }}" class="form-control form-control-sm" placeholder="Search name, ID, email, department..." autocomplete="off" data-dt-search>
+        </div>
+        <select name="branch" class="form-select form-select-sm gw-dt-filter" data-dt-autosubmit>
+            <option value="">All locations</option>
+            {% for b in all_branches %}
+            <option value="{{ b.id }}" {% if branch_filter == b.id|stringformat:"s" %}selected{% endif %}>{{ b.name }}{% if b.city %} ({{ b.city }}){% endif %}</option>
+            {% endfor %}
+        </select>
+        <select name="dept" class="form-select form-select-sm gw-dt-filter" data-dt-autosubmit>
+            <option value="">All departments</option>
+            {% for d in all_departments %}
+            <option value="{{ d.id }}" {% if dept_filter == d.id|stringformat:"s" %}selected{% endif %}>{{ d.name }}</option>
+            {% endfor %}
+        </select>
+        <select name="role" class="form-select form-select-sm gw-dt-filter" data-dt-autosubmit>
+            <option value="">All roles</option>
+            {% for r_val, r_label in all_roles %}
+            <option value="{{ r_val }}" {% if role_filter == r_val %}selected{% endif %}>{{ r_label }}</option>
+            {% endfor %}
+        </select>
+        <select name="status" class="form-select form-select-sm gw-dt-filter" data-dt-autosubmit>
+            <option value="">All statuses</option>
+            <option value="active" {% if status_filter == "active" %}selected{% endif %}>Active</option>
+            <option value="inactive" {% if status_filter == "inactive" %}selected{% endif %}>Inactive</option>
+        </select>
+        {% if is_filtered %}
+        <a href="{% url 'portal_employees' %}?page_size={{ page_size }}" class="btn btn-sm btn-light gw-dt-reset"><i class="bi bi-x-lg me-1"></i>Clear</a>
+        {% endif %}
+        <div class="gw-dt-pagesize ms-auto">
+            <span>Show</span>
+            <select name="page_size" class="form-select form-select-sm" data-dt-autosubmit>
+                {% for n in page_size_options %}
+                <option value="{{ n }}" {% if n == page_size %}selected{% endif %}>{{ n }}</option>
+                {% endfor %}
+            </select>
+            <span>rows</span>
+        </div>
+    </form>
+
+    {% if can_manage_employees %}
+    <!-- Bulk action bar (shown when rows are selected) -->
+    <form method="post" id="bulkForm" class="gw-dt-bulkbar" action="{{ request.get_full_path }}">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="bulk">
+        <input type="hidden" name="bulk_action" id="bulkActionInput">
+        <span class="gw-dt-bulkbar-count"><i class="bi bi-check2-square"></i><span id="bulkCount">0</span> selected</span>
+        <button type="button" class="btn" data-bulk="activate"><i class="bi bi-person-check"></i> Activate</button>
+        <button type="button" class="btn" data-bulk="deactivate"><i class="bi bi-person-dash"></i> Deactivate</button>
+        <button type="button" class="btn is-danger" data-bulk="delete"><i class="bi bi-trash3"></i> Delete</button>
+        <button type="button" class="btn gw-dt-bulkbar-clear ms-auto" id="bulkClear"><i class="bi bi-x-lg"></i> Clear selection</button>
+    </form>
+    {% endif %}
+
+    <div class="gw-card-body p-0">
+        <div class="table-responsive">
+            <table class="table gw-table gw-dt-table m-0" id="employeesTable">
+                <thead>
+                    <tr>
+                        {% if can_manage_employees %}
+                        <th class="gw-dt-check">
+                            <input type="checkbox" class="form-check-input" id="selectAll" aria-label="Select all employees on this page">
+                        </th>
+                        {% endif %}
+                        {% include "portal/_dt_sort_th.html" with col="employee" label="Employee" %}
+                        {% include "portal/_dt_sort_th.html" with col="department" label="Department" %}
+                        {% include "portal/_dt_sort_th.html" with col="role" label="Designation / Role" %}
+                        {% include "portal/_dt_sort_th.html" with col="lead" label="Reporting Lead" %}
+                        {% include "portal/_dt_sort_th.html" with col="location" label="Location" %}
+                        {% include "portal/_dt_sort_th.html" with col="status" label="Status" %}
+                        <th class="text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for emp in employees %}
+                    <tr class="{% if not emp.is_active %}is-inactive{% endif %}">
+                        {% if can_manage_employees %}
+                        <td class="gw-dt-check">
+                            <input type="checkbox" class="form-check-input" name="selected" value="{{ emp.pk }}" form="bulkForm"
+                                   data-row-check data-label="{{ emp.full_name }} ({{ emp.employee_id }})" aria-label="Select {{ emp.full_name }}"
+                                   {% if emp == user %}disabled title="You cannot modify your own account here"{% endif %}>
+                        </td>
+                        {% endif %}
+                        <td>
+                            <div class="gw-dt-employee">
+                                <span class="gw-dt-avatar">{{ emp.first_name|default:emp.employee_id|slice:":1"|upper }}{{ emp.last_name|slice:":1"|upper }}</span>
+                                <div>
+                                    <div class="gw-dt-employee-name">{{ emp.full_name }}</div>
+                                    <div class="gw-dt-employee-id">{{ emp.employee_id }}</div>
+                                </div>
+                            </div>
+                        </td>
+                        <td>
+                            {% if emp.profile.department %}
+                            <span class="gw-dt-dept">{{ emp.profile.department.name }}</span>
+                            {% else %}
+                            <span class="gw-dt-muted">—</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <div class="fw-semibold">{{ emp.profile.designation|default:"—" }}</div>
+                            <div class="gw-dt-sub">{{ emp.get_role_display }}</div>
+                        </td>
+                        <td>
+                            {% if emp.profile.reporting_lead %}
+                            <div class="fw-semibold">{{ emp.profile.reporting_lead.full_name }}</div>
+                            <div class="gw-dt-employee-id">{{ emp.profile.reporting_lead.employee_id }}</div>
+                            {% else %}
+                            <span class="gw-dt-muted">Reports to Director</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if emp.primary_branch %}
+                            <span class="gw-dt-location" title="{{ emp.primary_branch.code }}">
+                                <i class="bi bi-geo-alt-fill"></i>
+                                <span>{{ emp.primary_branch.name }}{% if emp.primary_branch.city %}<small>{{ emp.primary_branch.city }}</small>{% endif %}</span>
+                            </span>
+                            {% else %}
+                            <span class="gw-dt-muted">—</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if emp.is_active %}
+                            <span class="gw-dt-status is-active">Active</span>
+                            {% else %}
+                            <span class="gw-dt-status is-inactive">Inactive</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end">
+                            <div class="gw-dt-actions">
+                                {% if can_manage_employees %}
+                                <a href="{% url 'portal_employee_edit' emp.pk %}" class="btn btn-sm btn-light" title="Edit employee"><i class="bi bi-pencil-square"></i></a>
+                                {% endif %}
+                                <div class="dropdown">
+                                    <button type="button" class="btn btn-sm btn-light" data-bs-toggle="dropdown" aria-expanded="false" title="More options"><i class="bi bi-three-dots-vertical"></i></button>
+                                    <ul class="dropdown-menu dropdown-menu-end shadow-sm border-0 p-2" style="border-radius: 12px; min-width: 190px;">
+                                        <li><h6 class="dropdown-header">{{ emp.employee_id }}</h6></li>
+                                        {% if can_reset_passwords and emp != user %}
+                                        <li>
+                                            <button type="button" class="dropdown-item rounded small"
+                                                    data-bs-toggle="modal" data-bs-target="#changePasswordModal"
+                                                    data-pk="{{ emp.pk }}" data-name="{{ emp.full_name }}" data-empid="{{ emp.employee_id }}">
+                                                <i class="bi bi-key me-2 text-warning"></i> Change Password
+                                            </button>
+                                        </li>
+                                        {% endif %}
+                                        <li><a class="dropdown-item rounded small" href="{% url 'portal_leave_ledger' %}?emp_id={{ emp.id }}"><i class="bi bi-wallet2 me-2 text-primary"></i> Leave Balances</a></li>
+                                        <li><a class="dropdown-item rounded small" href="{% url 'portal_expenses' %}?q={{ emp.employee_id }}"><i class="bi bi-receipt me-2 text-info"></i> Claims History</a></li>
+                                        <li><hr class="dropdown-divider my-1"></li>
+                                        <li><a class="dropdown-item rounded small" href="mailto:{{ emp.email }}"><i class="bi bi-envelope me-2"></i> {{ emp.email|truncatechars:26 }}</a></li>
+                                        {% if emp.phone %}
+                                        <li><a class="dropdown-item rounded small" href="tel:{{ emp.phone }}"><i class="bi bi-telephone me-2"></i> {{ emp.phone }}</a></li>
+                                        {% endif %}
+                                        {% if can_manage_employees and emp != user %}
+                                        <li><hr class="dropdown-divider my-1"></li>
+                                        <li>
+                                            <button type="button" class="dropdown-item rounded small text-danger" data-row-delete="{{ emp.pk }}" data-label="{{ emp.full_name }} ({{ emp.employee_id }})">
+                                                <i class="bi bi-trash3 me-2"></i> Delete
+                                            </button>
+                                        </li>
+                                        {% endif %}
+                                    </ul>
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="{% if can_manage_employees %}8{% else %}7{% endif %}">
+                            <div class="empty-state">
+                                <i class="bi bi-people empty-state-icon"></i>
+                                {% if is_filtered %}
+                                <div class="empty-state-title">No matching employees</div>
+                                <p class="empty-state-desc">Try a different search or clear the filters.</p>
+                                <a href="{% url 'portal_employees' %}" class="btn btn-light">Clear filters</a>
+                                {% else %}
+                                <div class="empty-state-title">No employees yet</div>
+                                <p class="empty-state-desc">Employees you add will appear here.</p>
+                                {% if can_manage_employees %}
+                                <button class="btn btn-gw-primary" data-bs-toggle="modal" data-bs-target="#addEmployeeModal"><i class="bi bi-person-plus me-1"></i> Add Employee</button>
+                                {% endif %}
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    {% include "portal/_dt_pagination.html" %}
 </div>
 
 <!-- ==========================================================================
-     Modal 1: Add Employee / Candidate (Reference CTA)
+     Modal: Add Employee
      ========================================================================== -->
 {% if can_manage_employees %}
 <div class="modal fade" id="addEmployeeModal" tabindex="-1" aria-labelledby="addEmployeeModalLabel" aria-hidden="true">
@@ -399,72 +331,6 @@
 {% endif %}
 
 <!-- ==========================================================================
-     Modal 2: Filter Drawer Modal
-     ========================================================================== -->
-<div class="modal fade" id="filterDrawerModal" tabindex="-1" aria-labelledby="filterDrawerModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered">
-        <div class="modal-content gw-modal-glass">
-            <div class="modal-header border-0 pb-0">
-                <h5 class="modal-title fw-bold" id="filterDrawerModalLabel">Filter Employee Directory</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-            </div>
-            <form method="get" action="{% url 'portal_employees' %}">
-                <div class="modal-body">
-                    {% if search_q %}
-                    <input type="hidden" name="q" value="{{ search_q }}">
-                    {% endif %}
-
-                    <div class="mb-3">
-                        <label class="form-label small fw-semibold text-muted">Branch / Office Location</label>
-                        <select name="branch" class="form-select form-select-sm rounded-pill px-3">
-                            <option value="">All Accessible Branches</option>
-                            {% for b in all_branches %}
-                            <option value="{{ b.id }}" {% if branch_filter == b.id|stringformat:"s" %}selected{% endif %}>{{ b.name }} ({{ b.city }})</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-
-                    <div class="mb-3">
-                        <label class="form-label small fw-semibold text-muted">Department</label>
-                        <select name="dept" class="form-select form-select-sm rounded-pill px-3">
-                            <option value="">All Departments</option>
-                            {% for d in all_departments %}
-                            <option value="{{ d.id }}" {% if dept_filter == d.id|stringformat:"s" %}selected{% endif %}>{{ d.name }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-
-                    <div class="mb-3">
-                        <label class="form-label small fw-semibold text-muted">Business Role</label>
-                        <select name="role" class="form-select form-select-sm rounded-pill px-3">
-                            <option value="">All Roles</option>
-                            {% for r_val, r_label in all_roles %}
-                            <option value="{{ r_val }}" {% if role_filter == r_val %}selected{% endif %}>{{ r_label }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-
-                    <div class="mb-3">
-                        <label class="form-label small fw-semibold text-muted">Status</label>
-                        <select name="status" class="form-select form-select-sm rounded-pill px-3">
-                            <option value="">All Statuses</option>
-                            <option value="active" {% if status_filter == 'active' %}selected{% endif %}>Active</option>
-                            <option value="inactive" {% if status_filter == 'inactive' %}selected{% endif %}>Inactive</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="modal-footer border-0 pt-0">
-                    <a href="{% url 'portal_employees' %}" class="btn btn-sm btn-light rounded-pill px-3">Reset Filters</a>
-                    <button type="submit" class="btn btn-sm btn-cta-purple px-4">
-                        <i class="bi bi-funnel me-1"></i> Apply Filters
-                    </button>
-                </div>
-            </form>
-        </div>
-    </div>
-</div>
-
-<!-- ==========================================================================
      Modal: Change an employee's password (Director / HR Coordinator)
      ========================================================================== -->
 {% if can_reset_passwords %}
@@ -520,4 +386,39 @@ document.addEventListener('DOMContentLoaded', function () {
 });
 </script>
 {% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{% static 'js/gw-datatable.js' %}?v=20261114d"></script>
+<script>
+const plural = (verb, n) => verb + ' ' + n + ' employee' + (n > 1 ? 's' : '') + '?';
+GwDatatable.init({
+    toolbar: '#employeesDtForm',
+    bulkForm: '#bulkForm',
+    actionInput: '#bulkActionInput',
+    actions: {
+        delete: {
+            title: n => plural('Delete', n),
+            message: 'This permanently removes the selected employee records and cannot be undone.',
+            note: 'Employees with existing leave or expense history cannot be deleted — they will be deactivated instead so audit records are kept.',
+            confirmText: 'Delete',
+            variant: 'danger',
+        },
+        deactivate: {
+            title: n => plural('Deactivate', n),
+            message: 'Deactivated employees can no longer sign in. You can re-activate them at any time.',
+            confirmText: 'Deactivate',
+            variant: 'warning',
+            icon: 'bi-person-dash',
+        },
+        activate: {
+            title: n => plural('Activate', n),
+            message: 'The selected employees will be able to sign in again.',
+            confirmText: 'Activate',
+            variant: 'primary',
+            icon: 'bi-person-check',
+        },
+    },
+});
+</script>
 {% endblock %}

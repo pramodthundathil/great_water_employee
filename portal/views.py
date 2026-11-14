@@ -2,6 +2,7 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth import login, logout, authenticate
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
+from django.db import transaction
 from django.db.models import Sum, Count, Q, ProtectedError
 from django.utils import timezone
 from django.core.exceptions import ValidationError
@@ -20,16 +21,20 @@ from leaves.models import (
     LeaveApplication, LeaveType, LeavePolicy, LeaveLedgerEntry,
     LeaveApplicationStatus, HolidayCalendar, Holiday
 )
-from leaves.models import LeaveAuditAction, fmt_days
+from leaves.models import LeaveAuditAction, fmt_days, STAGE_LABELS
 from leaves.services import (
     get_employee_leave_balances, record_manual_leave_adjustment,
     validate_leave_request, LeaveRequestError,
     log_leave_audit, client_ip, resubmit_leave_application,
     initial_leave_route, visible_leave_applications, can_view_leave_application,
-    filter_leave_track, leave_track_counts, leave_review_options,
+    filter_leave_track, leave_track_counts, leave_review_options, notify_leave_review,
 )
 from portal.admin_views import validate_upload, can_manage_users, get_default_organization
-from accounts.services import EmployeeError, can_reset_passwords, create_employee, set_employee_password
+from expenses.services import bulk_delete_claims, claim_delete_block_reason
+from accounts.services import (
+    EmployeeError, can_reset_passwords, can_manage_users, create_employee, set_employee_password,
+    bulk_employee_action,
+)
 import secrets
 from notifications.models import NotificationEvent
 from notifications.services import notify_expense_event, notify_leave_event
@@ -55,12 +60,26 @@ def _parse_post_date(value, label):
 
 
 def _leave_review_kwargs(request):
-    """Remarks and the optional partial-approval range posted from a web review form."""
-    partial = request.POST.get("partial") == "1"
+    """
+    Remarks plus the optional extras posted from a web review form: a partial range, an amendment
+    (leave type / whole date range) or the stage to return the leave to.
+    """
+    P = request.POST
+    partial = P.get("partial") == "1"
+    amend = P.get("amend") == "1"
+    amend_type = None
+    if amend and P.get("amend_leave_type"):
+        amend_type = LeaveType.objects.filter(pk=P.get("amend_leave_type")).first() if P.get("amend_leave_type").isdigit() else None
+        if amend_type is None:
+            raise ValidationError("Unknown leave type.")
     return {
-        "remarks": request.POST.get("remarks", ""),
-        "approved_start_date": _parse_post_date(request.POST.get("approved_start_date"), "approved start date") if partial else None,
-        "approved_end_date": _parse_post_date(request.POST.get("approved_end_date"), "approved end date") if partial else None,
+        "remarks": P.get("remarks", ""),
+        "approved_start_date": _parse_post_date(P.get("approved_start_date"), "approved start date") if partial and not amend else None,
+        "approved_end_date": _parse_post_date(P.get("approved_end_date"), "approved end date") if partial and not amend else None,
+        "amend_leave_type": amend_type,
+        "amend_start_date": _parse_post_date(P.get("amend_start_date"), "new start date") if amend else None,
+        "amend_end_date": _parse_post_date(P.get("amend_end_date"), "new end date") if amend else None,
+        "return_to": (P.get("return_to") or "").upper() or None,
         "source": "WEB",
         "ip_address": client_ip(request),
     }
@@ -152,15 +171,13 @@ def _handle_director_dashboard_post(request, user, claim_qs, leave_qs):
         if not user.can_access_branch(app.branch):
             messages.error(request, "You do not have permission for this branch.")
             return redirect("portal_dashboard")
-        decision = request.POST.get("action", "").upper()
         try:
             kwargs = _leave_review_kwargs(request)
-            recorded = app.director_review(approver=user, action=decision, **kwargs)
-            event_type = "LEAVE_DIRECTOR_REJECTED" if recorded == "REJECTED" else "LEAVE_DIRECTOR_APPROVED"
-            notify_leave_event(app, event_type, remarks=kwargs["remarks"], partial=recorded.startswith("PARTIALLY_"))
-            messages.success(request, _leave_review_message(app, recorded, "Director decision"))
         except ValidationError as e:
-            messages.error(request, str(e))
+            messages.error(request, " ".join(e.messages))
+            return redirect("portal_dashboard")
+        level, msg = _apply_leave_review(user, app, request.POST.get("action", ""), **kwargs)
+        getattr(messages, level)(request, msg)
         return redirect("portal_dashboard")
 
     if action_scope == "send_reminder":
@@ -315,16 +332,29 @@ def expenses_list_view(request):
     selected_branch = request.session.get("selected_branch_id", "all")
 
     if request.method == "POST":
-        # Create new expense claim
+        if request.POST.get("action") == "bulk_delete":
+            back = request.get_full_path()
+            result = bulk_delete_claims(user, request.POST.getlist("selected"))
+            if result["deleted"]:
+                messages.success(request, f"{len(result['deleted'])} claim(s) deleted: {', '.join(result['deleted'][:5])}"
+                                 + ("…" if len(result["deleted"]) > 5 else ""))
+            if result["skipped"]:
+                details = ", ".join(f"{n} ({why})" for n, why in result["skipped"][:5])
+                messages.error(request, f"{len(result['skipped'])} claim(s) could not be deleted: {details}"
+                               + ("…" if len(result["skipped"]) > 5 else ""))
+            if not result["deleted"] and not result["skipped"]:
+                messages.error(request, "Select at least one claim.")
+            return redirect(back)
+
+        # Create + submit a new expense claim (claims are always submitted; no drafts)
         category_id = request.POST.get("category")
         amount = request.POST.get("amount")
         expense_date = request.POST.get("expense_date")
-        description = request.POST.get("description", "")
-        project_ref = request.POST.get("project_reference", "")
-        submit_now = request.POST.get("submit_now") == "1"
+        description = request.POST.get("description", "").strip()
+        project_ref = request.POST.get("project_reference", "").strip()
 
-        if not category_id or not amount or not expense_date:
-            messages.error(request, "Category, amount, and expense date are required.")
+        if not category_id or not amount or not expense_date or not description:
+            messages.error(request, "Category, amount, expense date and description are required.")
             return redirect("portal_expenses")
 
         category = get_object_or_404(ExpenseCategory, id=category_id, is_active=True)
@@ -339,6 +369,9 @@ def expenses_list_view(request):
             messages.error(request, "Expense date cannot be in the future.")
             return redirect("portal_expenses")
         files = request.FILES.getlist("receipts")
+        if not files:
+            messages.error(request, "At least one supporting receipt / proof is required.")
+            return redirect("portal_expenses")
         for f in files:
             err = validate_upload(f)
             if err:
@@ -348,71 +381,135 @@ def expenses_list_view(request):
             messages.error(request, "Your account has no branch assigned. Contact the Admin Manager.")
             return redirect("portal_expenses")
 
-        claim = ExpenseClaim.objects.create(
-            employee=user,
-            branch=user.primary_branch or accessible_branches.first(),
-            category=category,
-            amount=amount_dec,
-            expense_date=expense_date,
-            description=description,
-            project_reference=project_ref,
-            status=ExpenseClaimStatus.DRAFT
-        )
-
-        for f in files:
-            ExpenseAttachment.objects.create(
-                claim=claim,
-                file=f,
-                original_filename=f.name,
-                file_type=f.content_type,
-                file_size=f.size
-            )
-
-        if submit_now:
-            try:
+        try:
+            with transaction.atomic():
+                claim = ExpenseClaim.objects.create(
+                    employee=user,
+                    branch=user.primary_branch or accessible_branches.first(),
+                    category=category,
+                    amount=amount_dec,
+                    expense_date=expense_date,
+                    description=description,
+                    project_reference=project_ref,
+                    status=ExpenseClaimStatus.DRAFT,
+                )
+                for f in files:
+                    ExpenseAttachment.objects.create(
+                        claim=claim, file=f, original_filename=f.name,
+                        file_type=f.content_type, file_size=f.size,
+                    )
                 claim.submit()
-                notify_expense_event(claim, "EXPENSE_SUBMITTED")
-                messages.success(request, f"Claim {claim.claim_number} created and submitted "
-                                          + ("directly to the Director for approval." if claim.status == ExpenseClaimStatus.UNDER_DIRECTOR_REVIEW else "for review!"))
-            except ValidationError as e:
-                messages.warning(request, f"Claim created as draft: {e}")
-        else:
-            messages.success(request, f"Claim {claim.claim_number} saved as draft.")
+        except ValidationError as e:
+            messages.error(request, " ".join(e.messages))
+            return redirect("portal_expenses")
 
+        notify_expense_event(claim, "EXPENSE_SUBMITTED")
+        messages.success(request, f"Claim {claim.claim_number} submitted "
+                                  + ("directly to the Director for approval." if claim.status == ExpenseClaimStatus.UNDER_DIRECTOR_REVIEW else "for review."))
         return redirect("portal_expenses")
 
-    # GET
-    if user.role == RoleChoices.EMPLOYEE:
+    # ---- GET: server-side datatable ----
+    is_employee = user.role == RoleChoices.EMPLOYEE
+    if is_employee:
         qs = ExpenseClaim.objects.filter(employee=user)
+    elif selected_branch and selected_branch != "all":
+        qs = ExpenseClaim.objects.filter(branch_id=selected_branch)
     else:
-        if selected_branch and selected_branch != "all":
-            qs = ExpenseClaim.objects.filter(branch_id=selected_branch)
-        else:
-            qs = ExpenseClaim.objects.filter(branch__in=accessible_branches)
+        qs = ExpenseClaim.objects.filter(branch__in=accessible_branches)
+    qs = qs.exclude(status=ExpenseClaimStatus.DRAFT)
 
-    status_filter = request.GET.get("status")
-    if status_filter:
-        qs = qs.filter(status=status_filter)
+    status_groups = {
+        "review": [ExpenseClaimStatus.UNDER_ADMIN_REVIEW, ExpenseClaimStatus.UNDER_DIRECTOR_REVIEW],
+        "approved": [ExpenseClaimStatus.APPROVED_BY_DIRECTOR],
+        "paid": [ExpenseClaimStatus.PAID],
+        "rejected": [ExpenseClaimStatus.REJECTED_BY_ADMIN, ExpenseClaimStatus.REJECTED_BY_DIRECTOR],
+        "withdrawn": [ExpenseClaimStatus.WITHDRAWN],
+    }
+    status_filter = request.GET.get("status", "")
+    if status_filter in status_groups:
+        qs = qs.filter(status__in=status_groups[status_filter])
+    else:
+        status_filter = ""
 
-    search_q = request.GET.get("q", "").strip()
-    if search_q:
+    category_filter = request.GET.get("category", "")
+    if category_filter.isdigit():
+        qs = qs.filter(category_id=int(category_filter))
+    else:
+        category_filter = ""
+
+    q = request.GET.get("q", "").strip()
+    if q:
         qs = qs.filter(
-            Q(claim_number__icontains=search_q)
-            | Q(employee__employee_id__iexact=search_q)
-            | Q(employee__first_name__icontains=search_q)
-            | Q(employee__last_name__icontains=search_q)
-            | Q(description__icontains=search_q)
+            Q(claim_number__icontains=q)
+            | Q(employee__employee_id__icontains=q)
+            | Q(employee__first_name__icontains=q)
+            | Q(employee__last_name__icontains=q)
+            | Q(description__icontains=q)
+            | Q(project_reference__icontains=q)
+            | Q(category__name__icontains=q)
         )
 
-    claims = qs.select_related("category", "branch", "employee").prefetch_related("attachments").order_by("-created_at")
-    categories = ExpenseCategory.objects.filter(is_active=True)
+    sort_map = {
+        "number": ["claim_number"],
+        "date": ["expense_date"],
+        "employee": ["employee__first_name", "employee__last_name"],
+        "category": ["category__name"],
+        "amount": ["amount"],
+        "status": ["status"],
+        "submitted": ["submitted_at"],
+    }
+    sort = request.GET.get("sort", "submitted")
+    direction = request.GET.get("dir", "desc")
+    if sort not in sort_map:
+        sort = "submitted"
+    if direction not in ("asc", "desc"):
+        direction = "desc"
+    prefix = "-" if direction == "desc" else ""
+    qs = (
+        qs.select_related("category", "branch", "employee")
+        .annotate(attachment_count=Count("attachments"))
+        .order_by(*[prefix + f for f in sort_map[sort]], "-id")
+    )
+
+    page_size_options = [10, 25, 50, 100]
+    try:
+        page_size = int(request.GET.get("page_size", 10))
+    except (TypeError, ValueError):
+        page_size = 10
+    if page_size not in page_size_options:
+        page_size = 10
+
+    paginator = Paginator(qs, page_size)
+    page_obj = paginator.get_page(request.GET.get("page"))
+    page_range = paginator.get_elided_page_range(page_obj.number, on_each_side=1, on_ends=1)
+    claims = list(page_obj.object_list)
+    for c in claims:
+        c.deletable = claim_delete_block_reason(user, c) is None
+
+    base_params = request.GET.copy()
+    base_params.pop("page", None)
+    sort_params = base_params.copy()
+    for key in ("sort", "dir"):
+        sort_params.pop(key, None)
 
     context = {
         "active_nav": "expenses",
         "claims": claims,
-        "categories": categories,
-        "selected_status": status_filter,
-        "search_q": search_q,
+        "show_employee": not is_employee,
+        "page_obj": page_obj,
+        "paginator": paginator,
+        "page_range": page_range,
+        "page_size": page_size,
+        "page_size_options": page_size_options,
+        "sort": sort,
+        "dir": direction,
+        "query_string": base_params.urlencode(),
+        "sort_query_string": sort_params.urlencode(),
+        "q": q,
+        "status_filter": status_filter,
+        "category_filter": category_filter,
+        "is_filtered": bool(q or status_filter or category_filter),
+        "categories": ExpenseCategory.objects.filter(is_active=True),
         "today": date.today(),
     }
     return render(request, "portal/expenses_list.html", context)
@@ -472,32 +569,37 @@ def expense_detail_view(request, pk):
     return render(request, "portal/expense_detail.html", context)
 
 
-def _review_claim(request, user, claim):
+def _apply_claim_review(user, claim, action, remarks="", approved_amount=None):
     """
-    Apply an Admin Manager / Director decision (full, partial amount or rejection) posted from a web
-    review form. Branch-aware: the reviewer must be an expense approver for the claim's branch.
+    Apply an Admin Manager / Director decision (full, partial amount or rejection) to one claim.
+    Branch-aware: the reviewer must be an expense approver for the claim's branch.
+    Returns (level, message) where level is "success" | "info" | "error".
     """
+    if claim.employee_id == user.id:
+        return "error", f"{claim.claim_number}: you cannot review your own claim."
     if not user.can_manage_expenses_for(claim.branch):
-        messages.error(request, f"You are not an expense approver for {claim.branch.name}.")
-        return
-    action = request.POST.get("action", "").upper()
-    remarks = request.POST.get("remarks", "")
-    approved_amount = request.POST.get("approved_amount") if request.POST.get("partial") == "1" else None
-
+        return "error", f"You are not an expense approver for {claim.branch.name}."
+    action = (action or "").upper()
     if claim.status == ExpenseClaimStatus.UNDER_ADMIN_REVIEW and user.is_admin_manager:
         review, stage = claim.admin_review, "ADMIN"
     elif claim.status == ExpenseClaimStatus.UNDER_DIRECTOR_REVIEW and user.is_director:
         review, stage = claim.director_review, "DIRECTOR"
     else:
-        messages.info(request, f"Claim {claim.claim_number} is not awaiting your review ({claim.get_status_display()}).")
-        return
+        return "info", f"Claim {claim.claim_number} is not awaiting your review ({claim.get_status_display()})."
     try:
         recorded = review(approver=user, action=action, remarks=remarks, approved_amount=approved_amount)
     except ValidationError as e:
-        messages.error(request, " ".join(e.messages))
-        return
+        return "error", f"{claim.claim_number}: " + " ".join(e.messages)
     notify_expense_event(claim, f"EXPENSE_{stage}_{'REJECTED' if recorded == 'REJECTED' else 'APPROVED'}", remarks=remarks)
-    messages.success(request, review_message(claim, recorded))
+    return "success", review_message(claim, recorded)
+
+
+def _review_claim(request, user, claim):
+    """Single-claim review posted from a web review form; reports the outcome as a flash message."""
+    approved_amount = request.POST.get("approved_amount") if request.POST.get("partial") == "1" else None
+    level, msg = _apply_claim_review(user, claim, request.POST.get("action", ""),
+                                     request.POST.get("remarks", ""), approved_amount)
+    getattr(messages, level)(request, msg)
 
 
 def _safe_next(request, fallback):
@@ -520,27 +622,182 @@ def expense_approvals_view(request):
     if requested and (requested == "all" or expense_branches.filter(id=requested).exists()):
         selected_branch = requested
         request.session["selected_branch_id"] = requested
+    if selected_branch != "all" and not expense_branches.filter(id=selected_branch).exists():
+        selected_branch = "all"
 
     base_qs = ExpenseClaim.objects.filter(branch__in=expense_branches).exclude(employee=user)
     if selected_branch and selected_branch != "all":
         base_qs = base_qs.filter(branch_id=selected_branch)
 
     if request.method == "POST":
+        if request.POST.get("bulk") == "1":
+            decision = request.POST.get("decision", "").upper()
+            remarks = request.POST.get("remarks", "").strip()
+            ids = [int(i) for i in request.POST.getlist("selected") if i.isdigit()]
+            if decision not in ("APPROVED", "REJECTED") or not ids:
+                messages.error(request, "Select at least one claim and a decision.")
+            elif decision == "REJECTED" and not remarks:
+                messages.error(request, "A reason is required to reject claims. The employees will see it.")
+            else:
+                done, problems = [], []
+                for claim in ExpenseClaim.objects.filter(pk__in=ids).select_related("branch", "employee"):
+                    level, msg = _apply_claim_review(user, claim, decision, remarks)
+                    (done if level == "success" else problems).append(claim.claim_number if level == "success" else msg)
+                verb = "approved" if decision == "APPROVED" else "rejected"
+                if done:
+                    messages.success(request, f"{len(done)} claim(s) {verb}: {', '.join(done[:6])}" + ("…" if len(done) > 6 else ""))
+                if problems:
+                    messages.error(request, f"{len(problems)} claim(s) not processed: " + " · ".join(problems[:4])
+                                   + (" …" if len(problems) > 4 else ""))
+            return _safe_next(request, "portal_expense_approvals")
+
         claim = get_object_or_404(ExpenseClaim, id=request.POST.get("claim_id"))
         _review_claim(request, user, claim)
         return _safe_next(request, "portal_expense_approvals")
 
-    related = ("employee", "branch", "category")
-    admin_queue = (base_qs.filter(status=ExpenseClaimStatus.UNDER_ADMIN_REVIEW)
-                   .select_related(*related).prefetch_related("attachments").order_by("-submitted_at"))
-    director_queue = (base_qs.filter(status=ExpenseClaimStatus.UNDER_DIRECTOR_REVIEW)
-                      .select_related(*related).prefetch_related("attachments", "approval_history__approver")
-                      .order_by("-submitted_at"))
+    # ---- Stage tabs: only the stages this user can act on ----
+    stages = []
+    if user.is_admin_manager:
+        stages.append(("admin", "Admin review", ExpenseClaimStatus.UNDER_ADMIN_REVIEW))
+    if user.is_director:
+        stages.append(("director", "Director approval", ExpenseClaimStatus.UNDER_DIRECTOR_REVIEW))
+    stage_status = {key: status for key, _, status in stages}
+
+    stage_stats = {
+        row["status"]: row
+        for row in base_qs.filter(status__in=stage_status.values())
+        .values("status").annotate(n=Count("id"), total=Sum("amount"))
+    }
+    stage_tabs = []
+    for key, label, status in stages:
+        st = stage_stats.get(status, {})
+        stage_tabs.append({"key": key, "label": label, "count": st.get("n", 0), "total": st.get("total") or 0})
+
+    stage = request.GET.get("stage", "")
+    if stage not in stage_status:
+        # Default to the first stage with work waiting, else the first stage.
+        stage = next((t["key"] for t in stage_tabs if t["count"]), stages[0][0])
+    qs = base_qs.filter(status=stage_status[stage])
+
+    # ---- Filters ----
+    q = request.GET.get("q", "").strip()
+    if q:
+        qs = qs.filter(
+            Q(claim_number__icontains=q)
+            | Q(employee__first_name__icontains=q)
+            | Q(employee__last_name__icontains=q)
+            | Q(employee__employee_id__icontains=q)
+            | Q(description__icontains=q)
+            | Q(project_reference__icontains=q)
+        )
+    category_filter = request.GET.get("category", "")
+    if category_filter.isdigit():
+        qs = qs.filter(category_id=int(category_filter))
+    else:
+        category_filter = ""
+
+    now = timezone.now()
+    age_filter = request.GET.get("age", "")
+    age_ranges = {
+        "today": (now - timedelta(days=1), None),
+        "week": (now - timedelta(days=7), None),
+        "overdue": (None, now - timedelta(days=7)),
+    }
+    if age_filter in age_ranges:
+        after, before = age_ranges[age_filter]
+        if after:
+            qs = qs.filter(submitted_at__gte=after)
+        if before:
+            qs = qs.filter(submitted_at__lt=before)
+    else:
+        age_filter = ""
+
+    def _amount(key):
+        try:
+            return Decimal(request.GET.get(key, "").strip()) if request.GET.get(key, "").strip() else None
+        except Exception:
+            return None
+    min_amount, max_amount = _amount("min"), _amount("max")
+    if min_amount is not None:
+        qs = qs.filter(amount__gte=min_amount)
+    if max_amount is not None:
+        qs = qs.filter(amount__lte=max_amount)
+
+    filtered_stats = qs.aggregate(n=Count("id"), total=Sum("amount"))
+    overdue_count = qs.filter(submitted_at__lt=now - timedelta(days=7)).count()
+
+    # ---- Sorting + pagination ----
+    sort_map = {
+        "number": ["claim_number"],
+        "employee": ["employee__first_name", "employee__last_name"],
+        "category": ["category__name"],
+        "amount": ["amount"],
+        "submitted": ["submitted_at"],
+    }
+    sort = request.GET.get("sort", "submitted")
+    direction = request.GET.get("dir", "asc")  # oldest first: work the queue in order
+    if sort not in sort_map:
+        sort = "submitted"
+    if direction not in ("asc", "desc"):
+        direction = "asc"
+    prefix = "-" if direction == "desc" else ""
+    qs = (qs.select_related("employee", "branch", "category")
+          .prefetch_related("attachments", "approval_history__approver")
+          .order_by(*[prefix + f for f in sort_map[sort]], "id"))
+
+    page_size_options = [10, 25, 50, 100]
+    try:
+        page_size = int(request.GET.get("page_size", 10))
+    except (TypeError, ValueError):
+        page_size = 10
+    if page_size not in page_size_options:
+        page_size = 10
+    paginator = Paginator(qs, page_size)
+    page_obj = paginator.get_page(request.GET.get("page"))
+    page_range = paginator.get_elided_page_range(page_obj.number, on_each_side=1, on_ends=1)
+
+    claims = list(page_obj.object_list)
+    for c in claims:
+        c.waiting_days = (now - c.submitted_at).days if c.submitted_at else 0
+        c.admin_approval = None
+        if stage == "director" and not c.skips_admin_stage:
+            history = [a for a in c.approval_history.all() if a.stage == "ADMIN_MANAGER"]
+            c.admin_approval = history[-1] if history else None
+
+    base_params = request.GET.copy()
+    base_params.pop("page", None)
+    sort_params = base_params.copy()
+    for key in ("sort", "dir"):
+        sort_params.pop(key, None)
+    tab_params = base_params.copy()
+    for key in ("stage", "sort", "dir"):
+        tab_params.pop(key, None)
 
     context = {
         "active_nav": "expense_approvals",
-        "admin_queue": admin_queue,
-        "director_queue": director_queue,
+        "claims": claims,
+        "stage": stage,
+        "stage_tabs": stage_tabs,
+        "tab_query_string": tab_params.urlencode(),
+        "filtered_count": filtered_stats["n"] or 0,
+        "filtered_total": filtered_stats["total"] or 0,
+        "overdue_count": overdue_count,
+        "page_obj": page_obj,
+        "paginator": paginator,
+        "page_range": page_range,
+        "page_size": page_size,
+        "page_size_options": page_size_options,
+        "sort": sort,
+        "dir": direction,
+        "query_string": base_params.urlencode(),
+        "sort_query_string": sort_params.urlencode(),
+        "q": q,
+        "category_filter": category_filter,
+        "age_filter": age_filter,
+        "min_amount": request.GET.get("min", "") if min_amount is not None else "",
+        "max_amount": request.GET.get("max", "") if max_amount is not None else "",
+        "is_filtered": bool(q or category_filter or age_filter or min_amount is not None or max_amount is not None),
+        "categories": ExpenseCategory.objects.filter(is_active=True),
         "expense_branches": expense_branches,
         "selected_branch": str(selected_branch),
     }
@@ -800,20 +1057,155 @@ def leave_detail_view(request, pk):
             return _handle_leave_resubmit(request, app)
         return redirect("portal_leave_detail", pk=app.pk)
 
+    approval_history = list(app.approval_history.select_related("approver").order_by("created_at"))
+    review = leave_review_options(user, app)
     context = {
         "active_nav": "leaves",
+        "snapshot": _employee_leave_snapshot(app) if app.employee_id != user.id else None,
         "app": app,
-        "approval_history": app.approval_history.select_related("approver").order_by("created_at"),
+        "approval_history": approval_history,
+        "progress": _leave_progress(app, approval_history),
         "audit_trail": _audit_rows(app),
         "can_resubmit": app.can_resubmit(user),
-        "review": leave_review_options(user, app),
+        "review": review,
         "leave_types": LeaveType.objects.filter(is_active=True) if app.can_resubmit(user) else [],
+        "amend_leave_types": LeaveType.objects.filter(is_active=True) if review else [],
     }
     return render(request, "portal/leave_detail.html", context)
 
 
+def _employee_leave_snapshot(app):
+    """
+    What a reviewer needs next to the decision: the employee's balances (this leave type first,
+    with the balance left after this request) and their three most recent approved leaves.
+    """
+    balances = get_employee_leave_balances(app.employee)
+    pending_statuses = (
+        LeaveApplicationStatus.PENDING_LEAD_RECOMMENDATION,
+        LeaveApplicationStatus.PENDING_HR_VERIFICATION,
+        LeaveApplicationStatus.PENDING_DIRECTOR_APPROVAL,
+    )
+    current = next((b for b in balances if b["leave_type"].id == app.leave_type_id), None)
+    if current:
+        this_pending = app.status in pending_statuses
+        # Balance once this request is deducted (it is only deducted on Director approval).
+        current["after_this"] = current["available_balance"] - (app.number_of_days if this_pending else 0)
+        current["other_pending"] = current["pending_days"] - (app.number_of_days if this_pending else 0)
+        current["is_short"] = this_pending and current["after_this"] < 0
+    others = [b for b in balances if b["leave_type"].id != app.leave_type_id
+              and (b["available_balance"] or b["pending_days"] or b["taken_days"])]
+    recent = (LeaveApplication.objects
+              .filter(employee=app.employee, status=LeaveApplicationStatus.APPROVED)
+              .exclude(pk=app.pk)
+              .select_related("leave_type")
+              .order_by("-start_date", "-id")[:3])
+    today = date.today()
+    recent = list(recent)
+    for r in recent:
+        d = (today - r.end_date).days
+        r.ago_label = ("Upcoming" if d < 0 else "Today" if d == 0 else f"{d}d ago" if d < 31
+                       else f"{d // 30} mo ago" if d < 365 else f"{d // 365} yr ago")
+    return {"current": current, "others": others, "recent": recent}
+
+
+LEAVE_PROGRESS_STAGES = [
+    ("LEAD_MANAGER", "Lead recommendation", "Lead / Manager"),
+    ("HR_COORDINATOR", "HR verification", "HR Coordinator"),
+    ("DIRECTOR", "Director approval", "Director"),
+]
+
+
+def _leave_progress(app, history):
+    """
+    Per-stage view model for the approval tracker on the leave detail page.
+    Only the current cycle counts: decisions made before the latest resubmission are ignored.
+    """
+    S = LeaveApplicationStatus
+    stage_keys = [key for key, _, _ in LEAVE_PROGRESS_STAGES]
+    resubmissions = [h for h in history if h.action == "RESUBMITTED"]
+    last_resubmit = resubmissions[-1] if resubmissions else None
+    cycle = history[history.index(last_resubmit) + 1:] if last_resubmit else history
+    latest = {}
+    for h in cycle:
+        if h.stage not in stage_keys:
+            continue
+        if h.action == "RETURNED":
+            # Sent back: decisions from the return target onwards no longer count.
+            if h.returned_to in stage_keys:
+                for k in stage_keys[stage_keys.index(h.returned_to):]:
+                    latest.pop(k, None)
+            continue
+        latest[h.stage] = h
+
+    pending_stage = {
+        S.PENDING_LEAD_RECOMMENDATION: "LEAD_MANAGER",
+        S.PENDING_HR_VERIFICATION: "HR_COORDINATOR",
+        S.PENDING_DIRECTOR_APPROVAL: "DIRECTOR",
+    }.get(app.status)
+    rejected_stage = {
+        S.REJECTED_BY_LEAD: "LEAD_MANAGER",
+        S.REJECTED_BY_HR: "HR_COORDINATOR",
+        S.REJECTED_BY_DIRECTOR: "DIRECTOR",
+    }.get(app.status)
+    halted_at = pending_stage or rejected_stage
+    halted_idx = stage_keys.index(halted_at) if halted_at else len(stage_keys)
+    skipped = set(app.skipped_stages)
+    withdrawn = app.status == S.WITHDRAWN
+
+    steps = [{
+        "title": "Resubmitted" if last_resubmit else "Submitted",
+        "role": "Employee",
+        "state": "done",
+        "status": "Resubmitted" if last_resubmit else "Submitted",
+        "actor": app.employee.full_name,
+        "date": last_resubmit.created_at if last_resubmit else app.submitted_at,
+    }]
+    for idx, (key, title, role) in enumerate(LEAVE_PROGRESS_STAGES):
+        entry = latest.get(key)
+        step = {"title": title, "role": role, "actor": None, "date": None, "partial": False}
+        if key in skipped:
+            step.update(state="skipped", status="Not required")
+        elif key == rejected_stage:
+            step.update(state="rejected", status="Rejected")
+        elif key == pending_stage:
+            step.update(state="current", status=f"Awaiting {role}")
+        elif entry and "REJECT" not in entry.action:
+            step.update(state="done", status=entry.action_label, partial="PARTIALLY" in entry.action)
+        elif app.status == S.APPROVED or idx < halted_idx and not withdrawn:
+            step.update(state="done", status="Completed")
+        elif withdrawn:
+            step.update(state="upcoming", status="Withdrawn")
+        elif rejected_stage:
+            step.update(state="upcoming", status="Not reached")
+        else:
+            step.update(state="upcoming", status="Waiting")
+        if entry and step["state"] in ("done", "rejected"):
+            step.update(actor=entry.approver.full_name, date=entry.created_at)
+        steps.append(step)
+
+    applicable = [s for s in steps if s["state"] != "skipped"]
+    completed = sum(1 for s in applicable if s["state"] == "done")
+    current_title = next((s["title"] for s in steps if s["state"] in ("current", "rejected")), "")
+    if app.status == S.APPROVED:
+        headline, tone = ("Partially approved" if app.is_partially_approved else "Approved"), "success"
+    elif rejected_stage:
+        headline, tone = f"Rejected at {current_title.lower()}", "danger"
+    elif withdrawn:
+        headline, tone = "Withdrawn by employee", "neutral"
+    else:
+        headline, tone = app.current_stage, "primary"
+    return {
+        "steps": steps,
+        "completed": completed,
+        "total": len(applicable),
+        "percent": round(completed * 100 / len(applicable)) if applicable else 0,
+        "headline": headline,
+        "tone": tone,
+    }
+
+
 AUDIT_FIELD_LABELS = {
-    "leave_type": "Leave type", "start_date": "From", "end_date": "To", "is_half_day": "Half day",
+    "returned_to": "Returned", "leave_type": "Leave type", "start_date": "From", "end_date": "To", "is_half_day": "Half day",
     "half_day_period": "Half-day period", "number_of_days": "Days", "reason": "Reason", "attachment": "Attachment",
 }
 
@@ -885,10 +1277,102 @@ def _handle_leave_resubmit(request, app):
     return redirect_detail
 
 
+LEAVE_STAGES = [
+    # key, tab label, pending status, positive action, positive label, history stage of the previous step
+    ("lead", "Lead recommendation", LeaveApplicationStatus.PENDING_LEAD_RECOMMENDATION, "RECOMMENDED", "Recommend", None),
+    ("hr", "HR verification", LeaveApplicationStatus.PENDING_HR_VERIFICATION, "VERIFIED", "Verify & forward", "LEAD_MANAGER"),
+    ("director", "Director approval", LeaveApplicationStatus.PENDING_DIRECTOR_APPROVAL, "APPROVED", "Approve", "HR_COORDINATOR"),
+]
+
+
+def _apply_leave_review(user, app, action, remarks="", source="WEB", ip_address=None, **extra):
+    """
+    Apply one Lead / HR / Director decision: forward / approve (optionally partial or amended),
+    return to an earlier stage, or reject. Returns (level, message); level is success | error.
+    """
+    reporting_lead = getattr(getattr(app.employee, "profile", None), "reporting_lead", None)
+    if app.employee_id == user.id:
+        return "error", f"{app.application_number}: you cannot act on your own leave application."
+    if app.status == LeaveApplicationStatus.PENDING_LEAD_RECOMMENDATION:
+        if not (reporting_lead == user or user.is_superuser):
+            return "error", f"{app.application_number}: only the employee's reporting Lead / Manager can recommend it."
+    elif not user.can_access_branch(app.branch):
+        return "error", f"{app.application_number}: you do not have permission for this branch."
+
+    kwargs = dict(remarks=remarks, source=source, ip_address=ip_address, **extra)
+    action = (action or "").upper()
+    try:
+        if app.status == LeaveApplicationStatus.PENDING_LEAD_RECOMMENDATION:
+            stage, label, extra_msg = "LEAD_MANAGER", "Lead review", ""
+            recorded = app.lead_review(approver=user, action=action, **kwargs)
+        elif user.is_hr_coordinator and app.status == LeaveApplicationStatus.PENDING_HR_VERIFICATION:
+            stage, label, extra_msg = "HR_COORDINATOR", "HR verification", ""
+            recorded = app.hr_review(approver=user, action=action, **kwargs)
+        elif user.is_director and app.status == LeaveApplicationStatus.PENDING_DIRECTOR_APPROVAL:
+            stage, label, extra_msg = "DIRECTOR", "Final decision", " Official balance updated."
+            recorded = app.director_review(approver=user, action=action, **kwargs)
+        else:
+            return "error", f"{app.application_number} is not awaiting your action."
+    except ValidationError as e:
+        return "error", f"{app.application_number}: " + " ".join(e.messages)
+    notify_leave_review(app, stage, recorded, remarks=remarks, actor=user)
+
+    if recorded == "RETURNED":
+        last = app.approval_history.filter(action="RETURNED").order_by("-created_at").first()
+        target = STAGE_LABELS.get(last.returned_to, "an earlier stage") if last else "an earlier stage"
+        return "success", f"Application {app.application_number} returned to the {target} for another review."
+    msg = _leave_review_message(app, recorded, label)
+    if getattr(app, "last_amendment", None):
+        msg += (f" Changed to {app.leave_type.name}, {app.start_date:%d %b} to {app.end_date:%d %b %Y} "
+                f"({fmt_days(app.number_of_days)} day(s)).")
+    if recorded == "REJECTED" or app.status != LeaveApplicationStatus.APPROVED:
+        extra_msg = ""
+    return "success", msg + extra_msg
+
+
+def _datatable_page(request, qs, sort_map, default_sort, default_dir="desc"):
+    """Shared server-side datatable plumbing: sorting, page size, pagination and link query strings."""
+    sort = request.GET.get("sort", default_sort)
+    direction = request.GET.get("dir", default_dir)
+    if sort not in sort_map:
+        sort = default_sort
+    if direction not in ("asc", "desc"):
+        direction = default_dir
+    prefix = "-" if direction == "desc" else ""
+    qs = qs.order_by(*[prefix + f for f in sort_map[sort]], "id")
+
+    page_size_options = [10, 25, 50, 100]
+    try:
+        page_size = int(request.GET.get("page_size", 10))
+    except (TypeError, ValueError):
+        page_size = 10
+    if page_size not in page_size_options:
+        page_size = 10
+    paginator = Paginator(qs, page_size)
+    page_obj = paginator.get_page(request.GET.get("page"))
+
+    base_params = request.GET.copy()
+    base_params.pop("page", None)
+    sort_params = base_params.copy()
+    for key in ("sort", "dir"):
+        sort_params.pop(key, None)
+    return {
+        "page_obj": page_obj,
+        "paginator": paginator,
+        "page_range": paginator.get_elided_page_range(page_obj.number, on_each_side=1, on_ends=1),
+        "page_size": page_size,
+        "page_size_options": page_size_options,
+        "sort": sort,
+        "dir": direction,
+        "query_string": base_params.urlencode(),
+        "sort_query_string": sort_params.urlencode(),
+    }
+
+
 @login_required
 def leave_approvals_view(request):
     user = request.user
-    if user.role == RoleChoices.EMPLOYEE:
+    if user.role == RoleChoices.EMPLOYEE and not user.is_superuser:
         messages.error(request, "Access restricted to approval authorities.")
         return redirect("portal_dashboard")
 
@@ -896,105 +1380,190 @@ def leave_approvals_view(request):
     selected_branch = request.session.get("selected_branch_id", "all")
 
     if request.method == "POST":
-        app_id = request.POST.get("app_id")
-        action = request.POST.get("action", "").upper()
-        app = get_object_or_404(LeaveApplication, id=app_id)
         next_url = request.POST.get("next", "")
         back = redirect(next_url if next_url.startswith("/leaves/") and "//" not in next_url
                         else "portal_leave_approvals")
 
-        reporting_lead = getattr(getattr(app.employee, "profile", None), "reporting_lead", None)
-        if app.employee == user:
-            messages.error(request, "You cannot act on your own leave application.")
-            return back
-        if app.status == LeaveApplicationStatus.PENDING_LEAD_RECOMMENDATION:
-            if not (reporting_lead == user or user.is_superuser):
-                messages.error(request, "Only the employee's reporting Lead / Manager can give the recommendation.")
+        if request.POST.get("bulk") == "1":
+            decision = request.POST.get("decision", "")
+            remarks = request.POST.get("remarks", "").strip()
+            ids = [int(i) for i in request.POST.getlist("selected") if i.isdigit()]
+            if decision not in ("POSITIVE", "REJECTED") or not ids:
+                messages.error(request, "Select at least one application and a decision.")
                 return back
-        elif not user.can_access_branch(app.branch):
-            messages.error(request, "You do not have permission for this branch.")
+            if decision == "REJECTED" and not remarks:
+                messages.error(request, "A reason is required to reject applications. The employees will see it.")
+                return back
+            positive_by_status = {status: action for _, _, status, action, _, _ in LEAVE_STAGES}
+            done, problems = [], []
+            apps = LeaveApplication.objects.filter(pk__in=ids).select_related("employee__profile", "branch", "leave_type")
+            for app in apps:
+                action = "REJECTED" if decision == "REJECTED" else positive_by_status.get(app.status, "")
+                level, msg = _apply_leave_review(user, app, action, remarks, ip_address=client_ip(request))
+                if level == "success":
+                    done.append(app.application_number)
+                else:
+                    problems.append(msg)
+            verb = "rejected" if decision == "REJECTED" else "approved / forwarded"
+            if done:
+                messages.success(request, f"{len(done)} application(s) {verb}: {', '.join(done[:6])}" + ("…" if len(done) > 6 else ""))
+            if problems:
+                messages.error(request, f"{len(problems)} application(s) not processed: " + " · ".join(problems[:4])
+                               + (" …" if len(problems) > 4 else ""))
             return back
 
+        app = get_object_or_404(LeaveApplication, id=request.POST.get("app_id"))
         try:
             kwargs = _leave_review_kwargs(request)
-            remarks = kwargs["remarks"]
-            if app.status == LeaveApplicationStatus.PENDING_LEAD_RECOMMENDATION and (reporting_lead == user or user.is_superuser):
-                recorded = app.lead_review(approver=user, action=action, **kwargs)
-                event_type = "LEAVE_LEAD_REJECTED" if recorded == "REJECTED" else "LEAVE_LEAD_RECOMMENDED"
-                notify_leave_event(app, event_type, remarks=remarks, partial=recorded.startswith("PARTIALLY_"))
-                messages.success(request, _leave_review_message(app, recorded, "Lead review"))
-
-            elif user.is_hr_coordinator and app.status == LeaveApplicationStatus.PENDING_HR_VERIFICATION:
-                recorded = app.hr_review(approver=user, action=action, **kwargs)
-                event_type = "LEAVE_HR_REJECTED" if recorded == "REJECTED" else "LEAVE_HR_VERIFIED"
-                notify_leave_event(app, event_type, remarks=remarks, partial=recorded.startswith("PARTIALLY_"))
-                messages.success(request, _leave_review_message(app, recorded, "HR verification"))
-
-            elif user.is_director and app.status == LeaveApplicationStatus.PENDING_DIRECTOR_APPROVAL:
-                recorded = app.director_review(approver=user, action=action, **kwargs)
-                event_type = "LEAVE_DIRECTOR_REJECTED" if recorded == "REJECTED" else "LEAVE_DIRECTOR_APPROVED"
-                notify_leave_event(app, event_type, remarks=remarks, partial=recorded.startswith("PARTIALLY_"))
-                messages.success(request, _leave_review_message(app, recorded, "Final decision") + " Official balance updated.")
-
-            else:
-                messages.error(request, "This application is not awaiting your action.")
-
         except ValidationError as e:
             messages.error(request, " ".join(e.messages))
-
+            return back
+        level, msg = _apply_leave_review(user, app, request.POST.get("action", ""), **kwargs)
+        getattr(messages, level)(request, msg)
         return back
 
-    base_qs = LeaveApplication.objects.filter(branch__in=accessible_branches)
+    # ---- Queues this user can act on ----
+    branch_qs = LeaveApplication.objects.filter(branch__in=accessible_branches)
     if selected_branch and selected_branch != "all":
-        base_qs = base_qs.filter(branch_id=selected_branch)
+        branch_qs = branch_qs.filter(branch_id=selected_branch)
+    lead_qs = LeaveApplication.objects.filter(
+        employee__profile__reporting_lead=user, status=LeaveApplicationStatus.PENDING_LEAD_RECOMMENDATION)
 
-    # Lead Manager queue (direct reports)
-    lead_queue = LeaveApplication.objects.filter(
-        employee__profile__reporting_lead=user,
-        status=LeaveApplicationStatus.PENDING_LEAD_RECOMMENDATION
-    ).order_by("-submitted_at")
+    queue_sources = {}
+    if user.is_lead_manager or user.is_superuser or lead_qs.exists():
+        queue_sources["lead"] = lead_qs
+    if user.is_hr_coordinator or user.is_superuser:
+        queue_sources["hr"] = branch_qs.filter(status=LeaveApplicationStatus.PENDING_HR_VERIFICATION)
+    if user.is_director or user.is_superuser:
+        queue_sources["director"] = branch_qs.filter(status=LeaveApplicationStatus.PENDING_DIRECTOR_APPROVAL)
+    queue_sources = {k: v.exclude(employee=user) for k, v in queue_sources.items()}
 
-    # HR Coordinator queue
-    hr_queue = base_qs.filter(
-        status=LeaveApplicationStatus.PENDING_HR_VERIFICATION
-    ).order_by("-submitted_at")
-
-    # Director queue
-    director_queue = base_qs.filter(
-        status=LeaveApplicationStatus.PENDING_DIRECTOR_APPROVAL
-    ).order_by("-submitted_at")
+    tabs = []
+    for key, label, _status, _action, positive_label, _prev in LEAVE_STAGES:
+        if key in queue_sources:
+            agg = queue_sources[key].aggregate(n=Count("id"), days=Sum("number_of_days"))
+            tabs.append({"key": key, "label": label, "count": agg["n"] or 0, "days": agg["days"] or 0,
+                         "positive_label": positive_label})
 
     # Approval tracker: everyone else's leave this user may follow, location-scoped.
-    track = request.GET.get("track", "pending")
-    tracked = visible_leave_applications(user, include_own=False)
+    tracked_base = visible_leave_applications(user, include_own=False)
     if user.role != RoleChoices.LEAD_MANAGER and selected_branch and selected_branch != "all":
-        tracked = tracked.filter(branch_id=selected_branch)
-    track_counts = leave_track_counts(tracked, user)
-    tracked = filter_leave_track(tracked, track, user) \
-        .select_related("employee", "branch", "leave_type") \
-        .prefetch_related("approval_history__approver") \
-        .order_by("-submitted_at")[:200]
-    tracked = list(tracked)
-    for a in tracked:
-        history = list(a.approval_history.all())
-        a.last_step = history[-1] if history else None
-        mine = [h for h in history if h.approver_id == user.id]
-        a.my_step = mine[-1] if mine else None
+        tracked_base = tracked_base.filter(branch_id=selected_branch)
 
-    context = {
-        "active_nav": "leave_approvals",
-        "lead_queue": lead_queue,
-        "hr_queue": hr_queue,
-        "director_queue": director_queue,
-        "track": track,
-        "track_filters": [
+    view = request.GET.get("view", "")
+    valid_views = [t["key"] for t in tabs] + ["tracker"]
+    if view not in valid_views:
+        if "track" in request.GET or not tabs:
+            view = "tracker"
+        else:
+            view = next((t["key"] for t in tabs if t["count"]), tabs[0]["key"])
+
+    track = request.GET.get("track", "pending")
+    if view == "tracker":
+        track_counts = leave_track_counts(tracked_base, user)
+        qs = filter_leave_track(tracked_base, track, user)
+        track_filters = [
             (key, label, track_counts.get(key, 0)) for key, label in [
                 ("pending", "In progress"), ("awaiting_lead", "Awaiting Lead"), ("awaiting_hr", "Awaiting HR"),
                 ("awaiting_director", "Awaiting Director"), ("approved", "Approved"), ("rejected", "Rejected"),
                 ("acted_by_me", "Acted on by me"), ("all", "All"),
             ]
-        ],
-        "tracked": tracked,
+        ]
+    else:
+        qs = queue_sources[view]
+        track_filters = []
+
+    # ---- Filters ----
+    q = request.GET.get("q", "").strip()
+    if q:
+        qs = qs.filter(
+            Q(application_number__icontains=q)
+            | Q(employee__first_name__icontains=q)
+            | Q(employee__last_name__icontains=q)
+            | Q(employee__employee_id__icontains=q)
+            | Q(reason__icontains=q)
+        )
+    leave_type_filter = request.GET.get("leave_type", "")
+    if leave_type_filter.isdigit():
+        qs = qs.filter(leave_type_id=int(leave_type_filter))
+    else:
+        leave_type_filter = ""
+
+    today = date.today()
+    starts_filter = request.GET.get("starts", "")
+    if starts_filter == "started":
+        qs = qs.filter(start_date__lte=today)
+    elif starts_filter == "week":
+        qs = qs.filter(start_date__gte=today, start_date__lte=today + timedelta(days=7))
+    elif starts_filter == "month":
+        qs = qs.filter(start_date__gte=today, start_date__lte=today + timedelta(days=30))
+    elif starts_filter == "later":
+        qs = qs.filter(start_date__gt=today + timedelta(days=30))
+    else:
+        starts_filter = ""
+
+    qs = qs.distinct()
+    is_queue = view != "tracker"
+    urgent_count = qs.filter(start_date__lte=today + timedelta(days=3)).count() if is_queue else 0
+    filtered_days = qs.aggregate(d=Sum("number_of_days"))["d"] or 0 if is_queue else 0
+
+    sort_map = {
+        "number": ["application_number"],
+        "employee": ["employee__first_name", "employee__last_name"],
+        "type": ["leave_type__name"],
+        "dates": ["start_date"],
+        "days": ["number_of_days"],
+        "submitted": ["submitted_at"],
+        "status": ["status"],
+    }
+    qs = qs.select_related("employee", "employee__profile", "branch", "leave_type") \
+           .prefetch_related("approval_history__approver")
+    dt = _datatable_page(request, qs, sort_map,
+                         default_sort="dates" if is_queue else "submitted",
+                         default_dir="asc" if is_queue else "desc")
+
+    prev_stage = next((p for k, *_rest, p in LEAVE_STAGES if k == view), None)
+    now = timezone.now()
+    rows = list(dt["page_obj"].object_list)
+    for a in rows:
+        history = list(a.approval_history.all())
+        a.last_step = history[-1] if history else None
+        mine = [h for h in history if h.approver_id == user.id]
+        a.my_step = mine[-1] if mine else None
+        prev = [h for h in history if h.stage == prev_stage] if prev_stage else []
+        a.prev_step = prev[-1] if prev else None
+        a.waiting_days = (now - a.submitted_at).days if a.submitted_at else 0
+        a.starts_in = (a.start_date - today).days
+        a.started_days_ago = max(0, -a.starts_in)
+        a.can_partial = not a.is_half_day and a.start_date != a.end_date
+        stage_key = {"lead": "LEAD_MANAGER", "hr": "HR_COORDINATOR", "director": "DIRECTOR"}.get(view)
+        a.return_targets_attr = ",".join(
+            f"{t}:{STAGE_LABELS[t]}" for t in a.return_targets(stage_key)) if stage_key else ""
+
+    tab_params = request.GET.copy()
+    for key in ("view", "track", "page", "sort", "dir"):
+        tab_params.pop(key, None)
+    current_tab = next((t for t in tabs if t["key"] == view), None)
+
+    context = {
+        "active_nav": "leave_approvals",
+        "view": view,
+        "is_queue": is_queue,
+        "tabs": tabs,
+        "current_tab": current_tab,
+        "tracker_count": tracked_base.count(),
+        "tab_query_string": tab_params.urlencode(),
+        "rows": rows,
+        "track": track,
+        "track_filters": track_filters,
+        "q": q,
+        "leave_type_filter": leave_type_filter,
+        "starts_filter": starts_filter,
+        "is_filtered": bool(q or leave_type_filter or starts_filter),
+        "leave_types": LeaveType.objects.filter(is_active=True),
+        "urgent_count": urgent_count,
+        "filtered_days": filtered_days,
+        **dt,
     }
     return render(request, "portal/leave_approvals.html", context)
 
@@ -1287,17 +1856,33 @@ def employees_view(request):
     accessible_branches = user.get_accessible_branches()
     selected_branch = request.session.get("selected_branch_id", "all")
 
-    can_manage = user.is_superuser or user.role in [
-        RoleChoices.DIRECTOR, RoleChoices.ADMIN_MANAGER, RoleChoices.HR_COORDINATOR
-    ]
+    can_manage = can_manage_users(user)
 
     if request.method == "POST":
         back = redirect(f"{request.path}?{request.GET.urlencode()}" if request.GET else "portal_employees")
+        action = request.POST.get("action")
         try:
-            if request.POST.get("action") == "reset_password":
+            if action == "reset_password":
                 target = get_object_or_404(User, pk=request.POST.get("employee_pk"))
                 set_employee_password(user, target, request.POST.get("new_password", ""))
                 messages.success(request, f"New password set for {target.full_name} ({target.employee_id}). Share it securely with the employee.")
+                return back
+            if action == "bulk":
+                bulk_action = request.POST.get("bulk_action", "")
+                result = bulk_employee_action(user, request.POST.getlist("selected"), bulk_action)
+                verb = {"delete": "deleted", "activate": "activated", "deactivate": "deactivated"}[bulk_action]
+                if result["done"]:
+                    messages.success(request, f"{len(result['done'])} employee(s) {verb}.")
+                if result["archived"]:
+                    messages.warning(
+                        request,
+                        f"{len(result['archived'])} employee(s) have leave or expense history and were deactivated "
+                        f"instead of deleted to preserve audit records: {', '.join(result['archived'][:5])}"
+                        + ("…" if len(result["archived"]) > 5 else ""),
+                    )
+                if result["skipped"]:
+                    details = ", ".join(f"{e.full_name} ({why})" for e, why in result["skipped"][:5])
+                    messages.error(request, f"{len(result['skipped'])} employee(s) skipped: {details}")
                 return back
             # Add Employee modal submission
             new_user, generated_password = create_employee(user, request.POST)
@@ -1309,8 +1894,8 @@ def employees_view(request):
             messages.info(request, f"Temporary password for {new_user.employee_id}: {generated_password}  — share it securely; the employee can change it from their profile.")
         return redirect("portal_employees")
 
-    # Search and Filter GET parameters
-    search_q = request.GET.get("q", "").strip()
+    # ---- Server-side datatable: search, filters, sorting, pagination ----
+    q = request.GET.get("q", "").strip()
     branch_filter = request.GET.get("branch", "").strip()
     dept_filter = request.GET.get("dept", "").strip()
     role_filter = request.GET.get("role", "").strip()
@@ -1323,49 +1908,75 @@ def employees_view(request):
     if selected_branch and selected_branch != "all":
         qs = qs.filter(primary_branch_id=selected_branch)
 
-    if branch_filter and branch_filter != "all":
-        qs = qs.filter(primary_branch_id=branch_filter)
+    if branch_filter.isdigit():
+        qs = qs.filter(primary_branch_id=int(branch_filter))
+    else:
+        branch_filter = ""
 
-    if dept_filter:
-        qs = qs.filter(profile__department_id=dept_filter)
+    if dept_filter.isdigit():
+        qs = qs.filter(profile__department_id=int(dept_filter))
+    else:
+        dept_filter = ""
 
-    if role_filter:
+    if role_filter in RoleChoices.values:
         qs = qs.filter(role=role_filter)
+    else:
+        role_filter = ""
 
     if status_filter == "active":
         qs = qs.filter(is_active=True)
     elif status_filter == "inactive":
         qs = qs.filter(is_active=False)
+    else:
+        status_filter = ""
 
-    if search_q:
+    if q:
         qs = qs.filter(
-            Q(first_name__icontains=search_q) |
-            Q(last_name__icontains=search_q) |
-            Q(employee_id__icontains=search_q) |
-            Q(email__icontains=search_q) |
-            Q(profile__designation__icontains=search_q) |
-            Q(profile__department__name__icontains=search_q) |
-            Q(primary_branch__name__icontains=search_q) |
-            Q(primary_branch__city__icontains=search_q)
+            Q(first_name__icontains=q) |
+            Q(last_name__icontains=q) |
+            Q(employee_id__icontains=q) |
+            Q(email__icontains=q) |
+            Q(profile__designation__icontains=q) |
+            Q(profile__department__name__icontains=q) |
+            Q(primary_branch__name__icontains=q) |
+            Q(primary_branch__city__icontains=q)
         )
 
-    # Compile dynamic filter pills for active filters
-    active_filters = []
-    if search_q:
-        active_filters.append({"label": f'Search: "{search_q}"', "key": "q"})
-    if branch_filter and branch_filter != "all":
-        b = accessible_branches.filter(id=branch_filter).first()
-        if b:
-            active_filters.append({"label": f"Location: {b.city or b.name}", "key": "branch"})
-    if dept_filter:
-        d = Department.objects.filter(id=dept_filter).first()
-        if d:
-            active_filters.append({"label": f"Dept: {d.name}", "key": "dept"})
-    if role_filter:
-        r_display = dict(RoleChoices.choices).get(role_filter, role_filter)
-        active_filters.append({"label": f"Role: {r_display}", "key": "role"})
-    if status_filter:
-        active_filters.append({"label": f"Status: {status_filter.capitalize()}", "key": "status"})
+    sort_map = {
+        "employee": ["first_name", "last_name"],
+        "department": ["profile__department__name"],
+        "role": ["profile__designation", "role"],
+        "lead": ["profile__reporting_lead__first_name"],
+        "location": ["primary_branch__name"],
+        "status": ["is_active"],
+        "id": ["employee_id"],
+    }
+    sort = request.GET.get("sort", "employee")
+    direction = request.GET.get("dir", "asc")
+    if sort not in sort_map:
+        sort = "employee"
+    if direction not in ("asc", "desc"):
+        direction = "asc"
+    prefix = "-" if direction == "desc" else ""
+    qs = qs.order_by(*[prefix + f for f in sort_map[sort]], "employee_id")
+
+    page_size_options = [10, 25, 50, 100]
+    try:
+        page_size = int(request.GET.get("page_size", 10))
+    except (TypeError, ValueError):
+        page_size = 10
+    if page_size not in page_size_options:
+        page_size = 10
+
+    paginator = Paginator(qs, page_size)
+    page_obj = paginator.get_page(request.GET.get("page"))
+    page_range = paginator.get_elided_page_range(page_obj.number, on_each_side=1, on_ends=1)
+
+    base_params = request.GET.copy()
+    base_params.pop("page", None)
+    sort_params = base_params.copy()
+    for key in ("sort", "dir"):
+        sort_params.pop(key, None)
 
     all_departments = Department.objects.filter(is_active=True)
     all_leads = User.objects.filter(
@@ -1373,18 +1984,25 @@ def employees_view(request):
         role__in=[RoleChoices.LEAD_MANAGER, RoleChoices.ADMIN_MANAGER, RoleChoices.DIRECTOR]
     ).distinct()
 
-    total_count = qs.count()
-
     context = {
         "active_nav": "employees",
-        "employees": qs.order_by("employee_id"),
-        "total_count": total_count,
-        "search_q": search_q,
+        "employees": page_obj.object_list,
+        "page_obj": page_obj,
+        "paginator": paginator,
+        "page_range": page_range,
+        "page_size": page_size,
+        "page_size_options": page_size_options,
+        "sort": sort,
+        "dir": direction,
+        "query_string": base_params.urlencode(),
+        "sort_query_string": sort_params.urlencode(),
+        "total_count": paginator.count,
+        "q": q,
         "branch_filter": branch_filter,
         "dept_filter": dept_filter,
         "role_filter": role_filter,
         "status_filter": status_filter,
-        "active_filters": active_filters,
+        "is_filtered": bool(q or branch_filter or dept_filter or role_filter or status_filter),
         "all_branches": accessible_branches,
         "all_departments": all_departments,
         "all_roles": RoleChoices.choices,
