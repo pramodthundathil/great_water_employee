@@ -136,6 +136,8 @@ class EmployeeLeaveBalanceView(APIView):
                 "leave_type_code": item["leave_type"].code,
                 "leave_type_name": item["leave_type"].name,
                 "is_accrual_based": item["leave_type"].is_accrual_based,
+                "policy_id": item["policy"].id if item["policy"] else None,
+                "policy_name": item["policy"].name if item["policy"] else None,
                 "earned_days": float(item["earned_days"]),
                 "taken_days": float(item["taken_days"]),
                 "pending_days": float(item["pending_days"]),

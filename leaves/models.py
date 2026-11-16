@@ -76,6 +76,8 @@ class LeaveAuditAction(models.TextChoices):
     WITHDRAWN = "WITHDRAWN", "Withdrawn"
     RETURNED = "RETURNED", "Returned to earlier stage"
     AMENDED = "AMENDED", "Leave type / dates changed by approver"
+    APPROVAL_REVOKED = "APPROVAL_REVOKED", "Approval revoked by Director"
+    VERIFICATION_REVERTED = "VERIFICATION_REVERTED", "HR verification reverted"
 
 
 class LeaveLedgerEntryType(models.TextChoices):
@@ -85,6 +87,7 @@ class LeaveLedgerEntryType(models.TextChoices):
     MANUAL_ADJUSTMENT = "MANUAL_ADJUSTMENT", "HR Manual Adjustment"
     CARRY_FORWARD = "CARRY_FORWARD", "Yearly Carry Forward"
     LAPSED = "LAPSED", "Lapsed / Expired"
+    LEAVE_REVERSAL = "LEAVE_REVERSAL", "Approved Leave Reversal"
 
 
 class HalfDayPeriod(models.TextChoices):
@@ -140,6 +143,84 @@ class LeavePolicy(models.Model):
 
     def __str__(self):
         return f"{self.name} - {self.leave_type.code} ({self.yearly_entitlement} days/yr)"
+
+    def save(self, *args, assign_to_all=True, **kwargs):
+        """
+        New policies apply to all employees by default (admin, seed scripts, API).
+        Pass assign_to_all=False to create a policy that will be scoped explicitly.
+        """
+        is_new = self._state.adding
+        super().save(*args, **kwargs)
+        if is_new and assign_to_all:
+            LeavePolicyAssignment.objects.get_or_create(
+                policy=self, scope=PolicyScope.ALL, branch=None, department=None, employee=None,
+            )
+
+
+class PolicyScope(models.TextChoices):
+    ALL = "ALL", "All employees"
+    BRANCH = "BRANCH", "Branch / location"
+    DEPARTMENT = "DEPARTMENT", "Department"
+    EMPLOYEE = "EMPLOYEE", "Individual employee"
+
+
+# Higher number wins when several policies of the same leave type match one employee.
+SCOPE_PRIORITY = {
+    PolicyScope.EMPLOYEE: 4,
+    PolicyScope.DEPARTMENT: 3,
+    PolicyScope.BRANCH: 2,
+    PolicyScope.ALL: 1,
+}
+
+
+class LeavePolicyAssignment(models.Model):
+    """
+    Who a LeavePolicy applies to. A policy with no assignments applies to nobody.
+    For each employee and leave type exactly one policy is resolved, the most
+    specific match winning: Individual > Department > Branch > All employees.
+    """
+    policy = models.ForeignKey(LeavePolicy, on_delete=models.CASCADE, related_name="assignments")
+    scope = models.CharField(max_length=20, choices=PolicyScope.choices, db_index=True)
+    branch = models.ForeignKey(
+        "organization.Branch", on_delete=models.CASCADE, null=True, blank=True,
+        related_name="leave_policy_assignments",
+    )
+    department = models.ForeignKey(
+        "organization.Department", on_delete=models.CASCADE, null=True, blank=True,
+        related_name="leave_policy_assignments",
+    )
+    employee = models.ForeignKey(
+        "accounts.User", on_delete=models.CASCADE, null=True, blank=True,
+        related_name="leave_policy_assignments",
+    )
+    created_by = models.ForeignKey(
+        "accounts.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Leave Policy Assignment"
+        verbose_name_plural = "Leave Policy Assignments"
+        ordering = ["scope", "id"]
+        # Duplicates are prevented in leaves.services.assign_policy (get_or_create),
+        # since NULL-aware unique constraints are not portable across databases.
+
+    @property
+    def priority(self):
+        return SCOPE_PRIORITY.get(self.scope, 0)
+
+    @property
+    def target_label(self):
+        if self.scope == PolicyScope.BRANCH and self.branch_id:
+            return self.branch.name
+        if self.scope == PolicyScope.DEPARTMENT and self.department_id:
+            return self.department.name
+        if self.scope == PolicyScope.EMPLOYEE and self.employee_id:
+            return f"{self.employee.full_name} ({self.employee.employee_id})"
+        return "All employees"
+
+    def __str__(self):
+        return f"{self.policy.name} → {self.get_scope_display()}: {self.target_label}"
 
 
 class LeaveAccrualRun(models.Model):
@@ -590,6 +671,103 @@ class LeaveApplication(models.Model):
                         source=source, ip_address=ip_address)
 
 
+    # ------------------------------------------------------------------
+    # Corrections after a decision
+    # ------------------------------------------------------------------
+    def _check_corrector(self, user, remarks, what):
+        if user.id == self.employee_id and not user.is_superuser:
+            raise ValidationError(f"You cannot {what} on your own leave application.")
+        if not remarks or not remarks.strip():
+            raise ValidationError(f"Remarks are mandatory to {what}.")
+
+    @transaction.atomic
+    def revoke_approval(self, director, remarks="", source="SYSTEM", ip_address=None):
+        """
+        Director takes back an approved leave, also after its dates are over. The deducted days are
+        credited back and the leave returns to Pending Director Approval, where the Director can
+        approve it again (optionally with corrected dates) or reject it.
+        """
+        if self.status != LeaveApplicationStatus.APPROVED:
+            raise ValidationError("Only an approved leave can be revoked.")
+        if not director.is_director:
+            raise ValidationError("Only a Director can revoke an approved leave.")
+        self._check_corrector(director, remarks, "revoke the approval")
+
+        from leaves.services import log_leave_audit, reverse_leave_deduction
+        reverse_leave_deduction(self, director, note_prefix="Approval revoked for")
+        from_status = self.status
+        self.status = LeaveApplicationStatus.PENDING_DIRECTOR_APPROVAL
+        self.save()
+        LeaveApproval.objects.create(application=self, stage="DIRECTOR", approver=director,
+                                     action="REVOKED", remarks=remarks.strip())
+        log_leave_audit(self, director, LeaveAuditAction.APPROVAL_REVOKED, from_status=from_status,
+                        stage="DIRECTOR", remarks=remarks, source=source, ip_address=ip_address)
+
+    @transaction.atomic
+    def revert_verification(self, hr_user, remarks="", source="SYSTEM", ip_address=None):
+        """
+        HR Coordinator takes back their verification while the leave still awaits the Director.
+        Once the Director has decided, HR can no longer revert it.
+        """
+        if self.status == LeaveApplicationStatus.APPROVED:
+            raise ValidationError("The Director has already approved this leave; HR verification can no longer be reverted.")
+        if self.status != LeaveApplicationStatus.PENDING_DIRECTOR_APPROVAL:
+            raise ValidationError("HR verification can only be reverted while the leave awaits the Director.")
+        if "HR_COORDINATOR" in self.skipped_stages:
+            raise ValidationError("This leave did not pass through HR verification.")
+        if not hr_user.is_hr_coordinator:
+            raise ValidationError("Only an HR Coordinator can revert HR verification.")
+        self._check_corrector(hr_user, remarks, "revert the verification")
+
+        from leaves.services import log_leave_audit
+        from_status = self.status
+        self.status = LeaveApplicationStatus.PENDING_HR_VERIFICATION
+        self.save()
+        LeaveApproval.objects.create(application=self, stage="HR_COORDINATOR", approver=hr_user,
+                                     action="VERIFICATION_REVERTED", remarks=remarks.strip())
+        log_leave_audit(self, hr_user, LeaveAuditAction.VERIFICATION_REVERTED, from_status=from_status,
+                        stage="HR_COORDINATOR", remarks=remarks, source=source, ip_address=ip_address)
+
+    @transaction.atomic
+    def edit_dates(self, user, start_date, end_date, remarks="", leave_type=None, source="SYSTEM", ip_address=None):
+        """
+        Corrects the leave type / dates after a decision (past dates are allowed):
+          Director       : an approved leave; the ledger is re-adjusted to the new days
+          HR Coordinator : a verified leave still awaiting the Director (not once it is approved)
+        Returns the field changes.
+        """
+        S = LeaveApplicationStatus
+        if self.status == S.APPROVED:
+            if not user.is_director:
+                raise ValidationError("The Director has already approved this leave; only a Director can change it now.")
+            stage = "DIRECTOR"
+        elif self.status == S.PENDING_DIRECTOR_APPROVAL and "HR_COORDINATOR" not in self.skipped_stages:
+            if not user.is_hr_coordinator:
+                raise ValidationError("Only an HR Coordinator can change the dates at this stage.")
+            stage = "HR_COORDINATOR"
+        else:
+            raise ValidationError("The dates of this leave cannot be changed at this stage.")
+        self._check_corrector(user, remarks, "change the dates")
+
+        old_type, old_days = self.leave_type, self.number_of_days
+        changes = self._apply_amendment(leave_type, start_date, end_date, remarks)
+        if not changes:
+            raise ValidationError("Nothing to change: the leave type and dates are the same.")
+        self.save()
+        if self.status == S.APPROVED:
+            from leaves.services import deduct_leave_from_ledger, reverse_leave_deduction
+            reverse_leave_deduction(self, user, note_prefix="Dates changed for", leave_type=old_type, days=old_days)
+            deduct_leave_from_ledger(self, user, note_prefix="Re-approved after date change")
+
+        from leaves.services import log_leave_audit
+        LeaveApproval.objects.create(application=self, stage=stage, approver=user, action="DATES_EDITED",
+                                     remarks=remarks.strip(), changes=changes)
+        log_leave_audit(self, user, LeaveAuditAction.AMENDED, from_status=self.status, stage=stage,
+                        remarks=remarks, changes=changes, source=source, ip_address=ip_address)
+        self.last_amendment = changes
+        return changes
+
+
 class LeaveApproval(models.Model):
     application = models.ForeignKey(
         LeaveApplication,
@@ -626,6 +804,10 @@ class LeaveApproval(models.Model):
     def action_label(self):
         if self.action == "RETURNED":
             return f"Returned to {STAGE_LABELS.get(self.returned_to, self.returned_to)}"
+        special = {"REVOKED": "Approval revoked", "VERIFICATION_REVERTED": "Verification reverted",
+                   "DATES_EDITED": "Dates changed"}
+        if self.action in special:
+            return special[self.action]
         return self.action.replace("_", " ").title()
 
     @property

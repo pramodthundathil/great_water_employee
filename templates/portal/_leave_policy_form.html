@@ -181,6 +181,28 @@
             </div>
         </div>
 
+        {% if not policy %}
+        <div class="mt-3">
+            <div class="form-label small fw-semibold mb-2">Applies to</div>
+            <div class="gw-radio-grid">
+                <label class="gw-radio-card" for="applies-all-{{ lt.id }}-{{ pid }}">
+                    <input type="radio" name="applies_to" value="ALL" id="applies-all-{{ lt.id }}-{{ pid }}" checked>
+                    <span>
+                        <span class="gw-radio-title">All employees</span>
+                        <span class="gw-radio-desc">Organisation default. More specific policies still override it.</span>
+                    </span>
+                </label>
+                <label class="gw-radio-card" for="applies-specific-{{ lt.id }}-{{ pid }}">
+                    <input type="radio" name="applies_to" value="SPECIFIC" id="applies-specific-{{ lt.id }}-{{ pid }}">
+                    <span>
+                        <span class="gw-radio-title">Specific branches, departments or people</span>
+                        <span class="gw-radio-desc">You'll pick them right after creating the policy.</span>
+                    </span>
+                </label>
+            </div>
+        </div>
+        {% endif %}
+
         <div class="d-flex justify-content-end mt-3 pt-2 border-top">
             <button type="submit" class="btn btn-sm btn-gw-primary">
                 <i class="bi bi-check2-circle me-1" aria-hidden="true"></i>
@@ -189,4 +211,5 @@
         </div>
     </fieldset>
 </form>
+{% if policy %}{% include "portal/_leave_policy_assignments.html" with policy=policy lt=lt year=year %}{% endif %}
 {% endwith %}

@@ -7,7 +7,7 @@
 <div class="page-title-box">
     <div>
         <h1 class="page-title">Reports &amp; Data Exports</h1>
-        <p class="page-subtitle">PDF and Excel exports. Results are limited to the branches and employees you are authorised to see.</p>
+        <p class="page-subtitle">PDF and Excel exports. {{ scope_note }}</p>
     </div>
 </div>
 
@@ -16,6 +16,7 @@
     <div class="gw-card-header"><h5 class="gw-card-title"><i class="bi bi-funnel me-2"></i>Filters (apply to every report below)</h5></div>
     <div class="gw-card-body p-4">
         <form id="reportFilters" class="row g-3">
+            {% if show_branch_filter %}
             <div class="col-md-4">
                 <label class="form-label small fw-bold">Branch</label>
                 <select name="branch_id" class="form-select">
@@ -23,6 +24,7 @@
                     {% for b in branches %}<option value="{{ b.id }}">{{ b.name }} ({{ b.code }})</option>{% endfor %}
                 </select>
             </div>
+            {% endif %}
             <div class="col-md-4">
                 <label class="form-label small fw-bold">Department</label>
                 <select name="department_id" class="form-select">
@@ -47,6 +49,7 @@
 </div>
 
 <div class="row g-4">
+    {% if "expenses" in allowed_reports %}
     <div class="col-lg-6">
         <div class="gw-card h-100">
             <div class="gw-card-header"><h5 class="gw-card-title text-primary"><i class="bi bi-receipt me-2"></i>Expense report</h5></div>
@@ -60,6 +63,8 @@
             </div>
         </div>
     </div>
+    {% endif %}
+    {% if "leaves" in allowed_reports %}
     <div class="col-lg-6">
         <div class="gw-card h-100">
             <div class="gw-card-header"><h5 class="gw-card-title text-success"><i class="bi bi-calendar2-range me-2"></i>Leave history report</h5></div>
@@ -73,6 +78,8 @@
             </div>
         </div>
     </div>
+    {% endif %}
+    {% if "leave-balances" in allowed_reports %}
     <div class="col-lg-6">
         <div class="gw-card h-100">
             <div class="gw-card-header"><h5 class="gw-card-title"><i class="bi bi-wallet2 me-2"></i>Leave balance report</h5></div>
@@ -82,6 +89,8 @@
             </div>
         </div>
     </div>
+    {% endif %}
+    {% if "expense-summary" in allowed_reports %}
     <div class="col-lg-6">
         <div class="gw-card h-100">
             <div class="gw-card-header"><h5 class="gw-card-title"><i class="bi bi-table me-2"></i>Monthly expense summary</h5></div>
@@ -91,7 +100,8 @@
             </div>
         </div>
     </div>
-    {% if is_reviewer %}
+    {% endif %}
+    {% if "pending-approvals" in allowed_reports %}
     <div class="col-lg-6">
         <div class="gw-card h-100">
             <div class="gw-card-header"><h5 class="gw-card-title text-warning"><i class="bi bi-hourglass-split me-2"></i>Pending approvals report</h5></div>
@@ -102,6 +112,7 @@
         </div>
     </div>
     {% endif %}
+    {% if "payments" in allowed_reports %}
     <div class="col-lg-6">
         <div class="gw-card h-100">
             <div class="gw-card-header"><h5 class="gw-card-title text-info"><i class="bi bi-cash-stack me-2"></i>Reimbursement / payment report</h5></div>
@@ -111,6 +122,7 @@
             </div>
         </div>
     </div>
+    {% endif %}
 </div>
 {% endblock %}
 

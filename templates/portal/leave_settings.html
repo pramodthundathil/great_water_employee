@@ -203,6 +203,9 @@
                                 {% if p.max_carry_forward > 0 %}up to <strong>{{ p.max_carry_forward|floatformat:"-2" }}</strong> days{% else %}none{% endif %}
                                 &middot; Probation:
                                 {% if p.probation_period_months > 0 %}<strong>{{ p.probation_period_months }}</strong> mo{% else %}none{% endif %}
+                                &middot; Applies to:
+                                {% for a in p.assignment_list %}{{ a.target_label }}{% if not forloop.last %}, {% endif %}{% empty %}<span class="text-danger">nobody yet</span>{% endfor %}
+                                {% if p.is_active %}<span class="text-muted">({{ p.covered_count }} employee{{ p.covered_count|pluralize }})</span>{% endif %}
                             </div>
                             {% empty %}
                                 {% if lt.is_paid %}
@@ -877,6 +880,158 @@
         </div>
     </form>
 </dialog>
+
+<!-- 5. Assign Policy (bulk) Dialog -->
+<dialog id="assignPolicyDialog" class="gw-dialog gw-dialog--wide" aria-labelledby="assignPolicyTitle" data-open-assign="{{ open_assign_id|default:'' }}">
+    <div class="gw-dialog-header">
+        <h2 id="assignPolicyTitle" class="gw-dialog-title">
+            <i class="bi bi-person-plus me-2 text-primary" aria-hidden="true"></i>Assign <span id="assignPolicyName">policy</span>
+        </h2>
+        <button type="button" class="btn-close" commandfor="assignPolicyDialog" command="close" aria-label="Close"></button>
+    </div>
+    <form method="post" action="{% url 'portal_leave_settings' %}" id="assignPolicyForm">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="assign_policy">
+        <input type="hidden" name="policy_id" id="assignPolicyId" value="">
+        <input type="hidden" name="tab" value="types">
+        <input type="hidden" name="year" value="{{ year }}">
+
+        <div class="gw-dialog-body d-flex flex-column gap-3">
+            <div>
+                <div class="form-label small fw-semibold mb-2">Apply this policy to</div>
+                <div class="gw-radio-grid">
+                    <label class="gw-radio-card" for="scopeAll">
+                        <input type="radio" name="scope" value="ALL" id="scopeAll" class="js-scope-radio">
+                        <span><span class="gw-radio-title"><i class="bi bi-globe2 me-1"></i>All employees</span>
+                        <span class="gw-radio-desc">Organisation-wide default</span></span>
+                    </label>
+                    <label class="gw-radio-card" for="scopeBranch">
+                        <input type="radio" name="scope" value="BRANCH" id="scopeBranch" class="js-scope-radio" checked>
+                        <span><span class="gw-radio-title"><i class="bi bi-geo-alt me-1"></i>Branches / locations</span>
+                        <span class="gw-radio-desc">Everyone whose primary branch matches</span></span>
+                    </label>
+                    <label class="gw-radio-card" for="scopeDept">
+                        <input type="radio" name="scope" value="DEPARTMENT" id="scopeDept" class="js-scope-radio">
+                        <span><span class="gw-radio-title"><i class="bi bi-diagram-3 me-1"></i>Departments</span>
+                        <span class="gw-radio-desc">Everyone in the selected departments</span></span>
+                    </label>
+                    <label class="gw-radio-card" for="scopeEmp">
+                        <input type="radio" name="scope" value="EMPLOYEE" id="scopeEmp" class="js-scope-radio">
+                        <span><span class="gw-radio-title"><i class="bi bi-person me-1"></i>Individual employees</span>
+                        <span class="gw-radio-desc">Pick people, filter and select in bulk</span></span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Branch picker -->
+            <div class="js-scope-panel" data-scope="BRANCH">
+                <div class="gw-picker-toolbar">
+                    <span class="small fw-semibold">Branches <span class="text-muted js-picker-count"></span></span>
+                    <button type="button" class="btn btn-link btn-sm p-0 js-select-all">Select all</button>
+                </div>
+                <div class="gw-picker-list">
+                    {% for b in branches %}
+                    <label class="gw-picker-item">
+                        <input type="checkbox" class="form-check-input m-0" name="branch_ids" value="{{ b.id }}">
+                        <span>{{ b.name }}</span>
+                        <span class="text-muted small ms-auto">{{ b.code }}{% if b.city %} &middot; {{ b.city }}{% endif %}{% if b.country %}, {{ b.country }}{% endif %}</span>
+                    </label>
+                    {% empty %}
+                    <div class="small text-secondary p-2">No branches available.</div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <!-- Department picker -->
+            <div class="js-scope-panel" data-scope="DEPARTMENT" hidden>
+                <div class="gw-picker-toolbar">
+                    <span class="small fw-semibold">Departments <span class="text-muted js-picker-count"></span></span>
+                    <button type="button" class="btn btn-link btn-sm p-0 js-select-all">Select all</button>
+                </div>
+                <div class="gw-picker-list">
+                    {% for d in departments %}
+                    <label class="gw-picker-item">
+                        <input type="checkbox" class="form-check-input m-0" name="department_ids" value="{{ d.id }}">
+                        <span>{{ d.name }}</span>
+                        <span class="text-muted small ms-auto">{{ d.code }}</span>
+                    </label>
+                    {% empty %}
+                    <div class="small text-secondary p-2">No departments configured.</div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <!-- Employee picker -->
+            <div class="js-scope-panel" data-scope="EMPLOYEE" hidden>
+                <div class="row g-2 mb-2">
+                    <div class="col-sm-6">
+                        <label for="empPickerSearch" class="visually-hidden">Search employees</label>
+                        <input id="empPickerSearch" type="search" class="form-control form-control-sm" placeholder="Search name or employee ID&hellip;" autocomplete="off">
+                    </div>
+                    <div class="col-6 col-sm-3">
+                        <label for="empPickerBranch" class="visually-hidden">Filter by branch</label>
+                        <select id="empPickerBranch" class="form-select form-select-sm">
+                            <option value="">All branches</option>
+                            {% for b in branches %}<option value="{{ b.id }}">{{ b.name }}</option>{% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-6 col-sm-3">
+                        <label for="empPickerDept" class="visually-hidden">Filter by department</label>
+                        <select id="empPickerDept" class="form-select form-select-sm">
+                            <option value="">All departments</option>
+                            {% for d in departments %}<option value="{{ d.id }}">{{ d.name }}</option>{% endfor %}
+                        </select>
+                    </div>
+                </div>
+                <div class="gw-picker-toolbar">
+                    <span class="small fw-semibold">Employees <span class="text-muted js-picker-count"></span></span>
+                    <span class="d-flex gap-3">
+                        <button type="button" class="btn btn-link btn-sm p-0 js-select-all">Select all shown</button>
+                        <button type="button" class="btn btn-link btn-sm p-0 text-secondary js-clear-all">Clear</button>
+                    </span>
+                </div>
+                <div class="gw-picker-list gw-picker-list--tall">
+                    {% for e in assignable_employees %}
+                    <label class="gw-picker-item" data-emp-row
+                           data-search="{{ e.full_name|lower }} {{ e.employee_id|lower }}"
+                           data-branch="{{ e.primary_branch_id|default:'' }}"
+                           data-dept="{{ e.profile.department_id|default:'' }}">
+                        <input type="checkbox" class="form-check-input m-0" name="employee_ids" value="{{ e.id }}">
+                        <span>{{ e.full_name }} <span class="text-muted small">({{ e.employee_id }})</span></span>
+                        <span class="text-muted small ms-auto text-end">
+                            {{ e.primary_branch.name|default:"No branch" }}{% if e.profile.department %} &middot; {{ e.profile.department.name }}{% endif %}
+                        </span>
+                    </label>
+                    {% empty %}
+                    <div class="small text-secondary p-2">No active employees available.</div>
+                    {% endfor %}
+                    <div class="small text-secondary p-2" id="empPickerEmpty" hidden>No employees match these filters.</div>
+                </div>
+            </div>
+
+            <div class="small text-secondary bg-light rounded p-2">
+                <i class="bi bi-info-circle me-1" aria-hidden="true"></i>
+                Each employee follows <strong>one</strong> policy per leave type. When several match, the most specific wins:
+                <strong>Individual &rsaquo; Department &rsaquo; Branch &rsaquo; All employees</strong>.
+            </div>
+
+            <label class="gw-switch-row" for="assignApplyNow">
+                <span>
+                    <span class="gw-switch-label-title">Apply now</span>
+                    <span class="gw-switch-label-hint" id="assignApplyNowHint">Credit the current period's entitlement immediately to everyone this policy now governs. Anyone already credited is skipped.</span>
+                </span>
+                <input class="gw-native-switch" type="checkbox" switch name="apply_now" value="1" id="assignApplyNow">
+            </label>
+        </div>
+
+        <div class="gw-dialog-footer">
+            <button type="button" class="btn btn-sm btn-gw-secondary" commandfor="assignPolicyDialog" command="close">Cancel</button>
+            <button type="submit" class="btn btn-sm btn-gw-primary">
+                <i class="bi bi-check2-circle me-1" aria-hidden="true"></i>Assign Policy
+            </button>
+        </div>
+    </form>
+</dialog>
 {% endblock %}
 
 {% block extra_scripts %}
@@ -1164,6 +1319,107 @@ document.addEventListener('DOMContentLoaded', () => {
                 syncAriaInvalid(field);
             });
         });
+    });
+    // 9. Policy assignment: bulk assign dialog, unassign chips, apply-now confirm
+    const assignDialog = document.getElementById('assignPolicyDialog');
+    const assignForm = document.getElementById('assignPolicyForm');
+    if (assignDialog && assignForm) {
+        const panels = Array.from(assignForm.querySelectorAll('.js-scope-panel'));
+        const empRows = Array.from(assignForm.querySelectorAll('[data-emp-row]'));
+        const empSearch = document.getElementById('empPickerSearch');
+        const empBranch = document.getElementById('empPickerBranch');
+        const empDept = document.getElementById('empPickerDept');
+        const empEmpty = document.getElementById('empPickerEmpty');
+        const applyHint = document.getElementById('assignApplyNowHint');
+
+        const updateCounts = () => {
+            panels.forEach((panel) => {
+                const n = panel.querySelectorAll('input[type="checkbox"]:checked').length;
+                const el = panel.querySelector('.js-picker-count');
+                if (el) el.textContent = n ? `(${n} selected)` : '';
+            });
+        };
+        const syncScope = () => {
+            const scope = assignForm.querySelector('.js-scope-radio:checked')?.value;
+            panels.forEach((panel) => { panel.hidden = panel.dataset.scope !== scope; });
+        };
+        const filterEmployees = () => {
+            const q = (empSearch?.value || '').trim().toLowerCase();
+            const b = empBranch?.value || '';
+            const d = empDept?.value || '';
+            let shown = 0;
+            empRows.forEach((row) => {
+                const visible = (!q || row.dataset.search.includes(q))
+                    && (!b || row.dataset.branch === b)
+                    && (!d || row.dataset.dept === d);
+                row.hidden = !visible;
+                if (visible) shown++;
+            });
+            if (empEmpty) empEmpty.hidden = shown > 0 || empRows.length === 0;
+        };
+
+        const openAssign = (btn) => {
+            assignForm.reset();
+            document.getElementById('assignPolicyId').value = btn.dataset.policyId;
+            document.getElementById('assignPolicyName').textContent = `“${btn.dataset.policyName}”`;
+            if (applyHint) {
+                applyHint.textContent = btn.dataset.policyFrequency === 'MONTHLY'
+                    ? "Credit this month's accrual immediately to everyone this policy now governs. Anyone already credited is skipped."
+                    : "Credit this year's entitlement immediately to everyone this policy now governs. Anyone already credited is skipped.";
+            }
+            syncScope(); filterEmployees(); updateCounts();
+            assignDialog.showModal();
+        };
+
+        document.querySelectorAll('.js-open-assign').forEach((btn) => btn.addEventListener('click', () => openAssign(btn)));
+        assignForm.addEventListener('change', (e) => {
+            if (e.target.matches('.js-scope-radio')) syncScope();
+            updateCounts();
+        });
+        [empSearch, empBranch, empDept].forEach((el) => el?.addEventListener('input', filterEmployees));
+        assignForm.querySelectorAll('.js-select-all').forEach((btn) => btn.addEventListener('click', () => {
+            const panel = btn.closest('.js-scope-panel');
+            panel.querySelectorAll('.gw-picker-item:not([hidden]) input[type="checkbox"]').forEach((cb) => { cb.checked = true; });
+            updateCounts();
+        }));
+        assignForm.querySelectorAll('.js-clear-all').forEach((btn) => btn.addEventListener('click', () => {
+            btn.closest('.js-scope-panel').querySelectorAll('input[type="checkbox"]').forEach((cb) => { cb.checked = false; });
+            updateCounts();
+        }));
+        assignForm.addEventListener('submit', (e) => {
+            const scope = assignForm.querySelector('.js-scope-radio:checked')?.value;
+            if (scope !== 'ALL') {
+                const panel = panels.find((p) => p.dataset.scope === scope);
+                if (!panel || !panel.querySelector('input[type="checkbox"]:checked')) {
+                    e.preventDefault();
+                    alert('Select at least one item to assign this policy to.');
+                    return;
+                }
+                // Only submit the selection for the chosen scope.
+                panels.filter((p) => p !== panel).forEach((p) =>
+                    p.querySelectorAll('input[type="checkbox"]').forEach((cb) => { cb.checked = false; }));
+            }
+        });
+
+        // Auto-open after creating a policy with "Specific branches, departments or people".
+        const autoId = assignDialog.dataset.openAssign;
+        if (autoId) {
+            const btn = document.querySelector(`.js-open-assign[data-policy-id="${autoId}"]`);
+            if (btn) openAssign(btn);
+        }
+    }
+
+    document.querySelectorAll('.js-unassign-form').forEach((form) => {
+        const actions = form.querySelector('.js-unassign-actions');
+        form.addEventListener('change', () => {
+            if (actions) actions.hidden = !form.querySelector('.js-unassign-check:checked');
+        });
+        form.addEventListener('submit', (e) => {
+            if (!confirm('Remove the selected assignments? Affected employees will fall back to the next matching policy.')) e.preventDefault();
+        });
+    });
+    document.querySelectorAll('.js-apply-now-form').forEach((form) => {
+        form.addEventListener('submit', (e) => { if (!confirm(form.dataset.confirm)) e.preventDefault(); });
     });
 });
 </script>

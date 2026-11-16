@@ -1,0 +1,26 @@
+{% comment %}
+My Action Center — leave / expense items currently pending on the signed-in user, with the
+employee each one belongs to. Items returned to the user's stage are highlighted.
+Context: action_center (portal.dashboard_services.build_my_action_center).
+{% endcomment %}
+{% with ac=action_center %}
+{% if ac.is_approver %}
+<div class="gw-card mb-4 gw-action-center" id="myActionCenter">
+    <div class="gw-card-header">
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+            <h5 class="gw-card-title mb-0"><i class="bi bi-bullseye text-primary me-2"></i>My Action Center</h5>
+            <span class="gw-hl-tag {% if ac.count %}gw-hl-tag--action{% endif %}"><i class="bi bi-hourglass-split"></i> {{ ac.count }} pending</span>
+            {% if ac.returned_count %}<span class="gw-hl-tag gw-hl-tag--returned"><i class="bi bi-arrow-return-left"></i> {{ ac.returned_count }} returned</span>{% endif %}
+        </div>
+        <div class="d-flex gap-3 small">
+            <a href="{% url 'portal_leave_approvals' %}" class="text-decoration-none gw-header-link">Leave queue <i class="bi bi-arrow-right"></i></a>
+            {% if user.is_admin_manager or user.is_director %}<a href="{% url 'portal_expense_approvals' %}" class="text-decoration-none gw-header-link">Expense queue <i class="bi bi-arrow-right"></i></a>{% endif %}
+        </div>
+    </div>
+    {% include "portal/_action_center_list.html" with items=ac.items empty_icon="bi-check2-all" empty_text="Nothing is pending with you." %}
+    {% if ac.count > ac.items|length %}
+    <div class="gw-ac-more">Showing {{ ac.items|length }} of {{ ac.count }} pending items &mdash; open the queues for the rest.</div>
+    {% endif %}
+</div>
+{% endif %}
+{% endwith %}

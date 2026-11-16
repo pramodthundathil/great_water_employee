@@ -357,3 +357,63 @@ def send_expo_push(tokens, title, body, data=None):
                     DeviceRegistration.objects.filter(registration_token=msg["to"]).update(is_active=False)
     except Exception as e:  # network failures must never break the workflow
         logger.warning(f"Expo push delivery failed: {e}")
+
+
+def _leave_approval_line(application, actor=None):
+    """Everyone who acted on this leave in the approval line (Lead, HR, Director), minus the actor and employee."""
+    ids = set(application.approval_history.values_list("approver_id", flat=True))
+    ids.discard(application.employee_id)
+    if actor is not None:
+        ids.discard(actor.id)
+    return list(User.objects.filter(id__in=ids, is_active=True))
+
+
+def _branch_directors(branch, exclude_ids=()):
+    return [u for u in User.objects.filter(is_active=True, role=RoleChoices.DIRECTOR).exclude(id__in=exclude_ids)
+            if u.can_access_branch(branch)]
+
+
+def notify_leave_correction(application, kind, actor, remarks="", changes=None):
+    """
+    Tells the employee and every actor in the approval line about a correction after a decision:
+      REVOKED    Director revoked the approval
+      REVERTED   HR Coordinator reverted their verification (Directors are told it left their queue)
+      DATES      Director / HR changed the leave type or dates
+    """
+    from leaves.models import fmt_days
+    emp = application.employee
+    who = actor.full_name if actor else "An approver"
+    role = actor.get_role_display() if actor else "Approver"
+    period = f"{application.start_date} to {application.end_date}, {fmt_days(application.number_of_days)} day(s)"
+    link = f"/leaves/{application.id}/"
+
+    if kind == "REVOKED":
+        event = "LEAVE_APPROVAL_REVOKED"
+        title = f"Leave Approval Revoked: {application.application_number}"
+        emp_msg = (f"{who} ({role}) revoked the approval of your leave ({period}). The days were credited back "
+                   f"and the leave is pending the Director's decision again. Remarks: {remarks}")
+        line_msg = (f"{who} ({role}) revoked the approval of {emp.full_name}'s leave ({period}). "
+                    f"It is pending Director approval again. Remarks: {remarks}")
+    elif kind == "REVERTED":
+        event = "LEAVE_VERIFICATION_REVERTED"
+        title = f"HR Verification Reverted: {application.application_number}"
+        emp_msg = (f"{who} ({role}) reverted the HR verification of your leave ({period}). "
+                   f"It is back with HR for verification. Remarks: {remarks}")
+        line_msg = (f"{who} ({role}) reverted the HR verification of {emp.full_name}'s leave ({period}). "
+                    f"It is back in HR verification and no longer awaits the Director. Remarks: {remarks}")
+    else:
+        event = "LEAVE_AMENDED"
+        parts = [f"{label} {changes[f][0]} → {changes[f][1]}"
+                 for f, label in (("leave_type", "type"), ("start_date", "from"), ("end_date", "to"), ("number_of_days", "days"))
+                 if changes and f in changes]
+        title = f"Leave Changed: {application.application_number}"
+        emp_msg = f"{who} ({role}) changed your leave: {', '.join(parts)}. Remarks: {remarks}"
+        line_msg = f"{who} ({role}) changed {emp.full_name}'s leave: {', '.join(parts)}. Remarks: {remarks}"
+
+    send_system_notification(recipient=emp, title=title, message=emp_msg, event_type=event, link_url=link)
+    recipients = {u.id: u for u in _leave_approval_line(application, actor)}
+    if kind == "REVERTED":
+        for d in _branch_directors(application.branch, exclude_ids=[emp.id, getattr(actor, "id", None)]):
+            recipients.setdefault(d.id, d)
+    for r in recipients.values():
+        send_system_notification(recipient=r, title=title, message=line_msg, event_type=event, link_url=link)

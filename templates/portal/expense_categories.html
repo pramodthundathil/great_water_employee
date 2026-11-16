@@ -1,65 +1,377 @@
 {% extends "base.html" %}
 {% block title %}Expense Categories{% endblock %}
+
+{% block extra_head %}
+<style>
+    .gw-cat-card {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+    }
+    .gw-cat-card .gw-lt-header {
+        flex: 1 1 auto;
+        flex-wrap: nowrap;
+    }
+    .gw-cat-icon {
+        width: 42px;
+        height: 42px;
+        border-radius: var(--radius-md, 10px);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.15rem;
+        background: var(--gw-primary-light);
+        color: var(--gw-primary);
+        flex-shrink: 0;
+    }
+    .gw-lt-card.is-inactive .gw-cat-icon {
+        background: var(--gw-surface-muted);
+        color: var(--gw-text-muted);
+    }
+    .gw-cat-name {
+        font-size: 0.98rem;
+        font-weight: 700;
+        color: var(--gw-dark);
+        margin: 0;
+        overflow-wrap: anywhere;
+    }
+    .gw-cat-desc {
+        font-size: 0.83rem;
+        color: var(--gw-text-secondary);
+        margin: 0.35rem 0 0;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        overflow-wrap: anywhere;
+    }
+    .gw-cat-desc.is-empty {
+        color: var(--gw-text-muted);
+        font-style: italic;
+    }
+    .gw-cat-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        padding: 0.75rem 1.35rem;
+        border-top: 1px solid var(--gw-border);
+        background: var(--gw-surface-header);
+    }
+    .gw-cat-usage {
+        font-size: 0.78rem;
+        color: var(--gw-text-secondary);
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+    }
+    .gw-cat-actions .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+    }
+    .gw-cat-toggle-off {
+        color: var(--gw-danger);
+    }
+    .gw-cat-toggle-off:hover {
+        background: var(--gw-danger-soft);
+        color: var(--gw-danger);
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="page-title-box">
-    <div>
+    <div class="page-title-meta">
         <h1 class="page-title">Expense Categories</h1>
         <p class="page-subtitle">Categories employees choose from when submitting a claim. Disabled categories stay on existing claims.</p>
     </div>
-</div>
-<div class="row g-4">
-    <div class="col-lg-8">
-        <div class="gw-card">
-            <div class="table-responsive">
-                <table class="table gw-table m-0">
-                    <thead><tr><th>Code</th><th>Name &amp; description</th><th>Status</th><th class="text-end">Actions</th></tr></thead>
-                    <tbody>
-                    {% for c in categories %}
-                    <tr>
-                        <td><code>{{ c.code }}</code></td>
-                        <td>
-                            <form method="post" class="d-flex flex-column gap-1" id="cat{{ c.id }}">
-                                {% csrf_token %}
-                                <input type="hidden" name="action" value="update">
-                                <input type="hidden" name="category_id" value="{{ c.id }}">
-                                <input type="text" name="name" value="{{ c.name }}" class="form-control form-control-sm fw-semibold" aria-label="Name">
-                                <input type="text" name="description" value="{{ c.description }}" class="form-control form-control-sm" placeholder="Description" aria-label="Description">
-                            </form>
-                        </td>
-                        <td><span class="status-badge {% if c.is_active %}badge-approved{% else %}badge-draft{% endif %}">{% if c.is_active %}Active{% else %}Disabled{% endif %}</span></td>
-                        <td class="text-end text-nowrap">
-                            <button form="cat{{ c.id }}" class="btn btn-sm btn-outline-primary">Save</button>
-                            <form method="post" class="d-inline">
-                                {% csrf_token %}
-                                <input type="hidden" name="action" value="toggle">
-                                <input type="hidden" name="category_id" value="{{ c.id }}">
-                                <button class="btn btn-sm btn-light">{% if c.is_active %}Disable{% else %}Enable{% endif %}</button>
-                            </form>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-        </div>
+    <div class="d-flex flex-wrap gap-2 dashboard-quick-actions">
+        <button type="button" class="btn btn-gw-primary" commandfor="createCategoryDialog" command="show-modal">
+            <i class="bi bi-plus-lg" aria-hidden="true"></i>
+            <span>Add Category</span>
+        </button>
     </div>
-    <div class="col-lg-4">
-        <div class="gw-card">
-            <div class="gw-card-header"><h5 class="gw-card-title"><i class="bi bi-plus-circle me-2"></i>Add category</h5></div>
-            <div class="gw-card-body p-4">
-                <form method="post" class="d-flex flex-column gap-2">
-                    {% csrf_token %}
-                    <input type="hidden" name="action" value="create">
-                    <label class="form-label small fw-bold m-0">Code</label>
-                    <input type="text" name="code" class="form-control text-uppercase" placeholder="e.g. PARKING" required maxlength="50">
-                    <label class="form-label small fw-bold m-0">Name</label>
-                    <input type="text" name="name" class="form-control" placeholder="e.g. Parking &amp; Tolls" required>
-                    <label class="form-label small fw-bold m-0">Description</label>
-                    <input type="text" name="description" class="form-control">
-                    <button class="btn btn-gw-primary mt-2">Add category</button>
-                </form>
-            </div>
+</div>
+
+{% if categories %}
+<!-- Toolbar: search + status filter -->
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-3 mb-3">
+    <div class="d-flex align-items-center flex-wrap gap-2 flex-grow-1">
+        <div class="panel-search-box" style="min-width: min(260px, 100%);">
+            <i class="bi bi-search panel-search-icon" aria-hidden="true"></i>
+            <label for="catSearchInput" class="visually-hidden">Search categories</label>
+            <input
+                id="catSearchInput"
+                type="search"
+                class="form-control form-control-sm rounded-pill ps-5"
+                style="background-color: #FFFFFF; min-height: 38px;"
+                placeholder="Search categories or codes..."
+                autocorrect="off"
+                autocapitalize="off"
+                spellcheck="false"
+            >
+        </div>
+        <div class="gw-pill-filter-group" role="group" aria-label="Filter categories by status">
+            <button type="button" class="gw-pill-filter active js-cat-filter" data-status="all" aria-pressed="true">All ({{ categories|length }})</button>
+            <button type="button" class="gw-pill-filter js-cat-filter" data-status="active" aria-pressed="false">Active ({{ active_count }})</button>
+            <button type="button" class="gw-pill-filter js-cat-filter" data-status="inactive" aria-pressed="false">Disabled ({{ disabled_count }})</button>
         </div>
     </div>
 </div>
+
+<div class="row g-3" id="categoryGrid">
+    {% for c in categories %}
+    <div
+        class="col-md-6 col-xl-4"
+        data-cat-item
+        data-cat-name="{{ c.name|lower }}"
+        data-cat-code="{{ c.code|lower }}"
+        data-cat-desc="{{ c.description|lower }}"
+        data-cat-status="{% if c.is_active %}active{% else %}inactive{% endif %}"
+    >
+        <article class="gw-lt-card gw-cat-card {% if not c.is_active %}is-inactive{% endif %}">
+            <div class="gw-lt-header">
+                <div class="d-flex align-items-start gap-3 min-w-0 flex-grow-1">
+                    <span class="gw-cat-icon" aria-hidden="true"><i class="bi bi-tags"></i></span>
+                    <div class="min-w-0 flex-grow-1">
+                        <div class="d-flex align-items-center justify-content-between gap-2 mb-1">
+                            <span class="gw-lt-code" style="font-size:0.7rem;padding:0.2rem 0.5rem;">{{ c.code }}</span>
+                            <span class="status-badge {% if c.is_active %}badge-approved{% else %}badge-draft{% endif %}">
+                                {% if c.is_active %}Active{% else %}Disabled{% endif %}
+                            </span>
+                        </div>
+                        <h2 class="gw-cat-name">{{ c.name }}</h2>
+                        {% if c.description %}
+                        <p class="gw-cat-desc" title="{{ c.description }}">{{ c.description }}</p>
+                        {% else %}
+                        <p class="gw-cat-desc is-empty">No description</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            <div class="gw-cat-footer">
+                <span class="gw-cat-usage">
+                    <i class="bi bi-receipt" aria-hidden="true"></i>
+                    {{ c.claim_count }} claim{{ c.claim_count|pluralize }}
+                </span>
+                <div class="gw-cat-actions d-flex gap-1">
+                    <button
+                        type="button"
+                        class="btn btn-sm btn-light js-edit-cat"
+                        data-id="{{ c.id }}"
+                        data-code="{{ c.code }}"
+                        data-name="{{ c.name }}"
+                        data-description="{{ c.description }}"
+                        aria-label="Edit {{ c.name }}"
+                    >
+                        <i class="bi bi-pencil" aria-hidden="true"></i> Edit
+                    </button>
+                    <form method="post" class="d-inline">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="toggle">
+                        <input type="hidden" name="category_id" value="{{ c.id }}">
+                        {% if c.is_active %}
+                        <button class="btn btn-sm btn-light gw-cat-toggle-off" aria-label="Disable {{ c.name }}">
+                            <i class="bi bi-slash-circle" aria-hidden="true"></i> Disable
+                        </button>
+                        {% else %}
+                        <button class="btn btn-sm btn-light text-success" aria-label="Enable {{ c.name }}">
+                            <i class="bi bi-check-circle" aria-hidden="true"></i> Enable
+                        </button>
+                        {% endif %}
+                    </form>
+                </div>
+            </div>
+        </article>
+    </div>
+    {% endfor %}
+</div>
+
+<div id="catNoResults" class="gw-card" hidden>
+    <div class="empty-state">
+        <div class="empty-state-icon"><i class="bi bi-search" aria-hidden="true"></i></div>
+        <div class="empty-state-title">No matching categories</div>
+        <div class="empty-state-desc">Try a different search term or status filter.</div>
+    </div>
+</div>
+{% else %}
+<div class="gw-card">
+    <div class="empty-state py-5">
+        <div class="empty-state-icon"><i class="bi bi-tags" aria-hidden="true"></i></div>
+        <div class="empty-state-title">No expense categories yet</div>
+        <div class="empty-state-desc">Add categories like Travel, Fuel or Meals so employees can classify their claims.</div>
+        <button type="button" class="btn btn-sm btn-gw-primary" commandfor="createCategoryDialog" command="show-modal">
+            <i class="bi bi-plus-lg" aria-hidden="true"></i> Add first category
+        </button>
+    </div>
+</div>
+{% endif %}
+
+<!-- Create Category Dialog -->
+<dialog id="createCategoryDialog" class="gw-dialog" aria-labelledby="createCategoryTitle">
+    <div class="gw-dialog-header">
+        <h2 id="createCategoryTitle" class="gw-dialog-title">
+            <i class="bi bi-plus-circle me-2 text-primary" aria-hidden="true"></i>Add Expense Category
+        </h2>
+        <button type="button" class="btn-close" commandfor="createCategoryDialog" command="close" aria-label="Close"></button>
+    </div>
+    <form method="post" class="gw-settings-form">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="create">
+        <div class="gw-dialog-body d-flex flex-column gap-3">
+            <div class="row g-3">
+                <div class="col-sm-5">
+                    <label class="form-label small fw-semibold mb-1" for="newCatCode">
+                        Code <span class="text-danger" aria-hidden="true">*</span>
+                    </label>
+                    <input id="newCatCode" name="code" type="text" class="form-control text-uppercase font-monospace"
+                           required maxlength="50" placeholder="PARKING"
+                           autocorrect="off" autocapitalize="characters" spellcheck="false">
+                    <div class="field-error-msg">
+                        <i class="bi bi-exclamation-circle-fill" aria-hidden="true"></i>
+                        <span>Enter a unique code.</span>
+                    </div>
+                    <div class="form-text small">Unique, can't be changed later.</div>
+                </div>
+                <div class="col-sm-7">
+                    <label class="form-label small fw-semibold mb-1" for="newCatName">
+                        Name <span class="text-danger" aria-hidden="true">*</span>
+                    </label>
+                    <input id="newCatName" name="name" type="text" class="form-control"
+                           required maxlength="100" placeholder="e.g. Parking &amp; Tolls">
+                    <div class="field-error-msg">
+                        <i class="bi bi-exclamation-circle-fill" aria-hidden="true"></i>
+                        <span>Category name is required.</span>
+                    </div>
+                </div>
+            </div>
+            <div>
+                <label class="form-label small fw-semibold mb-1" for="newCatDesc">Description</label>
+                <textarea id="newCatDesc" name="description" class="form-control" rows="3"
+                          placeholder="When should employees use this category?"></textarea>
+            </div>
+        </div>
+        <div class="gw-dialog-footer">
+            <button type="button" class="btn btn-sm btn-gw-secondary" commandfor="createCategoryDialog" command="close">Cancel</button>
+            <button type="submit" class="btn btn-sm btn-gw-primary">
+                <i class="bi bi-plus-lg" aria-hidden="true"></i> Add Category
+            </button>
+        </div>
+    </form>
+</dialog>
+
+<!-- Edit Category Dialog -->
+<dialog id="editCategoryDialog" class="gw-dialog" aria-labelledby="editCategoryTitle">
+    <div class="gw-dialog-header">
+        <h2 id="editCategoryTitle" class="gw-dialog-title">
+            <i class="bi bi-pencil-square me-2 text-primary" aria-hidden="true"></i>Edit Category
+        </h2>
+        <button type="button" class="btn-close" commandfor="editCategoryDialog" command="close" aria-label="Close"></button>
+    </div>
+    <form method="post" class="gw-settings-form">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="update">
+        <input type="hidden" name="category_id" id="editCatId">
+        <div class="gw-dialog-body d-flex flex-column gap-3">
+            <div class="row g-3">
+                <div class="col-sm-5">
+                    <label class="form-label small fw-semibold mb-1" for="editCatCode">Code</label>
+                    <input id="editCatCode" type="text" class="form-control font-monospace" disabled>
+                </div>
+                <div class="col-sm-7">
+                    <label class="form-label small fw-semibold mb-1" for="editCatName">
+                        Name <span class="text-danger" aria-hidden="true">*</span>
+                    </label>
+                    <input id="editCatName" name="name" type="text" class="form-control" required maxlength="100">
+                    <div class="field-error-msg">
+                        <i class="bi bi-exclamation-circle-fill" aria-hidden="true"></i>
+                        <span>Category name is required.</span>
+                    </div>
+                </div>
+            </div>
+            <div>
+                <label class="form-label small fw-semibold mb-1" for="editCatDesc">Description</label>
+                <textarea id="editCatDesc" name="description" class="form-control" rows="3"
+                          placeholder="When should employees use this category?"></textarea>
+            </div>
+        </div>
+        <div class="gw-dialog-footer">
+            <button type="button" class="btn btn-sm btn-gw-secondary" commandfor="editCategoryDialog" command="close">Cancel</button>
+            <button type="submit" class="btn btn-sm btn-gw-primary">
+                <i class="bi bi-check-lg" aria-hidden="true"></i> Save Changes
+            </button>
+        </div>
+    </form>
+</dialog>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    // Invoker Commands fallback for browsers without commandfor support
+    if (!('commandForElement' in HTMLButtonElement.prototype)) {
+        document.addEventListener('click', (e) => {
+            const btn = e.target.closest('button[commandfor]');
+            if (!btn) return;
+            const target = document.getElementById(btn.getAttribute('commandfor'));
+            if (!target) return;
+            const cmd = btn.getAttribute('command');
+            if (cmd === 'show-modal' && typeof target.showModal === 'function') target.showModal();
+            else if (cmd === 'close' && typeof target.close === 'function') target.close();
+        });
+    }
+
+    // Light dismiss on backdrop click
+    document.querySelectorAll('dialog.gw-dialog').forEach((dlg) => {
+        dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); });
+    });
+
+    // Edit dialog population
+    const editDlg = document.getElementById('editCategoryDialog');
+    document.querySelectorAll('.js-edit-cat').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            document.getElementById('editCatId').value = btn.dataset.id;
+            document.getElementById('editCatCode').value = btn.dataset.code;
+            document.getElementById('editCatName').value = btn.dataset.name;
+            document.getElementById('editCatDesc').value = btn.dataset.description || '';
+            editDlg.showModal();
+            document.getElementById('editCatName').focus();
+        });
+    });
+
+    // Search + status filter
+    const search = document.getElementById('catSearchInput');
+    const items = Array.from(document.querySelectorAll('[data-cat-item]'));
+    const filters = Array.from(document.querySelectorAll('.js-cat-filter'));
+    const noResults = document.getElementById('catNoResults');
+    let status = 'all';
+
+    function applyFilters() {
+        const q = (search ? search.value : '').trim().toLowerCase();
+        let visible = 0;
+        items.forEach((el) => {
+            const matchQ = !q || el.dataset.catName.includes(q) || el.dataset.catCode.includes(q) || el.dataset.catDesc.includes(q);
+            const matchS = status === 'all' || el.dataset.catStatus === status;
+            const show = matchQ && matchS;
+            el.hidden = !show;
+            if (show) visible++;
+        });
+        if (noResults) noResults.hidden = visible !== 0 || items.length === 0;
+    }
+
+    if (search) search.addEventListener('input', applyFilters);
+    filters.forEach((btn) => {
+        btn.addEventListener('click', () => {
+            status = btn.dataset.status;
+            filters.forEach((b) => {
+                const on = b === btn;
+                b.classList.toggle('active', on);
+                b.setAttribute('aria-pressed', String(on));
+            });
+            applyFilters();
+        });
+    });
+});
+</script>
 {% endblock %}

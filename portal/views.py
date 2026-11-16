@@ -15,7 +15,7 @@ from accounts.models import User, RoleChoices, EmployeeProfile, UserBranchScope
 from organization.models import Branch, Department
 from expenses.models import (
     ExpenseClaim, ExpenseCategory, ExpenseAttachment,
-    ExpenseClaimStatus, ReimbursementPayment, review_message
+    ExpenseClaimStatus, PaymentMode, ReimbursementPayment, review_message
 )
 from leaves.models import (
     LeaveApplication, LeaveType, LeavePolicy, LeaveLedgerEntry,
@@ -27,22 +27,28 @@ from leaves.services import (
     validate_leave_request, LeaveRequestError,
     log_leave_audit, client_ip, resubmit_leave_application,
     initial_leave_route, visible_leave_applications, can_view_leave_application,
-    filter_leave_track, leave_track_counts, leave_review_options, notify_leave_review,
+    filter_leave_track, leave_track_counts, leave_review_options, leave_correction_options, notify_leave_review,
 )
 from portal.admin_views import validate_upload, can_manage_users, get_default_organization
-from expenses.services import bulk_delete_claims, claim_delete_block_reason
+from expenses.services import (
+    approved_claim_delete_block_reason, bulk_delete_approved_claims, bulk_delete_claims,
+    bulk_void_payments, claim_delete_block_reason, payment_void_block_reason,
+)
 from accounts.services import (
     EmployeeError, can_reset_passwords, can_manage_users, create_employee, set_employee_password,
     bulk_employee_action,
 )
 import secrets
 from notifications.models import NotificationEvent
-from notifications.services import notify_expense_event, notify_leave_event
+from notifications.services import notify_expense_event, notify_leave_event, notify_leave_correction
 from portal.dashboard_services import (
     PENDING_EXPENSE_STATUSES,
     PENDING_LEAVE_STATUSES,
     build_all_staff_analytics,
     build_approver_reminders,
+    build_leave_calendar,
+    build_my_action_center,
+    build_status_alerts,
     build_director_pipeline_summary,
     build_leave_utilization_series,
     build_monthly_expense_series,
@@ -272,6 +278,9 @@ def dashboard_view(request):
         "pending_leaves_count": pending_leaves_count,
         "expense_chart_data": expense_chart_data,
         "leave_chart_data": leave_chart_data,
+        "leave_calendar": build_leave_calendar(user, request.session.get("selected_branch_id")),
+        "action_center": build_my_action_center(user, request.session.get("selected_branch_id")),
+        "status_alerts": build_status_alerts(user),
     }
 
     if is_director_dashboard:
@@ -804,6 +813,54 @@ def expense_approvals_view(request):
     return render(request, "portal/expense_approvals.html", context)
 
 
+def _report_bulk_result(request, done, skipped, verb):
+    """Flash the outcome of a bulk action: `done` claim numbers and `skipped` (number, reason) pairs."""
+    if done:
+        messages.success(request, f"{len(done)} claim(s) {verb}: {', '.join(done[:5])}" + ("…" if len(done) > 5 else ""))
+    if skipped:
+        details = ", ".join(f"{n} ({why})" for n, why in skipped[:5])
+        messages.error(request, f"{len(skipped)} claim(s) could not be {verb}: {details}" + ("…" if len(skipped) > 5 else ""))
+    if not done and not skipped:
+        messages.error(request, "Select at least one claim.")
+
+
+def _record_single_payment(request, user):
+    claim_id = request.POST.get("claim_id")
+    payment_date = request.POST.get("payment_date") or date.today()
+    payment_mode = request.POST.get("payment_mode", PaymentMode.BANK_TRANSFER)
+    payment_ref = request.POST.get("payment_reference", "").strip()
+    remarks = request.POST.get("remarks", "")
+
+    if not payment_ref:
+        messages.error(request, "Payment transaction reference number is mandatory.")
+        return
+    if payment_mode not in PaymentMode.values:
+        messages.error(request, "Choose a valid payment mode.")
+        return
+    if not (user.is_admin_manager or user.is_superuser):
+        messages.error(request, "Only the Admin Manager can mark claims as paid.")
+        return
+    claim = get_object_or_404(ExpenseClaim, id=claim_id)
+    if not user.can_manage_expenses_for(claim.branch):
+        messages.error(request, f"You are not an expense approver for {claim.branch.name}.")
+        return
+    if claim.employee_id == user.id and not user.is_superuser:
+        messages.error(request, "Another Admin Manager must record payment of your own claim.")
+        return
+    try:
+        claim.record_payment(
+            recorded_by=user,
+            payment_date=payment_date,
+            payment_mode=payment_mode,
+            payment_reference=payment_ref,
+            remarks=remarks,
+        )
+        notify_expense_event(claim, "EXPENSE_PAID")
+        messages.success(request, f"Reimbursement payment recorded for claim {claim.claim_number}!")
+    except ValidationError as e:
+        messages.error(request, " ".join(e.messages))
+
+
 @login_required
 def reimbursements_view(request):
     user = request.user
@@ -811,56 +868,202 @@ def reimbursements_view(request):
         messages.error(request, "Access restricted.")
         return redirect("portal_dashboard")
 
+    if request.method == "POST":
+        action = request.POST.get("action", "record_payment")
+        if action == "bulk_delete":
+            result = bulk_delete_approved_claims(user, request.POST.getlist("selected"))
+            _report_bulk_result(request, result["deleted"], result["skipped"], "deleted")
+        elif action == "bulk_void":
+            result = bulk_void_payments(user, request.POST.getlist("selected"))
+            _report_bulk_result(request, result["voided"], result["skipped"], "returned to the payment queue")
+        else:
+            _record_single_payment(request, user)
+        return _safe_next(request, "portal_reimbursements")
+
+    # ---- Branch scope (shared with the approvals page through the session) ----
     expense_branches = user.get_expense_branches()
     selected_branch = request.session.get("selected_branch_id", "all")
+    requested = request.GET.get("branch")
+    if requested and (requested == "all" or expense_branches.filter(id=requested).exists()):
+        selected_branch = requested
+        request.session["selected_branch_id"] = requested
+    if selected_branch != "all" and not expense_branches.filter(id=selected_branch).exists():
+        selected_branch = "all"
 
     base_qs = ExpenseClaim.objects.filter(branch__in=expense_branches)
-    if selected_branch and selected_branch != "all":
+    if selected_branch != "all":
         base_qs = base_qs.filter(branch_id=selected_branch)
+    pending_base = base_qs.filter(status=ExpenseClaimStatus.APPROVED_BY_DIRECTOR)
+    paid_base = base_qs.filter(status=ExpenseClaimStatus.PAID, payment_record__isnull=False)
 
-    if request.method == "POST":
-        claim_id = request.POST.get("claim_id")
-        payment_date = request.POST.get("payment_date") or date.today()
-        payment_mode = request.POST.get("payment_mode", "BANK_TRANSFER")
-        payment_ref = request.POST.get("payment_reference", "").strip()
-        remarks = request.POST.get("remarks", "")
+    # ---- KPIs (whole scope, unaffected by table filters) ----
+    now = timezone.now()
+    today = timezone.localdate()
+    month_start = today.replace(day=1)
+    pending_stats = pending_base.aggregate(n=Count("id"), total=Sum("amount"))
+    oldest = pending_base.order_by("updated_at").values_list("updated_at", flat=True).first()
+    month_stats = paid_base.filter(payment_record__payment_date__gte=month_start).aggregate(n=Count("id"), total=Sum("amount"))
+    paid_stats = paid_base.aggregate(n=Count("id"), total=Sum("amount"))
+    kpis = {
+        "pending_count": pending_stats["n"] or 0,
+        "pending_total": pending_stats["total"] or 0,
+        "oldest_days": (now - oldest).days if oldest else None,
+        "overdue_count": pending_base.filter(updated_at__lt=now - timedelta(days=7)).count(),
+        "month_count": month_stats["n"] or 0,
+        "month_total": month_stats["total"] or 0,
+        "paid_count": paid_stats["n"] or 0,
+        "paid_total": paid_stats["total"] or 0,
+    }
 
-        if not payment_ref:
-            messages.error(request, "Payment transaction reference number is mandatory.")
-            return redirect("portal_reimbursements")
+    tab = request.GET.get("tab", "pending")
+    if tab not in ("pending", "paid"):
+        tab = "pending"
+    qs = pending_base if tab == "pending" else paid_base
 
-        if not (user.is_admin_manager or user.is_superuser):
-            messages.error(request, "Only the Admin Manager can mark claims as paid.")
-            return redirect("portal_reimbursements")
-        claim = get_object_or_404(ExpenseClaim, id=claim_id)
-        if not user.can_manage_expenses_for(claim.branch):
-            messages.error(request, f"You are not an expense approver for {claim.branch.name}.")
-            return redirect("portal_reimbursements")
-        if claim.employee_id == user.id and not user.is_superuser:
-            messages.error(request, "Another Admin Manager must record payment of your own claim.")
-            return redirect("portal_reimbursements")
+    # ---- Filters ----
+    q = request.GET.get("q", "").strip()
+    if q:
+        search = (Q(claim_number__icontains=q) | Q(employee__first_name__icontains=q)
+                  | Q(employee__last_name__icontains=q) | Q(employee__employee_id__icontains=q)
+                  | Q(project_reference__icontains=q) | Q(description__icontains=q))
+        if tab == "paid":
+            search |= Q(payment_record__payment_reference__icontains=q)
+        qs = qs.filter(search)
+
+    category_filter = request.GET.get("category", "")
+    if category_filter.isdigit():
+        qs = qs.filter(category_id=int(category_filter))
+    else:
+        category_filter = ""
+
+    def _amount(key):
+        raw = request.GET.get(key, "").strip()
         try:
-            claim.record_payment(
-                recorded_by=user,
-                payment_date=payment_date,
-                payment_mode=payment_mode,
-                payment_reference=payment_ref,
-                remarks=remarks
-            )
-            notify_expense_event(claim, "EXPENSE_PAID")
-            messages.success(request, f"Reimbursement payment recorded for claim {claim.claim_number}!")
-        except ValidationError as e:
-            messages.error(request, str(e))
+            return Decimal(raw) if raw else None
+        except Exception:
+            return None
+    min_amount, max_amount = _amount("min"), _amount("max")
+    if min_amount is not None:
+        qs = qs.filter(amount__gte=min_amount)
+    if max_amount is not None:
+        qs = qs.filter(amount__lte=max_amount)
 
-        return redirect("portal_reimbursements")
+    mode_filter, date_from, date_to = "", "", ""
+    if tab == "paid":
+        mode_filter = request.GET.get("mode", "")
+        if mode_filter in PaymentMode.values:
+            qs = qs.filter(payment_record__payment_mode=mode_filter)
+        else:
+            mode_filter = ""
 
-    pending_payments = base_qs.filter(status=ExpenseClaimStatus.APPROVED_BY_DIRECTOR).order_by("-updated_at")
-    recent_paid = base_qs.filter(status=ExpenseClaimStatus.PAID).select_related("payment_record").order_by("-updated_at")[:20]
+        def _date(key):
+            try:
+                return date.fromisoformat(request.GET.get(key, "").strip())
+            except ValueError:
+                return None
+        d_from, d_to = _date("from"), _date("to")
+        if d_from:
+            qs = qs.filter(payment_record__payment_date__gte=d_from)
+            date_from = d_from.isoformat()
+        if d_to:
+            qs = qs.filter(payment_record__payment_date__lte=d_to)
+            date_to = d_to.isoformat()
+
+    filtered_stats = qs.aggregate(n=Count("id"), total=Sum("amount"))
+
+    # ---- Sorting ----
+    if tab == "pending":
+        sort_map = {
+            "number": ["claim_number"],
+            "employee": ["employee__first_name", "employee__last_name"],
+            "category": ["category__name"],
+            "amount": ["amount"],
+            "approved": ["updated_at"],
+        }
+        default_sort, default_dir = "approved", "asc"  # oldest approval first: pay in order
+    else:
+        sort_map = {
+            "number": ["claim_number"],
+            "employee": ["employee__first_name", "employee__last_name"],
+            "amount": ["amount"],
+            "paid_on": ["payment_record__payment_date", "payment_record__created_at"],
+            "mode": ["payment_record__payment_mode"],
+            "reference": ["payment_record__payment_reference"],
+        }
+        default_sort, default_dir = "paid_on", "desc"
+    sort = request.GET.get("sort", default_sort)
+    if sort not in sort_map:
+        sort = default_sort
+    direction = request.GET.get("dir", default_dir)
+    if direction not in ("asc", "desc"):
+        direction = default_dir
+    prefix = "-" if direction == "desc" else ""
+    qs = qs.select_related("employee", "branch", "category", "payment_record__recorded_by")
+    qs = qs.order_by(*[prefix + f for f in sort_map[sort]], "id")
+
+    # ---- Pagination ----
+    page_size_options = [10, 25, 50, 100]
+    try:
+        page_size = int(request.GET.get("page_size", 10))
+    except (TypeError, ValueError):
+        page_size = 10
+    if page_size not in page_size_options:
+        page_size = 10
+    paginator = Paginator(qs, page_size)
+    page_obj = paginator.get_page(request.GET.get("page"))
+    page_range = paginator.get_elided_page_range(page_obj.number, on_each_side=1, on_ends=1)
+
+    claims = list(page_obj.object_list)
+    for c in claims:
+        if tab == "pending":
+            c.waiting_days = (now - c.updated_at).days
+            c.payable = (user.is_admin_manager or user.is_superuser) and (c.employee_id != user.id or user.is_superuser)
+            c.delete_block = approved_claim_delete_block_reason(user, c)
+        else:
+            c.delete_block = payment_void_block_reason(user, c)
+
+    base_params = request.GET.copy()
+    base_params.pop("page", None)
+    sort_params = base_params.copy()
+    for key in ("sort", "dir"):
+        sort_params.pop(key, None)
+    is_filtered = bool(q or category_filter or min_amount is not None or max_amount is not None
+                       or mode_filter or date_from or date_to)
 
     context = {
         "active_nav": "reimbursements",
-        "pending_payments": pending_payments,
-        "recent_paid": recent_paid,
+        "tab": tab,
+        "kpis": kpis,
+        "claims": claims,
+        "filtered_count": filtered_stats["n"] or 0,
+        "filtered_total": filtered_stats["total"] or 0,
+        "page_obj": page_obj,
+        "paginator": paginator,
+        "page_range": page_range,
+        "page_size": page_size,
+        "page_size_options": page_size_options,
+        "sort": sort,
+        "dir": direction,
+        "query_string": base_params.urlencode(),
+        "sort_query_string": sort_params.urlencode(),
+        "q": q,
+        "category_filter": category_filter,
+        "mode_filter": mode_filter,
+        "date_from": date_from,
+        "date_to": date_to,
+        "min_amount": request.GET.get("min", "") if min_amount is not None else "",
+        "max_amount": request.GET.get("max", "") if max_amount is not None else "",
+        "is_filtered": is_filtered,
+        "categories": ExpenseCategory.objects.filter(is_active=True),
+        "payment_modes": PaymentMode.choices,
+        "expense_branches": expense_branches,
+        "selected_branch": str(selected_branch),
+        "can_pay": user.is_admin_manager or user.is_superuser,
+        "can_delete_approved": user.is_director or user.is_superuser,
+        "can_void_payments": user.is_admin_manager or user.is_superuser,
+        # Row checkboxes appear only when this user has a bulk action on the current tab.
+        "show_check": (user.is_director or user.is_superuser) if tab == "pending" else (user.is_admin_manager or user.is_superuser),
+        "today": today,
     }
     return render(request, "portal/reimbursements.html", context)
 
@@ -1055,10 +1258,13 @@ def leave_detail_view(request, pk):
                 messages.error(request, " ".join(e.messages))
         elif action == "resubmit":
             return _handle_leave_resubmit(request, app)
+        elif action in ("revoke_approval", "revert_verification", "edit_dates"):
+            _handle_leave_correction(request, app, action)
         return redirect("portal_leave_detail", pk=app.pk)
 
     approval_history = list(app.approval_history.select_related("approver").order_by("created_at"))
     review = leave_review_options(user, app)
+    corrections = leave_correction_options(user, app)
     context = {
         "active_nav": "leaves",
         "snapshot": _employee_leave_snapshot(app) if app.employee_id != user.id else None,
@@ -1069,9 +1275,54 @@ def leave_detail_view(request, pk):
         "can_resubmit": app.can_resubmit(user),
         "review": review,
         "leave_types": LeaveType.objects.filter(is_active=True) if app.can_resubmit(user) else [],
-        "amend_leave_types": LeaveType.objects.filter(is_active=True) if review else [],
+        "amend_leave_types": LeaveType.objects.filter(is_active=True) if review or corrections else [],
+        "corrections": corrections,
     }
     return render(request, "portal/leave_detail.html", context)
+
+
+def _handle_leave_correction(request, app, action):
+    """Director: revoke approval / change dates of an approved leave. HR: revert verification / change dates."""
+    user = request.user
+    options = leave_correction_options(user, app)
+    allowed = options and (
+        (action == "revoke_approval" and options["can_revoke"])
+        or (action == "revert_verification" and options["can_revert"])
+        or (action == "edit_dates" and options["can_edit"]))
+    if not allowed:
+        if app.status == LeaveApplicationStatus.APPROVED and user.is_hr_coordinator and not user.is_director:
+            messages.error(request, "The Director has already approved this leave. HR can no longer revert or change it.")
+        else:
+            messages.error(request, "You do not have permission to make this change.")
+        return
+    remarks = request.POST.get("remarks", "").strip()
+    kw = {"source": "WEB", "ip_address": client_ip(request)}
+    try:
+        if action == "revoke_approval":
+            app.revoke_approval(user, remarks, **kw)
+            notify_leave_correction(app, "REVOKED", user, remarks)
+            messages.success(request, f"Approval of {app.application_number} revoked. {fmt_days(app.number_of_days)} day(s) "
+                                      "credited back; the leave is pending your decision again.")
+        elif action == "revert_verification":
+            app.revert_verification(user, remarks, **kw)
+            notify_leave_correction(app, "REVERTED", user, remarks)
+            messages.success(request, f"HR verification of {app.application_number} reverted. It is back in the HR verification queue.")
+        else:
+            P = request.POST
+            leave_type = None
+            if P.get("amend_leave_type", "").isdigit():
+                leave_type = LeaveType.objects.filter(pk=P["amend_leave_type"], is_active=True).first()
+            changes = app.edit_dates(
+                user,
+                _parse_post_date(P.get("amend_start_date"), "new start date"),
+                _parse_post_date(P.get("amend_end_date"), "new end date"),
+                remarks, leave_type=leave_type, **kw)
+            notify_leave_correction(app, "DATES", user, remarks, changes=changes)
+            extra = " Leave balance re-adjusted." if app.status == LeaveApplicationStatus.APPROVED else ""
+            messages.success(request, f"{app.application_number} updated: {app.start_date:%d %b %Y} to "
+                                      f"{app.end_date:%d %b %Y}, {fmt_days(app.number_of_days)} day(s).{extra}")
+    except ValidationError as e:
+        messages.error(request, " ".join(e.messages))
 
 
 def _employee_leave_snapshot(app):
@@ -1134,6 +1385,13 @@ def _leave_progress(app, history):
             if h.returned_to in stage_keys:
                 for k in stage_keys[stage_keys.index(h.returned_to):]:
                     latest.pop(k, None)
+            continue
+        if h.action in ("REVOKED", "VERIFICATION_REVERTED"):
+            # Taken back: this stage's decision and everything after it no longer count.
+            for k in stage_keys[stage_keys.index(h.stage):]:
+                latest.pop(k, None)
+            continue
+        if h.action == "DATES_EDITED":
             continue
         latest[h.stage] = h
 
@@ -2081,11 +2339,112 @@ def employees_view(request):
     return render(request, "portal/employees.html", context)
 
 
+@login_required
+def employee_overview_view(request, pk):
+    """Slide-in panel fragment: an employee's overall leave / expense status with KPIs."""
+    user = request.user
+    emp = get_object_or_404(
+        User.objects.select_related("profile__department", "profile__reporting_lead", "primary_branch"),
+        pk=pk,
+    )
+    if not (user.is_superuser or emp == user or (emp.primary_branch and user.can_access_branch(emp.primary_branch))):
+        return render(request, "portal/_employee_overview.html", {"forbidden": True}, status=403)
+
+    today = date.today()
+    year_start = date(today.year, 1, 1)
+
+    # ---- Leaves ----
+    balances = get_employee_leave_balances(emp)
+    leaves = LeaveApplication.objects.filter(employee=emp)
+    leaves_year = leaves.filter(start_date__gte=year_start)
+    taken_year = leaves_year.filter(status=LeaveApplicationStatus.APPROVED).aggregate(d=Sum("number_of_days"))["d"] or Decimal("0")
+    pending_leave_qs = leaves.filter(status__in=PENDING_LEAVE_STATUSES)
+    pending_leave_days = pending_leave_qs.aggregate(d=Sum("number_of_days"))["d"] or Decimal("0")
+    paid_available = sum((b["available_balance"] for b in balances if b["leave_type"].is_paid), Decimal("0"))
+    on_leave_now = leaves.filter(
+        status=LeaveApplicationStatus.APPROVED, start_date__lte=today, end_date__gte=today
+    ).select_related("leave_type").first()
+    next_leave = leaves.filter(
+        status=LeaveApplicationStatus.APPROVED, start_date__gt=today
+    ).select_related("leave_type").order_by("start_date").first()
+    max_scale = max([b["earned_days"] for b in balances] + [b["taken_days"] + b["available_balance"] for b in balances] + [Decimal("1")])
+    for b in balances:
+        b["taken_pct"] = float(b["taken_days"] / max_scale * 100) if max_scale else 0
+        b["pending_pct"] = float(b["pending_days"] / max_scale * 100) if max_scale else 0
+        b["available_pct"] = float(max(b["available_balance"] - b["pending_days"], Decimal("0")) / max_scale * 100) if max_scale else 0
+
+    # ---- Expenses ----
+    claims = ExpenseClaim.objects.filter(employee=emp).exclude(status=ExpenseClaimStatus.DRAFT)
+    claims_year = claims.filter(expense_date__gte=year_start)
+    claimed_year = sum((c.claimed_amount for c in claims_year.exclude(status=ExpenseClaimStatus.WITHDRAWN).only("amount", "requested_amount")), Decimal("0"))
+    reimbursed_year = claims_year.filter(status=ExpenseClaimStatus.PAID).aggregate(a=Sum("amount"))["a"] or Decimal("0")
+    pending_claims = claims.filter(status__in=PENDING_EXPENSE_STATUSES)
+    pending_claims_amount = pending_claims.aggregate(a=Sum("amount"))["a"] or Decimal("0")
+    expense_groups = [
+        ("Under review", "badge-pending", [ExpenseClaimStatus.UNDER_ADMIN_REVIEW, ExpenseClaimStatus.UNDER_DIRECTOR_REVIEW]),
+        ("Awaiting payment", "badge-approved", [ExpenseClaimStatus.APPROVED_BY_DIRECTOR]),
+        ("Paid", "badge-paid", [ExpenseClaimStatus.PAID]),
+        ("Rejected", "badge-rejected", [ExpenseClaimStatus.REJECTED_BY_ADMIN, ExpenseClaimStatus.REJECTED_BY_DIRECTOR]),
+        ("Withdrawn", "badge-draft", [ExpenseClaimStatus.WITHDRAWN]),
+    ]
+    expense_status_rows = []
+    for label, css, statuses in expense_groups:
+        agg = claims.filter(status__in=statuses).aggregate(n=Count("id"), a=Sum("amount"))
+        if agg["n"]:
+            expense_status_rows.append({"label": label, "css": css, "count": agg["n"], "amount": agg["a"] or Decimal("0")})
+
+    profile = getattr(emp, "profile", None)
+    tenure = None
+    if profile and profile.date_of_joining:
+        months = (today.year - profile.date_of_joining.year) * 12 + today.month - profile.date_of_joining.month
+        if today.day < profile.date_of_joining.day:
+            months -= 1
+        months = max(months, 0)
+        years, rem = divmod(months, 12)
+        tenure = (f"{years}y " if years else "") + f"{rem}m"
+
+    context = {
+        "emp": emp,
+        "profile": profile,
+        "tenure": tenure,
+        "today": today,
+        "balances": balances,
+        "paid_available": paid_available,
+        "taken_year": taken_year,
+        "pending_leave_count": pending_leave_qs.count(),
+        "pending_leave_days": pending_leave_days,
+        "on_leave_now": on_leave_now,
+        "next_leave": next_leave,
+        "recent_leaves": leaves.select_related("leave_type").order_by("-start_date")[:5],
+        "claimed_year": claimed_year,
+        "claims_year_count": claims_year.count(),
+        "reimbursed_year": reimbursed_year,
+        "pending_claims_count": pending_claims.count(),
+        "pending_claims_amount": pending_claims_amount,
+        "expense_status_rows": expense_status_rows,
+        "recent_claims": claims.select_related("category").order_by("-expense_date", "-id")[:5],
+        "can_manage_employees": can_manage_users(user),
+    }
+    return render(request, "portal/_employee_overview.html", context)
+
+
 
 @login_required
 def reports_view(request):
+    from reports.access import allowed_reports, effective_role
     user = request.user
+    allowed = allowed_reports(user)
+    if not allowed:
+        messages.error(request, "Reports & Analytics are available to managers, HR and the Director only.")
+        return redirect("portal_dashboard")
+    role = effective_role(user)
     accessible_branches = user.get_accessible_branches()
+    scope_note = {
+        RoleChoices.LEAD_MANAGER: "Leave reports for your direct reports.",
+        RoleChoices.ADMIN_MANAGER: "Expense claim and reimbursement reports for the branches you manage.",
+        RoleChoices.HR_COORDINATOR: "All reports for the branches you cover.",
+        RoleChoices.DIRECTOR: "All reports, organisation-wide.",
+    }.get(role, "")
     context = {
         "active_nav": "reports",
         "branches": accessible_branches,
@@ -2096,7 +2455,9 @@ def reports_view(request):
         "leave_statuses": LeaveApplicationStatus.choices,
         "today": date.today(),
         "year_start": date(date.today().year, 1, 1),
-        "is_reviewer": user.role != RoleChoices.EMPLOYEE,
+        "allowed_reports": allowed,
+        "show_branch_filter": role != RoleChoices.LEAD_MANAGER and accessible_branches.count() > 1,
+        "scope_note": scope_note,
     }
     return render(request, "portal/reports.html", context)
 
@@ -2112,6 +2473,12 @@ def notifications_view(request):
         elif action == "mark_read":
             n_id = request.POST.get("notification_id")
             NotificationEvent.objects.filter(id=n_id, recipient=user).update(is_read=True)
+        # Dashboard alerts send the user on to the item (or back to the dashboard).
+        next_url = request.POST.get("next", "")
+        if next_url.startswith("/") and not next_url.startswith("//") and url_has_allowed_host_and_scheme(
+            next_url, allowed_hosts={request.get_host()}, require_https=request.is_secure()
+        ):
+            return redirect(next_url)
         return redirect("portal_notifications")
 
     notifications = NotificationEvent.objects.filter(recipient=user).order_by("is_read", "-created_at")[:100]
@@ -2141,9 +2508,10 @@ def profile_view(request):
         if profile:
             profile.emergency_contact = emergency
             profile.address = address
-            profile.bank_name = bank_name
-            profile.bank_account_no = bank_acc
-            profile.bank_ifsc_or_swift = bank_swift
+            if user.can_edit_bank_details:
+                profile.bank_name = bank_name
+                profile.bank_account_no = bank_acc
+                profile.bank_ifsc_or_swift = bank_swift
             profile.save()
 
         messages.success(request, "Profile updated successfully.")
@@ -2152,5 +2520,6 @@ def profile_view(request):
     context = {
         "active_nav": "profile",
         "profile": profile,
+        "can_edit_bank": user.can_edit_bank_details,
     }
     return render(request, "portal/profile.html", context)

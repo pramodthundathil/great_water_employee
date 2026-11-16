@@ -9,6 +9,7 @@ from expenses.models import ExpenseClaim
 from leaves.models import LeaveApplication
 from accounts.models import RoleChoices
 from accounts.models import User
+from reports.access import can_access_report, effective_role
 from reports.services import (
     generate_expense_excel, generate_expense_pdf,
     generate_leave_excel, generate_leave_pdf,
@@ -30,6 +31,10 @@ def apply_common_filters(qs, params, kind):
     if params.get("status"):
         qs = qs.filter(status=params["status"])
     return qs
+
+
+def _forbidden():
+    return HttpResponse("You are not authorised to download this report.", status=403, content_type="text/plain")
 
 
 def _file_response(content, fmt, slug):
@@ -61,24 +66,30 @@ class ReportExportView(APIView):
         if report not in self.REPORTS:
             return HttpResponse("Unknown report", status=404)
         user = request.user
+        if not can_access_report(user, report):
+            return _forbidden()
+        role = effective_role(user)
         fmt = request.query_params.get("format", "excel").lower()
         branches = user.get_accessible_branches()
         branch_id = request.query_params.get("branch_id")
         if branch_id:
             branches = branches.filter(id=branch_id)
 
-        if user.role == RoleChoices.EMPLOYEE:
-            claim_qs = ExpenseClaim.objects.filter(employee=user)
-            leave_qs = LeaveApplication.objects.filter(employee=user)
-            employees = User.objects.filter(pk=user.pk)
-        elif user.role == RoleChoices.LEAD_MANAGER and not user.is_superuser:
-            claim_qs = ExpenseClaim.objects.filter(employee=user)
+        if role == RoleChoices.LEAD_MANAGER:
+            # Lead / Manager: leave data for their own team only — no expense data.
+            claim_qs = ExpenseClaim.objects.none()
             leave_qs = LeaveApplication.objects.filter(employee__profile__reporting_lead=user)
             employees = User.objects.filter(profile__reporting_lead=user, is_active=True)
+            if branch_id:
+                leave_qs = leave_qs.filter(branch__in=branches)
+                employees = employees.filter(primary_branch__in=branches)
         else:
             claim_qs = ExpenseClaim.objects.filter(branch__in=branches)
             leave_qs = LeaveApplication.objects.filter(branch__in=branches)
             employees = User.objects.filter(primary_branch__in=branches, is_active=True)
+            if role == RoleChoices.ADMIN_MANAGER:
+                # Admin Manager: claim / reimbursement data only — no leave data.
+                leave_qs = LeaveApplication.objects.none()
 
         params = request.query_params
         if params.get("department_id"):
@@ -115,16 +126,14 @@ class ExpenseReportExportView(APIView):
 
     def get(self, request):
         user = request.user
+        if not can_access_report(user, "expenses"):
+            return _forbidden()
         export_format = request.query_params.get("format", "excel").lower()
         branch_id = request.query_params.get("branch_id")
         accessible_branches = user.get_accessible_branches()
 
-        if user.role == RoleChoices.EMPLOYEE:
-            qs = ExpenseClaim.objects.filter(employee=user)
-            branch_title = "My Claims"
-        else:
-            qs = ExpenseClaim.objects.filter(branch__in=accessible_branches)
-            branch_title = "Authorized Branches"
+        qs = ExpenseClaim.objects.filter(branch__in=accessible_branches)
+        branch_title = "Authorized Branches"
 
         if branch_id and user.can_access_branch(get_object_or_404(accessible_branches, id=branch_id)):
             qs = qs.filter(branch_id=branch_id)
@@ -160,14 +169,13 @@ class LeaveReportExportView(APIView):
 
     def get(self, request):
         user = request.user
+        if not can_access_report(user, "leaves"):
+            return _forbidden()
         export_format = request.query_params.get("format", "excel").lower()
         branch_id = request.query_params.get("branch_id")
         accessible_branches = user.get_accessible_branches()
 
-        if user.role == RoleChoices.EMPLOYEE:
-            qs = LeaveApplication.objects.filter(employee=user)
-            branch_title = "My Leaves"
-        elif user.role == RoleChoices.LEAD_MANAGER:
+        if effective_role(user) == RoleChoices.LEAD_MANAGER:
             qs = LeaveApplication.objects.filter(employee__profile__reporting_lead=user)
             branch_title = "Team Leaves"
         else:

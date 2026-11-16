@@ -79,6 +79,22 @@
                         </div>
                     </div>
                     {% endif %}
+                    <div class="col-12 mt-4">
+                        <h6 class="fw-bold text-dark mb-0"><i class="bi bi-bank me-2"></i>Reimbursement Disbursement Bank Details</h6>
+                        {% if not can_edit_bank %}<small class="text-muted"><i class="bi bi-lock me-1"></i>View only — bank details can be updated by an HR Coordinator or Director.</small>{% endif %}
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small fw-bold">Bank Name</label>
+                        <input type="text" {% if can_edit_bank %}name="bank_name" class="form-control"{% else %}class="form-control bg-light" readonly{% endif %} value="{{ profile.bank_name }}" placeholder="e.g. First Abu Dhabi Bank">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small fw-bold">Account / IBAN Number</label>
+                        <input type="text" {% if can_edit_bank %}name="bank_account_no" class="form-control font-monospace"{% else %}class="form-control font-monospace bg-light" readonly{% endif %} value="{{ profile.bank_account_no }}" placeholder="AE0000000000000000">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small fw-bold">SWIFT / IFSC Code</label>
+                        <input type="text" {% if can_edit_bank %}name="bank_ifsc_or_swift" class="form-control font-monospace"{% else %}class="form-control font-monospace bg-light" readonly{% endif %} value="{{ profile.bank_ifsc_or_swift }}" placeholder="e.g. FABAAEM">
+                    </div>
                     <div class="col-12 text-end">
                         <button type="submit" class="btn btn-gw-primary px-4">Save changes</button>
                     </div>

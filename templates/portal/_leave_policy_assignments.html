@@ -1,0 +1,77 @@
+{# Who a policy applies to: assignment chips (removable), effective coverage, and bulk actions. #}
+<div class="gw-fieldset gw-policy-assign mb-3" id="policy-assign-{{ policy.id }}">
+    <div class="d-flex align-items-start justify-content-between flex-wrap gap-2 mb-2">
+        <div>
+            <div class="small fw-semibold text-dark">
+                <i class="bi bi-people me-1 text-primary" aria-hidden="true"></i>Applies to
+            </div>
+            <div class="small text-secondary">
+                {% if not policy.is_active %}
+                    Inactive policies apply to nobody.
+                {% elif policy.covered_count %}
+                    Currently governs <strong class="text-dark">{{ policy.covered_count }}</strong> employee{{ policy.covered_count|pluralize }}
+                    <details class="d-inline">
+                        <summary class="d-inline text-primary" style="cursor: pointer;">view</summary>
+                        <span class="d-block mt-1">
+                            {% for e in policy.covered_employees|slice:":50" %}{{ e.full_name }} <span class="text-muted">({{ e.employee_id }})</span>{% if not forloop.last %}, {% endif %}{% endfor %}
+                            {% if policy.covered_count > 50 %}&hellip; and {{ policy.covered_count|add:"-50" }} more{% endif %}
+                        </span>
+                    </details>
+                {% else %}
+                    <span class="gw-rule-chip gw-rule-chip--warn">
+                        <i class="bi bi-exclamation-triangle-fill" aria-hidden="true"></i>
+                        {% if policy.assignment_list %}Every assigned employee is governed by a more specific policy{% else %}Not assigned to anyone yet{% endif %}
+                    </span>
+                {% endif %}
+            </div>
+        </div>
+        <div class="d-flex gap-2 flex-wrap">
+            <button
+                type="button"
+                class="btn btn-sm btn-gw-primary js-open-assign"
+                data-policy-id="{{ policy.id }}"
+                data-policy-name="{{ policy.name }}"
+                data-policy-frequency="{{ policy.accrual_frequency }}"
+            >
+                <i class="bi bi-person-plus me-1" aria-hidden="true"></i>Assign
+            </button>
+            {% if policy.is_active and policy.covered_count %}
+            <form method="post" action="{% url 'portal_leave_settings' %}" class="m-0 js-apply-now-form"
+                  data-confirm="Credit {% if policy.accrual_frequency == 'MONTHLY' %}this month's accrual{% else %}this year's entitlement{% endif %} under '{{ policy.name }}' to {{ policy.covered_count }} employee(s) now? Anyone already credited for this period is skipped.">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="apply_policy_now">
+                <input type="hidden" name="policy_id" value="{{ policy.id }}">
+                <input type="hidden" name="tab" value="types">
+                <input type="hidden" name="year" value="{{ year }}">
+                <button type="submit" class="btn btn-sm btn-gw-secondary">
+                    <i class="bi bi-lightning-charge me-1" aria-hidden="true"></i>Apply now
+                </button>
+            </form>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if policy.assignment_list %}
+    <form method="post" action="{% url 'portal_leave_settings' %}" class="m-0 js-unassign-form">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="unassign_policy">
+        <input type="hidden" name="policy_id" value="{{ policy.id }}">
+        <input type="hidden" name="tab" value="types">
+        <input type="hidden" name="year" value="{{ year }}">
+        <div class="d-flex flex-wrap gap-2">
+            {% for a in policy.assignment_list %}
+            <label class="gw-assign-chip gw-assign-chip--{{ a.scope|lower }}" title="Select to remove">
+                <input type="checkbox" name="assignment_ids" value="{{ a.id }}" class="form-check-input m-0 js-unassign-check">
+                <i class="bi {% if a.scope == 'ALL' %}bi-globe2{% elif a.scope == 'BRANCH' %}bi-geo-alt{% elif a.scope == 'DEPARTMENT' %}bi-diagram-3{% else %}bi-person{% endif %}" aria-hidden="true"></i>
+                <span>{{ a.target_label }}</span>
+            </label>
+            {% endfor %}
+        </div>
+        <div class="mt-2 js-unassign-actions" hidden>
+            <button type="submit" class="btn btn-sm btn-outline-danger">
+                <i class="bi bi-x-circle me-1" aria-hidden="true"></i>Remove selected
+            </button>
+        </div>
+    </form>
+    {% endif %}
+</div>

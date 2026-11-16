@@ -172,8 +172,8 @@
                     {% for h in approval_history %}
                     <div class="mb-3 pb-3 border-bottom">
                         <div class="d-flex justify-content-between align-items-center mb-1">
-                            <span class="badge {% if h.action == 'APPROVED' %}bg-success{% elif h.action == 'PARTIALLY_APPROVED' %}bg-warning text-dark{% elif h.action == 'REJECTED' %}bg-danger{% elif h.action == 'PAID' %}bg-primary{% else %}bg-secondary{% endif %}">
-                                {% if h.action == 'PAID' %}<i class="bi bi-cash-coin me-1"></i>DISBURSED{% elif h.action == 'PARTIALLY_APPROVED' %}PARTIALLY APPROVED{% else %}{{ h.action }}{% endif %}
+                            <span class="badge {% if h.action == 'APPROVED' %}bg-success{% elif h.action == 'PARTIALLY_APPROVED' %}bg-warning text-dark{% elif h.action == 'REJECTED' %}bg-danger{% elif h.action == 'PAID' %}bg-primary{% elif h.action == 'PAYMENT_VOIDED' %}bg-danger-subtle text-danger{% else %}bg-secondary{% endif %}">
+                                {% if h.action == 'PAID' %}<i class="bi bi-cash-coin me-1"></i>DISBURSED{% elif h.action == 'PAYMENT_VOIDED' %}<i class="bi bi-receipt me-1"></i>PAYMENT DELETED{% elif h.action == 'PARTIALLY_APPROVED' %}PARTIALLY APPROVED{% else %}{{ h.action }}{% endif %}
                             </span>
                             <small class="text-muted">{{ h.created_at|date:"M d, H:i" }}</small>
                         </div>

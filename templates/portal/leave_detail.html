@@ -34,6 +34,20 @@
         </form>
     </div>
     {% endif %}
+    {% if corrections %}
+    <div class="ld-header-actions">
+        {% if corrections.can_edit %}
+        <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#editDatesModal">
+            <i class="bi bi-pencil-square me-1"></i>Change dates
+        </button>
+        {% endif %}
+        {% if corrections.can_revoke or corrections.can_revert %}
+        <button type="button" class="btn btn-outline-danger btn-sm" data-bs-toggle="modal" data-bs-target="#takeBackModal">
+            <i class="bi bi-arrow-counterclockwise me-1"></i>{% if corrections.can_revoke %}Revoke approval{% else %}Revert verification{% endif %}
+        </button>
+        {% endif %}
+    </div>
+    {% endif %}
 </div>
 
 {% if can_resubmit %}
@@ -378,8 +392,8 @@
                     </div>
                 </li>
                 {% for h in approval_history %}
-                <li class="ld-tl-item {% if 'REJECT' in h.action %}tone-danger{% elif h.action == 'RETURNED' or 'PARTIALLY' in h.action %}tone-warning{% elif h.action == 'RESUBMITTED' %}tone-primary{% elif 'APPROV' in h.action %}tone-success{% else %}tone-primary{% endif %}">
-                    <span class="ld-tl-icon"><i class="bi {% if 'REJECT' in h.action %}bi-x-lg{% elif h.action == 'RETURNED' %}bi-arrow-return-left{% elif 'PARTIALLY' in h.action %}bi-calendar-range{% elif h.action == 'RESUBMITTED' %}bi-arrow-repeat{% elif 'APPROV' in h.action %}bi-check-lg{% else %}bi-hand-thumbs-up{% endif %}"></i></span>
+                <li class="ld-tl-item {% if 'REJECT' in h.action %}tone-danger{% elif h.action == 'RETURNED' or h.action == 'REVOKED' or h.action == 'VERIFICATION_REVERTED' or h.action == 'DATES_EDITED' or 'PARTIALLY' in h.action %}tone-warning{% elif h.action == 'RESUBMITTED' %}tone-primary{% elif 'APPROV' in h.action %}tone-success{% else %}tone-primary{% endif %}">
+                    <span class="ld-tl-icon"><i class="bi {% if 'REJECT' in h.action %}bi-x-lg{% elif h.action == 'RETURNED' %}bi-arrow-return-left{% elif h.action == 'REVOKED' or h.action == 'VERIFICATION_REVERTED' %}bi-arrow-counterclockwise{% elif h.action == 'DATES_EDITED' %}bi-pencil-square{% elif 'PARTIALLY' in h.action %}bi-calendar-range{% elif h.action == 'RESUBMITTED' %}bi-arrow-repeat{% elif 'APPROV' in h.action %}bi-check-lg{% else %}bi-hand-thumbs-up{% endif %}"></i></span>
                     <div class="ld-tl-body">
                         <div class="ld-tl-head">
                             <span class="ld-tl-action">{{ h.action_label }}</span>
@@ -411,6 +425,87 @@
         </div>
     </aside>
 </div>
+
+{% if corrections %}
+{% if corrections.can_edit %}
+<!-- Change dates modal (Director: approved leave / HR: verified, awaiting Director) -->
+<div class="modal fade" id="editDatesModal" tabindex="-1" aria-labelledby="editDatesTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content gw-modal-glass">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold" id="editDatesTitle">Change dates &middot; {{ app.application_number }}</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form method="post">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="edit_dates">
+                <div class="modal-body">
+                    <p class="small text-muted mb-3">
+                        {% if corrections.can_revoke %}This leave is approved{% if corrections.is_past %} and its dates are over{% endif %}. The leave balance is re-adjusted to the new number of days.
+                        {% else %}You verified this leave and it is awaiting the Director. After the Director approves it, HR can no longer change it.{% endif %}
+                    </p>
+                    <div class="mb-2">
+                        <label class="form-label small mb-1" for="cType">Leave type</label>
+                        <select name="amend_leave_type" id="cType" class="form-select form-select-sm">
+                            {% for lt in amend_leave_types %}
+                            <option value="{{ lt.id }}" {% if lt.id == app.leave_type_id %}selected{% endif %}>{{ lt.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="row g-2 mb-2">
+                        <div class="col-6">
+                            <label class="form-label small mb-1" for="cStart">From</label>
+                            <input type="date" name="amend_start_date" id="cStart" class="form-control form-control-sm" value="{{ app.start_date|date:'Y-m-d' }}" required>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small mb-1" for="cEnd">To</label>
+                            <input type="date" name="amend_end_date" id="cEnd" class="form-control form-control-sm" value="{{ app.end_date|date:'Y-m-d' }}" required>
+                        </div>
+                    </div>
+                    <label class="form-label small mb-1" for="cRemarks">Reason <span class="text-danger">*</span></label>
+                    <textarea name="remarks" id="cRemarks" class="form-control form-control-sm" rows="2" required placeholder="The employee and approvers will see this"></textarea>
+                    <div class="small text-muted mt-2"><i class="bi bi-info-circle me-1"></i>Days are recalculated (holidays excluded).</div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-light btn-sm" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-check-lg me-1"></i>Save new dates</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% if corrections.can_revoke or corrections.can_revert %}
+<!-- Revoke approval (Director) / Revert verification (HR) modal -->
+<div class="modal fade" id="takeBackModal" tabindex="-1" aria-labelledby="takeBackTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content gw-modal-glass">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold" id="takeBackTitle">{% if corrections.can_revoke %}Revoke approval{% else %}Revert verification{% endif %} &middot; {{ app.application_number }}</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form method="post">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="{% if corrections.can_revoke %}revoke_approval{% else %}revert_verification{% endif %}">
+                <div class="modal-body">
+                    <p class="small text-muted mb-3">
+                        {% if corrections.can_revoke %}{{ app.number_of_days|floatformat:"-1" }} day{{ app.number_of_days|pluralize }} will be credited back and the leave returns to <strong>Pending Director Approval</strong>, where you can approve it again (with other dates) or reject it.{% if corrections.is_past %} This works even though the leave dates are over.{% endif %}
+                        {% else %}The leave goes back to <strong>Pending HR Verification</strong> and leaves the Director's queue.{% endif %}
+                        The employee and everyone in the approval line are notified.
+                    </p>
+                    <label class="form-label small mb-1" for="tbRemarks">Reason <span class="text-danger">*</span></label>
+                    <textarea name="remarks" id="tbRemarks" class="form-control form-control-sm" rows="3" required></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-light btn-sm" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-danger btn-sm"><i class="bi bi-arrow-counterclockwise me-1"></i>{% if corrections.can_revoke %}Revoke approval{% else %}Revert verification{% endif %}</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endif %}
 
 {% if can_resubmit %}
 <!-- Resubmit Modal -->

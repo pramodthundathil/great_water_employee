@@ -81,18 +81,21 @@
                     </div>
 
                     <h6 class="fw-bold text-dark mb-3"><i class="bi bi-bank me-2"></i>Reimbursement Disbursement Bank Details</h6>
+                    {% if not can_edit_bank %}
+                    <p class="small text-muted mb-2"><i class="bi bi-lock me-1"></i>Bank details can only be updated by an HR Coordinator or Director. Please contact HR to make changes.</p>
+                    {% endif %}
                     <div class="row g-3 mb-4">
                         <div class="col-md-4">
                             <label class="form-label small fw-bold">Bank Name</label>
-                            <input type="text" name="bank_name" class="form-control" value="{{ profile.bank_name }}" placeholder="e.g. First Abu Dhabi Bank">
+                            <input type="text" name="bank_name" class="form-control{% if not can_edit_bank %} bg-light{% endif %}"{% if not can_edit_bank %} readonly{% endif %} value="{{ profile.bank_name }}" placeholder="e.g. First Abu Dhabi Bank">
                         </div>
                         <div class="col-md-4">
                             <label class="form-label small fw-bold">Account / IBAN Number</label>
-                            <input type="text" name="bank_account_no" class="form-control font-monospace" value="{{ profile.bank_account_no }}" placeholder="AE0000000000000000">
+                            <input type="text" name="bank_account_no" class="form-control{% if not can_edit_bank %} bg-light{% endif %} font-monospace"{% if not can_edit_bank %} readonly{% endif %} value="{{ profile.bank_account_no }}" placeholder="AE0000000000000000">
                         </div>
                         <div class="col-md-4">
                             <label class="form-label small fw-bold">SWIFT / IFSC Code</label>
-                            <input type="text" name="bank_ifsc_or_swift" class="form-control font-monospace" value="{{ profile.bank_ifsc_or_swift }}" placeholder="e.g. FABAAEM">
+                            <input type="text" name="bank_ifsc_or_swift" class="form-control{% if not can_edit_bank %} bg-light{% endif %} font-monospace"{% if not can_edit_bank %} readonly{% endif %} value="{{ profile.bank_ifsc_or_swift }}" placeholder="e.g. FABAAEM">
                         </div>
                     </div>
 

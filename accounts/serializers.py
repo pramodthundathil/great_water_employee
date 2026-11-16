@@ -35,13 +35,14 @@ class UserDetailSerializer(serializers.ModelSerializer):
     primary_branch = BranchBriefSerializer(read_only=True)
     profile = EmployeeProfileSerializer(read_only=True)
     accessible_branches = serializers.SerializerMethodField()
+    can_edit_bank_details = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = User
         fields = [
             "id", "employee_id", "email", "username", "first_name", "last_name",
             "role", "is_global_scope", "is_superuser", "primary_branch", "phone", "avatar",
-            "profile", "accessible_branches"
+            "profile", "accessible_branches", "can_edit_bank_details"
         ]
 
     def get_accessible_branches(self, obj):

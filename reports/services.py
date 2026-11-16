@@ -3,6 +3,7 @@ from datetime import datetime, date
 from decimal import Decimal
 from django.utils import timezone
 from openpyxl import Workbook
+from openpyxl.utils import get_column_letter
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from reportlab.lib.pagesizes import letter, landscape
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
@@ -68,10 +69,9 @@ def generate_expense_excel(claims, branch_title="All Branches"):
     tot_cell.alignment = Alignment(horizontal="right")
 
     # Column dimensions
-    for col in ws.columns:
+    for idx, col in enumerate(ws.columns, start=1):
         max_len = max(len(str(cell.value or "")) for cell in col)
-        col_letter = col[0].column_letter
-        ws.column_dimensions[col_letter].width = max(max_len + 3, 12)
+        ws.column_dimensions[get_column_letter(idx)].width = max(max_len + 3, 12)
 
     output = io.BytesIO()
     wb.save(output)
@@ -161,9 +161,9 @@ def generate_leave_excel(applications, branch_title="All Branches"):
         ws.cell(row=row_idx, column=9, value=app.get_status_display())
         total_days += app.number_of_days
 
-    for col in ws.columns:
+    for idx, col in enumerate(ws.columns, start=1):
         max_len = max(len(str(cell.value or "")) for cell in col)
-        ws.column_dimensions[col[0].column_letter].width = max(max_len + 3, 12)
+        ws.column_dimensions[get_column_letter(idx)].width = max(max_len + 3, 12)
 
     output = io.BytesIO()
     wb.save(output)

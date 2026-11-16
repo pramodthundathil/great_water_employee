@@ -28,14 +28,6 @@
         <p class="text-muted small mb-0">Sign in with your employee ID or work email</p>
     </div>
 
-    {% if messages %}
-        {% for message in messages %}
-        <div class="alert alert-{{ message.tags|default:'danger' }} alert-dismissible fade show small" role="alert">
-            <i class="bi bi-info-circle-fill me-2"></i>{{ message }}
-            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-        </div>
-        {% endfor %}
-    {% endif %}
 
     <form method="post" action="{% url 'portal_login' %}" id="loginForm">
         {% csrf_token %}

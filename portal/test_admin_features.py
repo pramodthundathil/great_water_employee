@@ -81,9 +81,11 @@ class AdminFeatureTests(TestCase):
     def test_new_report_exports(self):
         api = APIClient()
         api.force_authenticate(self.admin)
-        for rep in ["pending-approvals", "payments", "leave-balances", "expense-summary"]:
+        for rep in ["pending-approvals", "payments", "expense-summary"]:
             for fmt in ["excel", "pdf"]:
                 self.assertEqual(api.get(f"/api/v1/reports/{rep}/export/?format={fmt}").status_code, 200, (rep, fmt))
+        # Admin Manager reports on claims only — leave reports are off-limits.
+        self.assertEqual(api.get("/api/v1/reports/leave-balances/export/?format=excel").status_code, 403)
 
 
 class LeaveSettingsViewTests(TestCase):

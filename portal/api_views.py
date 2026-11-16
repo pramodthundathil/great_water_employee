@@ -18,6 +18,7 @@ from leaves.models import LeaveApplication, LeaveApplicationStatus
 from leaves.serializers import LeaveApplicationListSerializer
 from leaves.services import get_employee_leave_balances
 from notifications.models import NotificationEvent
+from portal.dashboard_services import build_status_alerts
 
 EXPENSE_ACTIONS = [
     {"value": "APPROVED", "label": "Approve", "requires_remarks": False, "tone": "positive"},
@@ -199,4 +200,9 @@ class DashboardSummaryView(APIView):
             ).data,
             "approvals_pending_count": len(pending_items_for(user)) if user.role != RoleChoices.EMPLOYEE or user.is_superuser else 0,
             "unread_notifications": NotificationEvent.objects.filter(recipient=user, is_read=False).count(),
+            # Unread "your request was rejected / approved / paid" updates, for the dashboard banner.
+            "status_alerts": [
+                {k: (v.isoformat() if k == "created_at" else v) for k, v in a.items() if k != "link_url"}
+                for a in build_status_alerts(user)
+            ],
         })

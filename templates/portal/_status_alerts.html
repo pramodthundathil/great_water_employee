@@ -1,0 +1,48 @@
+{% comment %}
+Unread status alerts for the user's own leaves / claims (portal.dashboard_services.build_status_alerts):
+rejected (red) and final approval — leave approved, claim approved / paid (green).
+"View" and the close button mark the notification read; View then opens the item.
+{% endcomment %}
+{% if status_alerts %}
+<div class="gw-status-alerts mb-4" role="status" aria-live="polite">
+    <div class="gw-status-alerts-head">
+        <i class="bi bi-bell-fill"></i>
+        <span>Updates on your requests</span>
+        <span class="gw-hl-tag">{{ status_alerts|length }} unread</span>
+    </div>
+    <ul class="gw-status-list">
+        {% for a in status_alerts %}
+        <li class="gw-status-item gw-status-item--{{ a.tone }}">
+            <span class="gw-ac-icon"><i class="bi {% if a.tone == 'rejected' %}{% if a.kind == 'leave' %}bi-calendar2-x{% else %}bi-receipt-cutoff{% endif %}{% else %}{% if a.kind == 'leave' %}bi-calendar2-check{% else %}bi-patch-check{% endif %}{% endif %}"></i></span>
+            <div class="gw-ac-main">
+                <div class="gw-ac-line">
+                    <span class="gw-ac-ref">{{ a.ref }}</span>
+                    <span class="gw-ac-title">{{ a.summary }}</span>
+                </div>
+                <div class="gw-ac-sub">
+                    <span class="gw-hl-tag gw-hl-tag--{{ a.tone }}"><i class="bi {% if a.tone == 'rejected' %}bi-x-circle{% else %}bi-check-circle{% endif %}"></i> {{ a.status }}</span>
+                    <span class="gw-ac-sep">&bull;</span> {{ a.created_at|timesince }} ago
+                    {% if a.remarks %}<div class="gw-ac-note" title="{{ a.remarks }}">{% if a.tone == 'rejected' %}Reason{% else %}Remarks{% endif %}: {{ a.remarks|truncatechars:120 }}</div>{% endif %}
+                </div>
+            </div>
+            <div class="gw-ac-end">
+                <form method="post" action="{% url 'portal_notifications' %}" class="m-0">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="mark_read">
+                    <input type="hidden" name="notification_id" value="{{ a.notification_id }}">
+                    <input type="hidden" name="next" value="{{ a.link_url }}">
+                    <button type="submit" class="btn btn-sm {% if a.tone == 'rejected' %}btn-gw-primary{% else %}btn-gw-secondary{% endif %} py-1 px-3">View{% if a.tone == 'rejected' and a.kind == 'leave' %} &amp; resubmit{% endif %}</button>
+                </form>
+                <form method="post" action="{% url 'portal_notifications' %}" class="m-0">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="mark_read">
+                    <input type="hidden" name="notification_id" value="{{ a.notification_id }}">
+                    <input type="hidden" name="next" value="{% url 'portal_dashboard' %}">
+                    <button type="submit" class="gw-ac-open" title="Mark as read" aria-label="Mark {{ a.ref }} update as read"><i class="bi bi-x-lg"></i></button>
+                </form>
+            </div>
+        </li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}

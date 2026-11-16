@@ -2,6 +2,7 @@ from django.contrib import admin
 from leaves.models import (
     LeaveType, LeavePolicy, LeaveAccrualRun, LeaveLedgerEntry,
     LeaveApplication, LeaveApproval, HolidayCalendar, Holiday, LeaveAuditLog,
+    LeavePolicyAssignment,
 )
 
 
@@ -75,3 +76,9 @@ class HolidayCalendarAdmin(admin.ModelAdmin):
 admin.site.register(LeaveType, list_display=("code", "name", "is_paid", "is_accrual_based", "is_active"))
 admin.site.register(LeavePolicy, list_display=("name", "leave_type", "accrual_frequency", "yearly_entitlement", "monthly_accrual_rate"))
 admin.site.register(LeaveAccrualRun, list_display=("employee", "policy", "period_key", "days_credited"))
+admin.site.register(
+    LeavePolicyAssignment,
+    list_display=("policy", "scope", "branch", "department", "employee", "created_at"),
+    list_filter=("scope", "policy__leave_type"),
+    raw_id_fields=("employee",),
+)

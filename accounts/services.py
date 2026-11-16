@@ -18,6 +18,9 @@ MANAGER_ROLES = [RoleChoices.DIRECTOR, RoleChoices.ADMIN_MANAGER, RoleChoices.HR
 LEAD_ROLES = [RoleChoices.LEAD_MANAGER, RoleChoices.ADMIN_MANAGER, RoleChoices.HR_COORDINATOR, RoleChoices.DIRECTOR]
 
 
+BANK_FIELDS = ("bank_name", "bank_account_no", "bank_ifsc_or_swift")
+
+
 class EmployeeError(Exception):
     """A user-facing validation / permission error."""
 
@@ -194,6 +197,10 @@ def update_employee(actor, emp, data):
         doj = _parse_date(data.get("date_of_joining"))
         if doj:
             profile.date_of_joining = doj
+    if actor.can_edit_bank_details:
+        for field in BANK_FIELDS:
+            if field in data:
+                setattr(profile, field, _str(data, field))
     profile.save()
     return emp
 

@@ -1,0 +1,10 @@
+{% comment %}
+Global toast stack. Django messages render here as server-side toasts; JS can add more via
+window.gwToast(message, type, {timeout}). type: success | error | danger | warning | info.
+Any element with data-gw-toast (and data-type) elsewhere on the page is also moved here as a toast.
+{% endcomment %}
+<div class="gw-toast-stack" id="gwToastStack" aria-live="polite" aria-atomic="false">
+    {% for message in messages %}
+    <div class="gw-toast" data-gw-toast data-type="{% if message.tags == 'error' or 'error' in message.tags %}danger{% elif 'success' in message.tags %}success{% elif 'warning' in message.tags %}warning{% elif 'danger' in message.tags %}danger{% else %}info{% endif %}" role="{% if 'error' in message.tags or 'danger' in message.tags %}alert{% else %}status{% endif %}">{{ message }}</div>
+    {% endfor %}
+</div>

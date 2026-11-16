@@ -103,7 +103,7 @@
                 </thead>
                 <tbody>
                     {% for emp in employees %}
-                    <tr class="{% if not emp.is_active %}is-inactive{% endif %}">
+                    <tr class="gw-eo-row {% if not emp.is_active %}is-inactive{% endif %}" data-overview-url="{% url 'portal_employee_overview' emp.pk %}" tabindex="0" title="Click to view overview">
                         {% if can_manage_employees %}
                         <td class="gw-dt-check">
                             <input type="checkbox" class="form-check-input" name="selected" value="{{ emp.pk }}" form="bulkForm"
@@ -165,6 +165,7 @@
                                     <button type="button" class="btn btn-sm btn-light" data-bs-toggle="dropdown" aria-expanded="false" title="More options"><i class="bi bi-three-dots-vertical"></i></button>
                                     <ul class="dropdown-menu dropdown-menu-end shadow-sm border-0 p-2" style="border-radius: 12px; min-width: 190px;">
                                         <li><h6 class="dropdown-header">{{ emp.employee_id }}</h6></li>
+                                        <li><button type="button" class="dropdown-item rounded small" data-open-overview="{% url 'portal_employee_overview' emp.pk %}"><i class="bi bi-person-vcard me-2 text-primary"></i> View Overview</button></li>
                                         {% if can_reset_passwords and emp != user %}
                                         <li>
                                             <button type="button" class="dropdown-item rounded small"
@@ -220,6 +221,15 @@
     </div>
 
     {% include "portal/_dt_pagination.html" %}
+</div>
+
+<!-- Employee overview slide-in panel -->
+<div class="offcanvas offcanvas-end gw-eo-offcanvas" tabindex="-1" id="employeeOverview" aria-labelledby="employeeOverviewLabel">
+    <div class="offcanvas-header">
+        <span class="gw-eo-kicker"><i class="bi bi-person-vcard me-1"></i> Employee overview</span>
+        <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+    </div>
+    <div class="offcanvas-body" id="employeeOverviewBody"></div>
 </div>
 
 <!-- ==========================================================================
@@ -420,5 +430,46 @@ GwDatatable.init({
         },
     },
 });
+// ---- Employee overview panel (row click) ----
+(function () {
+    const panelEl = document.getElementById('employeeOverview');
+    const body = document.getElementById('employeeOverviewBody');
+    const panel = bootstrap.Offcanvas.getOrCreateInstance(panelEl);
+    const skeleton = '<div class="gw-eo-loading"><div class="spinner-border spinner-border-sm text-primary"></div><span>Loading overview…</span></div>';
+    let current = null;
+    let activeRow = null;
+
+    function open(url, row) {
+        if (activeRow) activeRow.classList.remove('is-viewing');
+        activeRow = row || null;
+        if (activeRow) activeRow.classList.add('is-viewing');
+        current = url;
+        body.innerHTML = skeleton;
+        panel.show();
+        fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' }, credentials: 'same-origin' })
+            .then(r => r.text())
+            .then(html => { if (current === url) body.innerHTML = html; })
+            .catch(() => { if (current === url) body.innerHTML = '<div class="empty-state py-5"><i class="bi bi-wifi-off empty-state-icon"></i><div class="empty-state-title">Could not load overview</div><p class="empty-state-desc">Check your connection and try again.</p></div>'; });
+    }
+    panelEl.addEventListener('hidden.bs.offcanvas', () => {
+        if (activeRow) activeRow.classList.remove('is-viewing');
+        activeRow = null; current = null;
+    });
+
+    const table = document.getElementById('employeesTable');
+    table.addEventListener('click', function (e) {
+        if (e.target.closest('a, button, input, label, select, .dropdown-menu, .gw-dt-check')) return;
+        const row = e.target.closest('tr[data-overview-url]');
+        if (row && !window.getSelection().toString()) open(row.dataset.overviewUrl, row);
+    });
+    table.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter' || e.target.tagName !== 'TR') return;
+        const row = e.target.closest('tr[data-overview-url]');
+        if (row) { e.preventDefault(); open(row.dataset.overviewUrl, row); }
+    });
+    document.querySelectorAll('[data-open-overview]').forEach(btn => btn.addEventListener('click', function () {
+        open(btn.dataset.openOverview, btn.closest('tr'));
+    }));
+})();
 </script>
 {% endblock %}

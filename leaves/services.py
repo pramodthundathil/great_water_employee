@@ -10,7 +10,181 @@ from leaves.models import (
     LeaveLedgerEntryType, LeaveApplication, LeaveApplicationStatus,
     LeaveAuditLog, LeaveAuditAction, LeaveApproval, fmt_days,
     initial_approval_stage, STAGE_PENDING_STATUS, STAGE_LABELS,
+    LeavePolicyAssignment, PolicyScope, SCOPE_PRIORITY,
 )
+
+
+# ---------------------------------------------------------------------------
+# Policy assignment & resolution
+# ---------------------------------------------------------------------------
+
+def _eligible_employees():
+    from accounts.models import User
+    return User.objects.filter(is_active=True, profile__isnull=False).select_related("profile", "primary_branch")
+
+
+def _assignment_matches(assignment, employee):
+    scope = assignment.scope
+    if scope == PolicyScope.ALL:
+        return True
+    if scope == PolicyScope.BRANCH:
+        return assignment.branch_id is not None and assignment.branch_id == employee.primary_branch_id
+    if scope == PolicyScope.DEPARTMENT:
+        profile = getattr(employee, "profile", None)
+        return assignment.department_id is not None and profile is not None and assignment.department_id == profile.department_id
+    if scope == PolicyScope.EMPLOYEE:
+        return assignment.employee_id == employee.id
+    return False
+
+
+def _load_active_policies(leave_type=None, frequency=None):
+    qs = LeavePolicy.objects.filter(is_active=True, leave_type__is_active=True).select_related("leave_type") \
+        .prefetch_related("assignments")
+    if leave_type is not None:
+        qs = qs.filter(leave_type=leave_type)
+    if frequency is not None:
+        qs = qs.filter(accrual_frequency=frequency)
+    return list(qs)
+
+
+def resolve_policies_for_employee(employee, policies=None):
+    """
+    Returns {leave_type_id: LeavePolicy} -- the single policy that governs each leave type
+    for this employee. Most specific assignment wins (Individual > Department > Branch > All);
+    ties go to the latest effective date, then the most recently created policy.
+    """
+    if policies is None:
+        policies = _load_active_policies()
+    best = {}
+    for policy in policies:
+        rank = max(
+            (SCOPE_PRIORITY.get(a.scope, 0) for a in policy.assignments.all() if _assignment_matches(a, employee)),
+            default=0,
+        )
+        if rank == 0:
+            continue
+        key = (rank, policy.effective_date, policy.id)
+        current = best.get(policy.leave_type_id)
+        if current is None or key > current[0]:
+            best[policy.leave_type_id] = (key, policy)
+    return {lt_id: item[1] for lt_id, item in best.items()}
+
+
+def resolve_policy(employee, leave_type):
+    """The policy governing `leave_type` for `employee`, or None if none is assigned."""
+    return resolve_policies_for_employee(employee, _load_active_policies(leave_type=leave_type)).get(leave_type.id)
+
+
+def policy_coverage(policies=None, employees=None):
+    """
+    Returns {policy_id: [employee, ...]} for employees whose effective policy is that policy.
+    Used to show HR who each policy actually applies to after precedence is applied.
+    """
+    if policies is None:
+        policies = _load_active_policies()
+    if employees is None:
+        employees = list(_eligible_employees())
+    coverage = {p.id: [] for p in policies}
+    for emp in employees:
+        for policy in resolve_policies_for_employee(emp, policies).values():
+            coverage[policy.id].append(emp)
+    return coverage
+
+
+@transaction.atomic
+def assign_policy(policy, scope, targets=(), actor=None):
+    """
+    Bulk-assign `policy` to many targets in one go.
+      scope=ALL        -> targets ignored
+      scope=BRANCH     -> targets are Branch objects
+      scope=DEPARTMENT -> targets are Department objects
+      scope=EMPLOYEE   -> targets are User objects
+    Idempotent: existing assignments are left as they are. Returns the number created.
+    """
+    if scope not in PolicyScope.values:
+        raise ValidationError("Unknown policy scope.")
+    if scope == PolicyScope.ALL:
+        _, created = LeavePolicyAssignment.objects.get_or_create(
+            policy=policy, scope=scope, branch=None, department=None, employee=None,
+            defaults={"created_by": actor},
+        )
+        return int(created)
+    field = {PolicyScope.BRANCH: "branch", PolicyScope.DEPARTMENT: "department", PolicyScope.EMPLOYEE: "employee"}[scope]
+    created_count = 0
+    for target in targets:
+        lookup = {"branch": None, "department": None, "employee": None, field: target}
+        _, created = LeavePolicyAssignment.objects.get_or_create(
+            policy=policy, scope=scope, **lookup, defaults={"created_by": actor},
+        )
+        created_count += int(created)
+    return created_count
+
+
+def unassign_policy(policy, assignment_ids):
+    """Remove the given assignments from `policy`. Returns the number removed."""
+    deleted, _ = LeavePolicyAssignment.objects.filter(policy=policy, id__in=assignment_ids).delete()
+    return deleted
+
+
+def _already_processed(employee, leave_type, period_key):
+    """An accrual/grant/lapse for this leave type and period exists under ANY policy."""
+    return LeaveAccrualRun.objects.filter(
+        employee=employee, policy__leave_type=leave_type, period_key=period_key,
+    ).exists()
+
+
+def _grant_yearly_entitlement(employee, policy, year, actor=None):
+    """Credit a YEARLY/NONE policy's entitlement once per employee, leave type and year."""
+    if policy.accrual_frequency not in ("YEARLY", "NONE") or policy.yearly_entitlement <= 0:
+        return None, "Policy has no yearly grant"
+    grant_key = f"YEAR-{year}"
+    lt = policy.leave_type
+    if _already_processed(employee, lt, grant_key):
+        return None, "Already granted this year"
+    profile = getattr(employee, "profile", None)
+    if profile and profile.date_of_joining and profile.date_of_joining.year > year:
+        return None, "Not yet joined"
+    balance = LeaveLedgerEntry.get_current_balance(employee, lt)
+    LeaveLedgerEntry.objects.create(
+        employee=employee, leave_type=lt,
+        entry_type=LeaveLedgerEntryType.ACCRUAL_CREDIT,
+        transaction_days=policy.yearly_entitlement,
+        balance_after=balance + policy.yearly_entitlement,
+        reference_note=f"Yearly entitlement {year} under policy '{policy.name}'",
+        created_by=actor,
+    )
+    run = LeaveAccrualRun.objects.create(
+        employee=employee, policy=policy, period_key=grant_key, days_credited=policy.yearly_entitlement,
+    )
+    return run, "Granted"
+
+
+@transaction.atomic
+def apply_policy_now(policy, actor=None, as_of_date=None):
+    """
+    Put a policy into effect immediately for everyone it currently governs:
+      Monthly policies -> credit this month's accrual
+      Yearly / fixed   -> credit this year's entitlement
+    Safe to repeat: nothing is credited twice for the same leave type and period,
+    even if the employee was previously credited under a different policy.
+    """
+    if as_of_date is None:
+        as_of_date = date.today()
+    results = {"credited": 0, "skipped": 0, "covered": 0}
+    if not policy.is_active:
+        return results
+    policies = _load_active_policies(leave_type=policy.leave_type)
+    for emp in _eligible_employees():
+        effective = resolve_policies_for_employee(emp, policies).get(policy.leave_type_id)
+        if effective is None or effective.id != policy.id:
+            continue
+        results["covered"] += 1
+        if policy.accrual_frequency == "MONTHLY":
+            run, _ = run_accrual_for_employee(emp, policy, as_of_date.strftime("%Y-%m"), as_of_date)
+        else:
+            run, _ = _grant_yearly_entitlement(emp, policy, as_of_date.year, actor)
+        results["credited" if run else "skipped"] += 1
+    return results
 
 
 def get_employee_leave_balances(employee):
@@ -22,6 +196,7 @@ def get_employee_leave_balances(employee):
     - Available balance (official ledger balance)
     """
     leave_types = LeaveType.objects.filter(is_active=True)
+    effective_policies = resolve_policies_for_employee(employee)
     summary = []
 
     for lt in leave_types:
@@ -52,11 +227,12 @@ def get_employee_leave_balances(employee):
             employee=employee,
             leave_type=lt,
             transaction_days__gt=0
-        )
+        ).exclude(entry_type=LeaveLedgerEntryType.LEAVE_REVERSAL)
         total_credited = sum((e.transaction_days for e in positive_entries), Decimal("0.00"))
 
         summary.append({
             "leave_type": lt,
+            "policy": effective_policies.get(lt.id),
             "earned_days": total_credited,
             "taken_days": taken_days,
             "pending_days": pending_days,
@@ -77,7 +253,7 @@ def run_accrual_for_employee(employee, policy, period_key, as_of_date=None):
         as_of_date = date.today()
 
     # 1. Idempotency check: Already processed for this period?
-    if LeaveAccrualRun.objects.filter(employee=employee, policy=policy, period_key=period_key).exists():
+    if _already_processed(employee, policy.leave_type, period_key):
         return None, "Already processed for this period key"
 
     # 2. Check employee joining date & probation
@@ -126,35 +302,37 @@ def run_accrual_for_employee(employee, policy, period_key, as_of_date=None):
 
 def run_batch_monthly_accrual(period_key=None, as_of_date=None):
     """
-    Executes monthly accrual across all active employees for active accrual policies.
+    Executes monthly accrual for every active employee under the monthly policy
+    assigned to them (see resolve_policies_for_employee).
     """
-    from accounts.models import User
-
     if as_of_date is None:
         as_of_date = date.today()
     if period_key is None:
         period_key = as_of_date.strftime("%Y-%m")
 
-    policies = LeavePolicy.objects.filter(is_active=True, accrual_frequency="MONTHLY")
-    employees = User.objects.filter(is_active=True, profile__isnull=False)
+    policies = _load_active_policies()
+    employees = list(_eligible_employees())
 
     results = {
         "period_key": period_key,
-        "total_employees": employees.count(),
+        "total_employees": len(employees),
         "credited": 0,
         "skipped": 0,
         "details": [],
     }
 
-    for policy in policies:
-        for emp in employees:
+    # Each employee accrues only under the policy assigned to them for each leave type.
+    for emp in employees:
+        for policy in resolve_policies_for_employee(emp, policies).values():
+            if policy.accrual_frequency != "MONTHLY":
+                continue
             run, message = run_accrual_for_employee(emp, policy, period_key, as_of_date)
             if run:
                 results["credited"] += 1
-                results["details"].append(f"Credited {emp.employee_id}: +{run.days_credited} days")
+                results["details"].append(f"Credited {emp.employee_id}: +{run.days_credited} days ({policy.leave_type.code})")
             else:
                 results["skipped"] += 1
-                results["details"].append(f"Skipped {emp.employee_id}: {message}")
+                results["details"].append(f"Skipped {emp.employee_id} ({policy.leave_type.code}): {message}")
 
     return results
 
@@ -346,6 +524,25 @@ def deduct_leave_from_ledger(application, actor, note_prefix="Approved Leave App
     )
 
 
+def reverse_leave_deduction(application, actor, note_prefix="Approval reversed for", leave_type=None, days=None):
+    """Credits back the days deducted for an approved application (paid leave types only)."""
+    leave_type = leave_type or application.leave_type
+    days = application.number_of_days if days is None else days
+    if not leave_type.is_paid or not days:
+        return None
+    current_bal = LeaveLedgerEntry.get_current_balance(application.employee, leave_type)
+    note = f"{note_prefix} {application.application_number} ({fmt_days(days)} day(s) credited back)"
+    return LeaveLedgerEntry.objects.create(
+        employee=application.employee,
+        leave_type=leave_type,
+        entry_type=LeaveLedgerEntryType.LEAVE_REVERSAL,
+        transaction_days=days,
+        balance_after=current_bal + days,
+        reference_note=note[:255],
+        created_by=actor,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Audit trail
 # ---------------------------------------------------------------------------
@@ -461,6 +658,28 @@ def leave_review_options(user, application):
             {"value": "REJECTED", "label": "Reject", "requires_remarks": True, "tone": "negative"},
         ],
     }
+
+
+def leave_correction_options(user, application):
+    """
+    Corrections the signed-in user may make after a decision, or None:
+      Director       : approved leave (also when its dates are over) -> revoke approval / change dates
+      HR Coordinator : verified leave awaiting the Director -> revert verification / change dates.
+                       Nothing once the Director has approved it.
+    """
+    if application.employee_id == user.id and not user.is_superuser:
+        return None
+    if not user.can_access_branch(application.branch):
+        return None
+    S = LeaveApplicationStatus
+    if application.status == S.APPROVED and user.is_director:
+        return {"stage": "DIRECTOR", "can_revoke": True, "can_revert": False, "can_edit": True,
+                "is_past": application.end_date < date.today()}
+    if (application.status == S.PENDING_DIRECTOR_APPROVAL and user.is_hr_coordinator
+            and "HR_COORDINATOR" not in application.skipped_stages):
+        return {"stage": "HR_COORDINATOR", "can_revoke": False, "can_revert": True, "can_edit": True,
+                "is_past": application.end_date < date.today()}
+    return None
 
 
 REVIEW_EVENTS = {
@@ -667,18 +886,16 @@ def run_yearly_leave_reset(year, actor=None):
       1. Lapse balance above the policy's max carry-forward.
       2. Grant the yearly entitlement for non-monthly policies (e.g. Casual Leave).
     """
-    from accounts.models import User
-
     results = {"year": year, "lapsed": 0, "granted": 0, "skipped": 0}
-    employees = User.objects.filter(is_active=True, profile__isnull=False)
-    policies = LeavePolicy.objects.filter(is_active=True).select_related("leave_type")
+    policies = _load_active_policies()
 
-    for policy in policies:
-        lt = policy.leave_type
-        for emp in employees:
+    # Each employee is processed only under the policy assigned to them for each leave type.
+    for emp in _eligible_employees():
+        for policy in resolve_policies_for_employee(emp, policies).values():
+            lt = policy.leave_type
             # 1. Carry forward cap
             cf_key = f"CF-{year}"
-            if not LeaveAccrualRun.objects.filter(employee=emp, policy=policy, period_key=cf_key).exists():
+            if not _already_processed(emp, lt, cf_key):
                 balance = LeaveLedgerEntry.get_current_balance(emp, lt)
                 excess = balance - policy.max_carry_forward
                 lapsed = Decimal("0.00")
@@ -697,24 +914,7 @@ def run_yearly_leave_reset(year, actor=None):
 
             # 2. Yearly grant
             if policy.accrual_frequency in ("YEARLY", "NONE") and policy.yearly_entitlement > 0:
-                grant_key = f"YEAR-{year}"
-                if LeaveAccrualRun.objects.filter(employee=emp, policy=policy, period_key=grant_key).exists():
-                    results["skipped"] += 1
-                    continue
-                profile = getattr(emp, "profile", None)
-                if profile and profile.date_of_joining and profile.date_of_joining.year > year:
-                    results["skipped"] += 1
-                    continue
-                balance = LeaveLedgerEntry.get_current_balance(emp, lt)
-                LeaveLedgerEntry.objects.create(
-                    employee=emp, leave_type=lt,
-                    entry_type=LeaveLedgerEntryType.ACCRUAL_CREDIT,
-                    transaction_days=policy.yearly_entitlement,
-                    balance_after=balance + policy.yearly_entitlement,
-                    reference_note=f"Yearly entitlement {year} under policy '{policy.name}'",
-                    created_by=actor,
-                )
-                LeaveAccrualRun.objects.create(employee=emp, policy=policy, period_key=grant_key, days_credited=policy.yearly_entitlement)
-                results["granted"] += 1
+                run, _ = _grant_yearly_entitlement(emp, policy, year, actor)
+                results["granted" if run else "skipped"] += 1
 
     return results

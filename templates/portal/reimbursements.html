@@ -1,190 +1,457 @@
 {% extends "base.html" %}
 {% load static %}
 
-{% block title %}Reimbursements & Payments — Great Waters{% endblock %}
+{% block title %}Reimbursements — Great Waters{% endblock %}
 
 {% block content %}
 <div class="page-title-box">
     <div>
-        <h1 class="page-title">Reimbursement Disbursements</h1>
-        <p class="page-subtitle">Disburse payments for Director-approved expense claims and record transaction reference numbers.</p>
+        <h1 class="page-title">Reimbursements</h1>
+        <p class="page-subtitle">Pay out Director-approved expense claims and keep a record of every payment.</p>
     </div>
+    {% if expense_branches.count > 1 %}
+    <form method="get" class="gw-approvals-branch">
+        <input type="hidden" name="tab" value="{{ tab }}">
+        <label for="branchFilter"><i class="bi bi-geo-alt"></i></label>
+        <select id="branchFilter" name="branch" class="form-select form-select-sm" onchange="this.form.submit()" aria-label="Branch">
+            <option value="all" {% if selected_branch == 'all' %}selected{% endif %}>All my branches</option>
+            {% for b in expense_branches %}
+            <option value="{{ b.id }}" {% if selected_branch == b.id|stringformat:'s' %}selected{% endif %}>{{ b.name }} ({{ b.code }})</option>
+            {% endfor %}
+        </select>
+    </form>
+    {% endif %}
 </div>
 
-<!-- Pending Payments Queue -->
-<div class="gw-card mb-4">
-    <div class="gw-card-header bg-success bg-opacity-10">
-        <div>
-            <h5 class="gw-card-title text-success">
-                <i class="bi bi-hourglass-split me-2"></i>Approved Claims Awaiting Disbursement ({{ pending_payments.count }})
-            </h5>
-            <small class="text-muted">Director authorized claims ready for corporate account payout.</small>
+<!-- KPIs -->
+<div class="row g-3 mb-4">
+    <div class="col-12 col-sm-6 col-xl-3">
+        <div class="kpi-card {% if kpis.pending_count %}kpi-card-attention{% endif %}">
+            <div class="kpi-icon-wrapper kpi-icon--warning"><i class="bi bi-hourglass-split"></i></div>
+            <div class="kpi-value">{{ kpis.pending_count }}</div>
+            <div class="kpi-label">Awaiting payment</div>
+            <div class="kpi-meta">${{ kpis.pending_total|floatformat:2 }} to pay</div>
         </div>
     </div>
-    <div class="gw-card-body p-0">
-        <div class="table-responsive">
-            <table class="table gw-table m-0">
-                <thead>
-                    <tr>
-                        <th>Claim #</th>
-                        <th>Employee</th>
-                        <th>Branch</th>
-                        <th>Category</th>
-                        <th>Amount</th>
-                        <th>Director Approved At</th>
-                        <th class="text-end">Action</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for c in pending_payments %}
-                    <tr>
-                        <td>
-                            <a href="{% url 'portal_expense_detail' c.pk %}" class="fw-bold text-decoration-none text-primary">
-                                {{ c.claim_number }}
-                            </a>
-                        </td>
-                        <td>
-                            <div class="fw-semibold">{{ c.employee.full_name }}</div>
-                            <small class="text-muted">{{ c.employee.employee_id }}</small>
-                        </td>
-                        <td><span class="badge bg-light text-dark border">{{ c.branch.code }}</span></td>
-                        <td>{{ c.category.name }}</td>
-                        <td><span class="fs-6 fw-bold text-success">${{ c.amount|floatformat:2 }}</span>{% if c.is_partially_approved %}<div class="small text-warning-emphasis">Partial · claimed ${{ c.claimed_amount|floatformat:2 }}</div>{% endif %}</td>
-                        <td>{{ c.updated_at|date:"M d, Y H:i" }}</td>
-                        <td class="text-end">
-                            <button class="btn btn-sm btn-gw-primary" onclick="openPaymentModal('{{ c.id }}', '{{ c.claim_number }}', '{{ c.amount|floatformat:2 }}', '{{ c.employee.full_name }}')">
-                                <i class="bi bi-cash me-1"></i> Record Payment
-                            </button>
-                        </td>
-                    </tr>
-                    {% empty %}
-                    <tr>
-                        <td colspan="7" class="text-center text-muted py-4">No approved claims awaiting disbursement.</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+    <div class="col-12 col-sm-6 col-xl-3">
+        <div class="kpi-card">
+            <div class="kpi-icon-wrapper {% if kpis.overdue_count %}kpi-icon--danger{% else %}kpi-icon--neutral{% endif %}"><i class="bi bi-calendar-x"></i></div>
+            <div class="kpi-value">{% if kpis.oldest_days is None %}—{% elif kpis.oldest_days == 0 %}Today{% else %}{{ kpis.oldest_days }}d{% endif %}</div>
+            <div class="kpi-label">Oldest unpaid claim</div>
+            <div class="kpi-meta">{% if kpis.overdue_count %}{{ kpis.overdue_count }} waiting more than 7 days{% else %}Nothing overdue{% endif %}</div>
+        </div>
+    </div>
+    <div class="col-12 col-sm-6 col-xl-3">
+        <div class="kpi-card">
+            <div class="kpi-icon-wrapper kpi-icon--success"><i class="bi bi-cash-coin"></i></div>
+            <div class="kpi-value">${{ kpis.month_total|floatformat:2 }}</div>
+            <div class="kpi-label">Paid this month</div>
+            <div class="kpi-meta">{{ kpis.month_count }} claim{{ kpis.month_count|pluralize }} since {{ today|date:"M 1" }}</div>
+        </div>
+    </div>
+    <div class="col-12 col-sm-6 col-xl-3">
+        <div class="kpi-card">
+            <div class="kpi-icon-wrapper kpi-icon--primary"><i class="bi bi-check2-all"></i></div>
+            <div class="kpi-value">${{ kpis.paid_total|floatformat:2 }}</div>
+            <div class="kpi-label">Total paid</div>
+            <div class="kpi-meta">{{ kpis.paid_count }} claim{{ kpis.paid_count|pluralize }} on record</div>
         </div>
     </div>
 </div>
 
-<!-- Recent Paid Table -->
-<div class="gw-card">
+<!-- Tabs -->
+<nav class="gw-stage-tabs" aria-label="Reimbursement view">
+    <a href="?tab=pending" class="gw-stage-tab{% if tab == 'pending' %} is-active{% endif %}" {% if tab == 'pending' %}aria-current="page"{% endif %}>
+        <span class="gw-stage-tab-icon"><i class="bi bi-hourglass-split"></i></span>
+        <span class="gw-stage-tab-body">
+            <span class="gw-stage-tab-label">Awaiting payment</span>
+            <span class="gw-stage-tab-meta"><strong>{{ kpis.pending_count }}</strong> claim{{ kpis.pending_count|pluralize }} · ${{ kpis.pending_total|floatformat:2 }}</span>
+        </span>
+    </a>
+    <a href="?tab=paid" class="gw-stage-tab{% if tab == 'paid' %} is-active{% endif %}" {% if tab == 'paid' %}aria-current="page"{% endif %}>
+        <span class="gw-stage-tab-icon"><i class="bi bi-receipt"></i></span>
+        <span class="gw-stage-tab-body">
+            <span class="gw-stage-tab-label">Payment history</span>
+            <span class="gw-stage-tab-meta"><strong>{{ kpis.paid_count }}</strong> payment{{ kpis.paid_count|pluralize }} · ${{ kpis.paid_total|floatformat:2 }}</span>
+        </span>
+    </a>
+</nav>
+
+<div class="gw-card gw-dt">
     <div class="gw-card-header">
-        <h5 class="gw-card-title"><i class="bi bi-check2-all text-primary me-2"></i>Recent Disbursed Payments</h5>
+        <div>
+            <h5 class="gw-card-title">
+                {% if tab == 'pending' %}
+                <i class="bi bi-hourglass-split text-primary me-2"></i>Approved claims awaiting payment
+                {% else %}
+                <i class="bi bi-receipt text-primary me-2"></i>Payment history
+                {% endif %}
+            </h5>
+            <div class="gw-dt-sub mt-1">
+                {% if tab == 'pending' %}
+                The Director has approved these claims. Record a payment once the money has been sent.
+                {% else %}
+                Payments recorded for paid claims. Deleting a payment record moves the claim back to Awaiting payment.
+                {% endif %}
+            </div>
+        </div>
+        <div class="gw-queue-summary">
+            <span><strong>{{ filtered_count }}</strong> claim{{ filtered_count|pluralize }}</span>
+            <span><strong>${{ filtered_total|floatformat:2 }}</strong> total</span>
+            {% if tab == 'pending' and kpis.overdue_count %}
+            <span class="is-overdue"><i class="bi bi-hourglass-split"></i><strong>{{ kpis.overdue_count }}</strong> waiting &gt; 7 days</span>
+            {% endif %}
+        </div>
     </div>
+
+    <!-- Toolbar: search, filters, page size (server-side) -->
+    <form method="get" class="gw-dt-toolbar" id="reimbDtForm">
+        <input type="hidden" name="tab" value="{{ tab }}">
+        <input type="hidden" name="sort" value="{{ sort }}">
+        <input type="hidden" name="dir" value="{{ dir }}">
+        <div class="gw-dt-search">
+            <i class="bi bi-search"></i>
+            <input type="search" name="q" value="{{ q }}" class="form-control form-control-sm"
+                   placeholder="{% if tab == 'paid' %}Search claim #, employee, reference...{% else %}Search claim #, employee, ID, project...{% endif %}"
+                   autocomplete="off" data-dt-search aria-label="Search">
+        </div>
+        {% if tab == 'pending' %}
+        <select name="category" class="form-select form-select-sm gw-dt-filter" data-dt-autosubmit aria-label="Category">
+            <option value="">All categories</option>
+            {% for cat in categories %}
+            <option value="{{ cat.id }}" {% if category_filter == cat.id|stringformat:"s" %}selected{% endif %}>{{ cat.name }}</option>
+            {% endfor %}
+        </select>
+        {% else %}
+        <select name="mode" class="form-select form-select-sm gw-dt-filter" data-dt-autosubmit aria-label="Payment mode">
+            <option value="">All payment modes</option>
+            {% for value, label in payment_modes %}
+            <option value="{{ value }}" {% if mode_filter == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+        </select>
+        <div class="gw-dt-range" title="Paid between">
+            <input type="date" name="from" value="{{ date_from }}" class="form-control form-control-sm gw-dt-date" data-dt-autosubmit aria-label="Paid from">
+            <span>–</span>
+            <input type="date" name="to" value="{{ date_to }}" class="form-control form-control-sm gw-dt-date" data-dt-autosubmit aria-label="Paid to">
+        </div>
+        {% endif %}
+        <div class="gw-dt-range" title="Amount range">
+            <span>$</span>
+            <input type="number" name="min" value="{{ min_amount }}" min="0" step="0.01" class="form-control form-control-sm" placeholder="Min" data-dt-autosubmit aria-label="Minimum amount">
+            <span>–</span>
+            <input type="number" name="max" value="{{ max_amount }}" min="0" step="0.01" class="form-control form-control-sm" placeholder="Max" data-dt-autosubmit aria-label="Maximum amount">
+        </div>
+        {% if is_filtered %}
+        <a href="?tab={{ tab }}&page_size={{ page_size }}" class="btn btn-sm btn-light gw-dt-reset"><i class="bi bi-x-lg me-1"></i>Clear</a>
+        {% endif %}
+        <div class="gw-dt-pagesize ms-auto">
+            <span>Show</span>
+            <select name="page_size" class="form-select form-select-sm" data-dt-autosubmit aria-label="Rows per page">
+                {% for n in page_size_options %}
+                <option value="{{ n }}" {% if n == page_size %}selected{% endif %}>{{ n }}</option>
+                {% endfor %}
+            </select>
+            <span>rows</span>
+        </div>
+    </form>
+
+    {% if show_check %}
+    <!-- Bulk bar (shown when rows are selected) -->
+    <form method="post" id="bulkForm" class="gw-dt-bulkbar" action="{% url 'portal_reimbursements' %}">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="{% if tab == 'pending' %}bulk_delete{% else %}bulk_void{% endif %}">
+        <input type="hidden" name="next" value="{{ request.get_full_path }}">
+        <span class="gw-dt-bulkbar-count"><i class="bi bi-check2-square"></i><span id="bulkCount">0</span> selected · <span id="bulkTotal">$0.00</span></span>
+        <button type="button" class="btn is-danger" data-bulk="delete">
+            <i class="bi bi-trash3"></i> {% if tab == 'pending' %}Delete claims{% else %}Delete payment records{% endif %}
+        </button>
+        <button type="button" class="btn gw-dt-bulkbar-clear ms-auto" id="bulkClear"><i class="bi bi-x-lg"></i> Clear selection</button>
+    </form>
+    {% endif %}
+
     <div class="gw-card-body p-0">
         <div class="table-responsive">
-            <table class="table gw-table m-0">
+            <table class="table gw-table gw-dt-table gw-dt-clickable m-0">
                 <thead>
                     <tr>
-                        <th>Claim #</th>
-                        <th>Employee</th>
-                        <th>Branch</th>
-                        <th>Amount</th>
-                        <th>Payment Date</th>
-                        <th>Payment Mode</th>
-                        <th>Transaction Reference</th>
-                        <th>Recorded By</th>
+                        {% if show_check %}
+                        <th class="gw-dt-check">
+                            <input type="checkbox" class="form-check-input" id="selectAll" aria-label="Select all rows on this page" {% if not claims %}disabled{% endif %}>
+                        </th>
+                        {% endif %}
+                        {% include "portal/_dt_sort_th.html" with col="number" label="Claim #" %}
+                        {% include "portal/_dt_sort_th.html" with col="employee" label="Employee" %}
+                        {% if tab == 'pending' %}
+                        {% include "portal/_dt_sort_th.html" with col="category" label="Category" %}
+                        {% include "portal/_dt_sort_th.html" with col="amount" label="Amount" %}
+                        {% include "portal/_dt_sort_th.html" with col="approved" label="Approved" %}
+                        {% else %}
+                        {% include "portal/_dt_sort_th.html" with col="amount" label="Amount" %}
+                        {% include "portal/_dt_sort_th.html" with col="paid_on" label="Paid on" %}
+                        {% include "portal/_dt_sort_th.html" with col="mode" label="Mode" %}
+                        {% include "portal/_dt_sort_th.html" with col="reference" label="Reference" %}
+                        <th>Recorded by</th>
+                        {% endif %}
+                        <th class="text-end">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
-                    {% for c in recent_paid %}
-                    <tr>
-                        <td>
-                            <a href="{% url 'portal_expense_detail' c.pk %}" class="fw-bold text-decoration-none text-primary">
-                                {{ c.claim_number }}
-                            </a>
+                    {% for c in claims %}
+                    <tr data-href="{% url 'portal_expense_detail' c.pk %}" tabindex="0">
+                        {% if show_check %}
+                        <td class="gw-dt-check">
+                            <input type="checkbox" class="form-check-input" name="selected" value="{{ c.pk }}" form="bulkForm"
+                                   data-row-check data-amount="{{ c.amount|stringformat:'.2f' }}"
+                                   data-label="{{ c.claim_number }} · {{ c.employee.full_name }} · ${{ c.amount|floatformat:2 }}"
+                                   data-deletable="{% if c.delete_block %}0{% else %}1{% endif %}"
+                                   data-reason="{{ c.delete_block|default:'' }}"
+                                   aria-label="Select {{ c.claim_number }}">
                         </td>
-                        <td>{{ c.employee.full_name }}</td>
-                        <td><span class="badge bg-light text-dark border">{{ c.branch.code }}</span></td>
-                        <td class="fw-bold">${{ c.amount|floatformat:2 }}</td>
-                        <td>{{ c.payment_record.payment_date|date:"M d, Y" }}</td>
-                        <td><span class="badge bg-secondary-subtle text-secondary">{{ c.payment_record.get_payment_mode_display }}</span></td>
-                        <td><code class="fw-bold text-dark">{{ c.payment_record.payment_reference }}</code></td>
-                        <td><small class="text-muted">{{ c.payment_record.recorded_by.full_name }}</small></td>
+                        {% endif %}
+                        <td>
+                            <a href="{% url 'portal_expense_detail' c.pk %}" class="fw-bold text-decoration-none text-primary">{{ c.claim_number }}</a>
+                            <div class="gw-dt-sub">{% if c.project_reference %}Proj: {{ c.project_reference }}{% else %}Spent {{ c.expense_date|date:"M d, Y" }}{% endif %}</div>
+                        </td>
+                        <td>
+                            <div class="gw-dt-employee">
+                                <span class="gw-dt-avatar">{{ c.employee.first_name|default:c.employee.employee_id|first|upper }}{{ c.employee.last_name|first|upper }}</span>
+                                <div>
+                                    <div class="gw-dt-employee-name">{{ c.employee.full_name }}</div>
+                                    <div class="gw-dt-employee-id">{{ c.employee.employee_id }} · {{ c.branch.code }}</div>
+                                </div>
+                            </div>
+                        </td>
+                        {% if tab == 'pending' %}
+                        <td>
+                            <span class="gw-dt-dept">{{ c.category.name }}</span>
+                            {% if c.description %}<div class="gw-dt-sub gw-dt-ellipsis" title="{{ c.description }}">{{ c.description|truncatechars:42 }}</div>{% endif %}
+                        </td>
+                        <td class="text-nowrap">
+                            <span class="gw-amount">${{ c.amount|floatformat:2 }}</span>
+                            {% if c.is_partially_approved %}<div class="gw-dt-sub text-warning-emphasis">of ${{ c.claimed_amount|floatformat:2 }} claimed</div>{% endif %}
+                        </td>
+                        <td class="text-nowrap">
+                            <span class="gw-wait {% if c.waiting_days > 7 %}is-overdue{% elif c.waiting_days >= 3 %}is-aging{% endif %}" title="Approved {{ c.updated_at|date:'M d, Y H:i' }}">
+                                {% if c.waiting_days == 0 %}Today{% elif c.waiting_days == 1 %}1 day ago{% else %}{{ c.waiting_days }} days ago{% endif %}
+                            </span>
+                            <div class="gw-dt-sub">{{ c.updated_at|date:"M d, Y" }}</div>
+                        </td>
+                        <td class="text-end text-nowrap">
+                            <div class="gw-dt-actions gw-dt-actions--wide">
+                                {% if c.payable %}
+                                <button type="button" class="btn btn-sm btn-gw-success gw-pay-btn" data-pay
+                                        data-id="{{ c.pk }}" data-number="{{ c.claim_number }}"
+                                        data-amount="{{ c.amount|floatformat:2 }}" data-payee="{{ c.employee.full_name }}"
+                                        data-account="{{ c.employee.employee_id }} · {{ c.branch.code }}">
+                                    <i class="bi bi-cash-coin"></i><span>Record payment</span>
+                                </button>
+                                {% elif can_pay %}
+                                <span class="gw-dt-muted" title="Another Admin Manager must record payment of your own claim"><i class="bi bi-lock"></i> Your claim</span>
+                                {% endif %}
+                                {% if can_delete_approved and not c.delete_block %}
+                                <button type="button" class="btn btn-light text-danger" data-row-delete="{{ c.pk }}"
+                                        data-label="{{ c.claim_number }} · {{ c.employee.full_name }} · ${{ c.amount|floatformat:2 }}"
+                                        title="Delete claim" aria-label="Delete {{ c.claim_number }}"><i class="bi bi-trash3"></i></button>
+                                {% endif %}
+                            </div>
+                        </td>
+                        {% else %}
+                        <td class="text-nowrap"><span class="gw-amount">${{ c.amount|floatformat:2 }}</span></td>
+                        <td class="text-nowrap">
+                            {{ c.payment_record.payment_date|date:"M d, Y" }}
+                            <div class="gw-dt-sub">Recorded {{ c.payment_record.created_at|date:"M d, H:i" }}</div>
+                        </td>
+                        <td><span class="gw-dt-status gw-mode gw-mode--{{ c.payment_record.payment_mode|lower }}">{{ c.payment_record.get_payment_mode_display }}</span></td>
+                        <td>
+                            <code class="gw-ref">{{ c.payment_record.payment_reference }}</code>
+                            {% if c.payment_record.remarks %}<div class="gw-dt-sub gw-dt-ellipsis" title="{{ c.payment_record.remarks }}">{{ c.payment_record.remarks|truncatechars:36 }}</div>{% endif %}
+                        </td>
+                        <td><span class="gw-dt-sub">{{ c.payment_record.recorded_by.full_name }}</span></td>
+                        <td class="text-end text-nowrap">
+                            <div class="gw-dt-actions">
+                                <a href="{% url 'portal_expense_detail' c.pk %}" class="btn btn-light" title="View claim" aria-label="View {{ c.claim_number }}"><i class="bi bi-eye"></i></a>
+                                {% if can_void_payments and not c.delete_block %}
+                                <button type="button" class="btn btn-light text-danger" data-row-delete="{{ c.pk }}"
+                                        data-label="{{ c.claim_number }} · {{ c.employee.full_name }} · Ref {{ c.payment_record.payment_reference }}"
+                                        title="Delete payment record" aria-label="Delete payment record for {{ c.claim_number }}"><i class="bi bi-trash3"></i></button>
+                                {% endif %}
+                            </div>
+                        </td>
+                        {% endif %}
                     </tr>
                     {% empty %}
                     <tr>
-                        <td colspan="8" class="text-center text-muted py-4">No payment history recorded yet.</td>
+                        <td colspan="{% if tab == 'pending' %}{% if show_check %}7{% else %}6{% endif %}{% else %}{% if show_check %}9{% else %}8{% endif %}{% endif %}">
+                            <div class="empty-state">
+                                {% if is_filtered %}
+                                <i class="bi bi-funnel empty-state-icon"></i>
+                                <div class="empty-state-title">No claims match these filters</div>
+                                <p class="empty-state-desc">Try a different search or clear the filters.</p>
+                                <a href="?tab={{ tab }}" class="btn btn-light">Clear filters</a>
+                                {% elif tab == 'pending' %}
+                                <i class="bi bi-check2-circle empty-state-icon text-success"></i>
+                                <div class="empty-state-title">All caught up</div>
+                                <p class="empty-state-desc">No approved claims are waiting for payment.</p>
+                                {% else %}
+                                <i class="bi bi-receipt empty-state-icon"></i>
+                                <div class="empty-state-title">No payments yet</div>
+                                <p class="empty-state-desc">Payments you record will appear here.</p>
+                                {% endif %}
+                            </div>
+                        </td>
                     </tr>
                     {% endfor %}
                 </tbody>
             </table>
         </div>
     </div>
+
+    {% include "portal/_dt_pagination.html" %}
 </div>
 
-<!-- Modal: Record Payment -->
-<div class="modal fade" id="paymentModal" tabindex="-1" aria-hidden="true">
+{% if can_pay %}
+<!-- Record payment modal -->
+<div class="modal fade" id="paymentModal" tabindex="-1" aria-labelledby="paymentModalTitle" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
-        <div class="modal-content border-0 shadow">
-            <div class="modal-header bg-light">
-                <h5 class="modal-title fw-bold"><i class="bi bi-wallet2 text-success me-2"></i>Record Reimbursement Payment</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <form method="post" action="{% url 'portal_reimbursements' %}">
+        <div class="modal-content gw-pay-modal">
+            <form method="post" action="{% url 'portal_reimbursements' %}" id="paymentForm" novalidate>
                 {% csrf_token %}
+                <input type="hidden" name="action" value="record_payment">
+                <input type="hidden" name="next" value="{{ request.get_full_path }}">
                 <input type="hidden" name="claim_id" id="paymentClaimId">
-                <div class="modal-body p-4">
-                    <div class="p-3 bg-light rounded-3 mb-3">
-                        <div class="d-flex justify-content-between mb-1">
-                            <span class="text-muted small">Claim:</span>
-                            <span class="fw-bold text-dark" id="modalClaimNum"></span>
-                        </div>
-                        <div class="d-flex justify-content-between mb-1">
-                            <span class="text-muted small">Payee Employee:</span>
-                            <span class="fw-semibold text-dark" id="modalPayeeName"></span>
-                        </div>
-                        <div class="d-flex justify-content-between">
-                            <span class="text-muted small">Total Payout:</span>
-                            <span class="fs-5 fw-extrabold text-success" id="modalClaimAmt"></span>
+                <div class="modal-header">
+                    <div class="d-flex align-items-center gap-3">
+                        <span class="gw-pay-modal-icon"><i class="bi bi-wallet2"></i></span>
+                        <div>
+                            <h5 class="modal-title" id="paymentModalTitle">Record payment</h5>
+                            <div class="gw-dt-sub" id="modalClaimNum"></div>
                         </div>
                     </div>
-
-                    <div class="mb-3">
-                        <label class="form-label small fw-bold">Payment Date <span class="text-danger">*</span></label>
-                        <input type="date" name="payment_date" class="form-control" required value="{{ today|date:'Y-m-d' }}">
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="gw-pay-summary">
+                        <div>
+                            <div class="gw-pay-summary-label">Pay to</div>
+                            <div class="gw-pay-summary-name" id="modalPayeeName"></div>
+                            <div class="gw-dt-employee-id" id="modalPayeeAccount"></div>
+                        </div>
+                        <div class="text-end">
+                            <div class="gw-pay-summary-label">Amount</div>
+                            <div class="gw-pay-summary-amount" id="modalClaimAmt"></div>
+                        </div>
                     </div>
 
-                    <div class="mb-3">
-                        <label class="form-label small fw-bold">Payment Mode <span class="text-danger">*</span></label>
-                        <select name="payment_mode" class="form-select" required>
-                            <option value="BANK_TRANSFER">Bank Wire / Electronic Fund Transfer</option>
-                            <option value="CHEQUE">Corporate Cheque</option>
-                            <option value="CASH">Cash Voucher</option>
-                            <option value="CORPORATE_CARD">Corporate Card Settlement</option>
-                        </select>
-                    </div>
-
-                    <div class="mb-3">
-                        <label class="form-label small fw-bold">Transaction Reference / UTR Number <span class="text-danger">*</span></label>
-                        <input type="text" name="payment_reference" class="form-control" placeholder="e.g. UTR-202610-987654 or CHQ-00123" required>
-                    </div>
-
-                    <div class="mb-3">
-                        <label class="form-label small fw-bold">Accounting Remarks (Optional)</label>
-                        <textarea name="remarks" class="form-control" rows="2" placeholder="e.g. Cleared via corporate standard payroll batch..."></textarea>
+                    <div class="row g-3">
+                        <div class="col-sm-6">
+                            <label class="form-label small fw-bold" for="payDate">Payment date <span class="text-danger">*</span></label>
+                            <input type="date" id="payDate" name="payment_date" class="form-control" required value="{{ today|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}">
+                        </div>
+                        <div class="col-sm-6">
+                            <label class="form-label small fw-bold" for="payMode">Payment mode <span class="text-danger">*</span></label>
+                            <select id="payMode" name="payment_mode" class="form-select" required>
+                                {% for value, label in payment_modes %}
+                                <option value="{{ value }}">{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label small fw-bold" for="payRef">Transaction reference / UTR <span class="text-danger">*</span></label>
+                            <input type="text" id="payRef" name="payment_reference" class="form-control font-monospace" maxlength="100" placeholder="e.g. UTR-202610-987654 or CHQ-00123" required autocomplete="off">
+                            <div class="invalid-feedback">Enter the transaction reference for this payment.</div>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label small fw-bold" for="payRemarks">Remarks <span class="text-muted fw-normal">(optional)</span></label>
+                            <textarea id="payRemarks" name="remarks" class="form-control" rows="2" placeholder="e.g. Paid with the November payroll batch"></textarea>
+                        </div>
                     </div>
                 </div>
-                <div class="modal-footer bg-light">
+                <div class="modal-footer">
                     <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
-                    <button type="submit" class="btn btn-success px-4">Confirm Payment Disbursed</button>
+                    <button type="submit" class="btn btn-gw-success px-4" id="paySubmit"><i class="bi bi-check2-circle me-1"></i>Confirm payment</button>
                 </div>
             </form>
         </div>
     </div>
 </div>
+{% endif %}
 {% endblock %}
 
 {% block extra_scripts %}
+<script src="{% static 'js/gw-datatable.js' %}?v=20261114d"></script>
 <script>
-    function openPaymentModal(claimId, claimNum, claimAmt, payeeName) {
-        document.getElementById('paymentClaimId').value = claimId;
-        document.getElementById('modalClaimNum').textContent = claimNum;
-        document.getElementById('modalClaimAmt').textContent = '$' + claimAmt;
-        document.getElementById('modalPayeeName').textContent = payeeName;
-        new bootstrap.Modal(document.getElementById('paymentModal')).show();
+(function () {
+    const isPending = '{{ tab }}' === 'pending';
+    const money = n => '$' + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+    const bulk = GwDatatable.init({
+        toolbar: '#reimbDtForm',
+        bulkForm: '#bulkForm',
+        actions: {
+            delete: isPending ? {
+                title: n => 'Delete ' + n + ' approved claim' + (n > 1 ? 's' : '') + '?',
+                message: 'These claims and their receipts will be permanently deleted and removed from the payment queue. This cannot be undone.',
+                note: 'Only the Director can delete approved claims. Paid claims are never deleted.',
+                confirmText: 'Delete',
+                variant: 'danger',
+                icon: 'bi-trash3',
+                eligible: box => box.dataset.deletable === '1',
+                blockedTitle: 'These claims can\'t be deleted',
+                blockedMessage: 'None of the selected claims can be deleted by you.',
+            } : {
+                title: n => 'Delete ' + n + ' payment record' + (n > 1 ? 's' : '') + '?',
+                message: 'The payment records will be deleted and the claims will move back to Awaiting payment. The claims and their approvals are kept, and the audit trail records this change.',
+                note: 'Use this to fix a payment recorded by mistake or with the wrong reference.',
+                confirmText: 'Delete records',
+                variant: 'danger',
+                icon: 'bi-receipt',
+                eligible: box => box.dataset.deletable === '1',
+                blockedTitle: 'These payment records can\'t be deleted',
+                blockedMessage: 'None of the selected payment records can be deleted by you.',
+            },
+        },
+    });
+
+    if (bulk) {
+        const totalEl = document.getElementById('bulkTotal');
+        const update = () => { totalEl.textContent = money(bulk.selected().reduce((t, b) => t + parseFloat(b.dataset.amount || 0), 0)); };
+        bulk.onChange(update);
+        update();
     }
+
+    // Record payment modal
+    const modalEl = document.getElementById('paymentModal');
+    if (!modalEl) return;
+    const form = document.getElementById('paymentForm');
+    const ref = document.getElementById('payRef');
+    const set = (id, v) => { document.getElementById(id).textContent = v; };
+
+    document.querySelectorAll('[data-pay]').forEach(btn => btn.addEventListener('click', e => {
+        e.stopPropagation();
+        const d = btn.dataset;
+        document.getElementById('paymentClaimId').value = d.id;
+        set('modalClaimNum', 'Claim ' + d.number);
+        set('modalPayeeName', d.payee);
+        set('modalPayeeAccount', d.account);
+        set('modalClaimAmt', '$' + d.amount);
+        form.reset();
+        document.getElementById('paymentClaimId').value = d.id;
+        ref.classList.remove('is-invalid');
+        bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    }));
+    modalEl.addEventListener('shown.bs.modal', () => ref.focus());
+    ref.addEventListener('input', () => ref.classList.remove('is-invalid'));
+    form.addEventListener('submit', e => {
+        if (!ref.value.trim()) {
+            e.preventDefault();
+            ref.classList.add('is-invalid');
+            ref.focus();
+            return;
+        }
+        const btn = document.getElementById('paySubmit');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Saving…';
+    });
+})();
 </script>
 {% endblock %}

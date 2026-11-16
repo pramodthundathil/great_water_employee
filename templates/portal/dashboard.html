@@ -38,10 +38,12 @@
     </div>
 </div>
 
+{% include "portal/_status_alerts.html" %}
+
 {% if is_director_dashboard %}
 <!-- Director Executive KPI Cards -->
 <div class="row g-3 mb-4">
-    <div class="col-12 col-sm-6 col-xl-3">
+    <div class="col-12 col-sm-6 col-lg-4">
         <div class="kpi-card">
             <div class="kpi-icon-wrapper kpi-icon--primary">
                 <i class="bi bi-people-fill"></i>
@@ -52,7 +54,7 @@
         </div>
     </div>
 
-    <div class="col-12 col-sm-6 col-xl-3">
+    <div class="col-12 col-sm-6 col-lg-4">
         <a href="#directorWorkspaceCard" class="text-decoration-none d-block h-100">
             <div class="kpi-card {% if pipeline_summary.director_action_total > 0 %}kpi-card-attention{% endif %}">
                 <div class="kpi-icon-wrapper kpi-icon--warning">
@@ -65,7 +67,7 @@
         </a>
     </div>
 
-    <div class="col-12 col-sm-6 col-xl-3">
+    <div class="col-12 col-sm-6 col-lg-4">
         <div class="kpi-card">
             <div class="kpi-icon-wrapper kpi-icon--danger">
                 <i class="bi bi-bell-fill"></i>
@@ -82,7 +84,7 @@
         </div>
     </div>
 
-    <div class="col-12 col-sm-6 col-xl-3">
+    <div class="col-12 col-sm-6 col-lg-4">
         <div class="kpi-card">
             <div class="kpi-icon-wrapper kpi-icon--success">
                 <i class="bi bi-cash-stack"></i>
@@ -92,7 +94,11 @@
             <div class="kpi-meta">${{ pipeline_summary.approved_awaiting_payment_amount|floatformat:2 }} awaiting payout</div>
         </div>
     </div>
+
+    {% include "portal/_leave_calendar.html" with part="tiles" %}
 </div>
+
+{% include "portal/_action_center.html" %}
 
 <!-- Approver Process Needed Pipeline -->
 <div class="row g-4 mb-4">
@@ -203,7 +209,7 @@
                             </thead>
                             <tbody>
                                 {% for c in director_expense_queue %}
-                                <tr>
+                                <tr class="gw-row-hl gw-row-hl--action">
                                     <td>
                                         <div class="d-flex align-items-center gap-2">
                                             <div class="avatar-circle avatar-gradient-2" style="width: 32px; height: 32px; font-size: 0.72rem;">
@@ -258,7 +264,7 @@
                             </thead>
                             <tbody>
                                 {% for a in director_leave_queue %}
-                                <tr>
+                                <tr class="gw-row-hl gw-row-hl--action">
                                     <td>
                                         <div class="d-flex align-items-center gap-2">
                                             <div class="avatar-circle avatar-gradient-3" style="width: 32px; height: 32px; font-size: 0.72rem;">
@@ -623,7 +629,7 @@
 <!-- Standard Staff / Manager / HR KPI Cards Grid -->
 <div class="row g-3 mb-4">
     {% if user.role != 'EMPLOYEE' %}
-    <div class="col-12 col-sm-6 col-xl-3">
+    <div class="col-12 col-sm-6 col-lg-4">
         <div class="kpi-card">
             <div class="kpi-icon-wrapper kpi-icon--primary">
                 <i class="bi bi-people-fill"></i>
@@ -634,7 +640,7 @@
     </div>
     {% endif %}
 
-    <div class="col-12 col-sm-6 col-xl-3">
+    <div class="col-12 col-sm-6 col-lg-4">
         <div class="kpi-card">
             <div class="kpi-icon-wrapper kpi-icon--warning">
                 <i class="bi bi-receipt-cutoff"></i>
@@ -644,7 +650,7 @@
         </div>
     </div>
 
-    <div class="col-12 col-sm-6 col-xl-3">
+    <div class="col-12 col-sm-6 col-lg-4">
         <div class="kpi-card">
             <div class="kpi-icon-wrapper kpi-icon--neutral">
                 <i class="bi bi-cash-stack"></i>
@@ -654,7 +660,7 @@
         </div>
     </div>
 
-    <div class="col-12 col-sm-6 col-xl-3">
+    <div class="col-12 col-sm-6 col-lg-4">
         <div class="kpi-card">
             <div class="kpi-icon-wrapper kpi-icon--neutral">
                 <i class="bi bi-calendar-check"></i>
@@ -665,7 +671,7 @@
     </div>
 
     {% if user.role == 'EMPLOYEE' %}
-    <div class="col-12 col-sm-6 col-xl-3">
+    <div class="col-12 col-sm-6 col-lg-4">
         <div class="kpi-card">
             <div class="kpi-icon-wrapper kpi-icon--success">
                 <i class="bi bi-wallet2"></i>
@@ -675,7 +681,11 @@
         </div>
     </div>
     {% endif %}
+
+    {% include "portal/_leave_calendar.html" with part="tiles" %}
 </div>
+
+{% include "portal/_action_center.html" %}
 
 <!-- Personal Live Leave Balances Row (Hidden for Director) -->
 <div class="gw-card mb-4">
@@ -784,7 +794,7 @@
                         </thead>
                         <tbody>
                             {% for c in recent_claims %}
-                            <tr>
+                            <tr class="{% if 'REJECTED' in c.status %}gw-row-hl gw-row-hl--rejected{% elif c.employee_id == user.id %}gw-row-hl gw-row-hl--self{% endif %}">
                                 <td>
                                     <a href="{% url 'portal_expense_detail' c.pk %}" class="fw-bold text-decoration-none text-primary">
                                         {{ c.claim_number }}
@@ -831,7 +841,7 @@
                         </thead>
                         <tbody>
                             {% for l in recent_leaves %}
-                            <tr>
+                            <tr class="{% if 'REJECTED' in l.status %}gw-row-hl gw-row-hl--rejected{% elif l.employee_id == user.id %}gw-row-hl gw-row-hl--self{% endif %}">
                                 <td>
                                     <a href="{% url 'portal_leave_detail' l.pk %}" class="fw-bold text-decoration-none text-primary">
                                         {{ l.application_number }}
@@ -865,6 +875,7 @@
 
 {{ expense_chart_data|json_script:"expense-chart-data" }}
 {{ leave_chart_data|json_script:"leave-chart-data" }}
+{% include "portal/_leave_calendar.html" with part="modals" %}
 {% if is_director_dashboard %}{% include "portal/_expense_review_modal.html" %}{% endif %}
 {% endblock %}
 

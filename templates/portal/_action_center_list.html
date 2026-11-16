@@ -1,0 +1,27 @@
+<ul class="gw-ac-list">
+    {% for it in items %}
+    <li class="gw-ac-item gw-ac-item--{{ it.tone }}">
+        <span class="gw-ac-icon"><i class="bi {% if it.kind == 'leave' %}bi-calendar2-week{% else %}bi-receipt{% endif %}"></i></span>
+        <div class="gw-ac-main">
+            <div class="gw-ac-line">
+                <a href="{% url it.url_name it.pk %}" class="gw-ac-ref">{{ it.ref }}</a>
+                <span class="gw-ac-title">{{ it.title }}</span>
+                <span class="gw-ac-sep">&bull;</span>
+                <span class="gw-ac-meta">{{ it.meta }}</span>
+            </div>
+            <div class="gw-ac-sub">
+                {% if it.employee.id == user.id %}<span class="gw-hl-tag gw-hl-tag--self">You</span>{% else %}{{ it.employee.full_name }}{% endif %}
+                <span class="gw-ac-sep">&bull;</span> {{ it.status_label }}
+                {% if it.when %}<span class="gw-ac-sep">&bull;</span> {{ it.when|timesince }} ago{% endif %}
+                {% if it.note %}<div class="gw-ac-note" title="{{ it.note }}">{{ it.note|truncatechars:110 }}</div>{% endif %}
+            </div>
+        </div>
+        <div class="gw-ac-end">
+            <span class="gw-hl-tag gw-hl-tag--{{ it.tone }}">{{ it.tag }}</span>
+            <a href="{% url it.url_name it.pk %}" class="gw-ac-open" title="Open {{ it.ref }}" aria-label="Open {{ it.ref }}"><i class="bi bi-chevron-right"></i></a>
+        </div>
+    </li>
+    {% empty %}
+    <li class="gw-ac-empty"><i class="bi {{ empty_icon }}"></i> {{ empty_text }}</li>
+    {% endfor %}
+</ul>

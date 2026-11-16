@@ -48,6 +48,7 @@ urlpatterns = [
     path("branches/", views.branches_view, name="portal_branches"),
     path("branches/<int:pk>/", views.branch_detail_view, name="portal_branch_detail"),
     path("employees/", views.employees_view, name="portal_employees"),
+    path("employees/<int:pk>/overview/", views.employee_overview_view, name="portal_employee_overview"),
     path("employees/<int:pk>/edit/", admin_views.employee_edit_view, name="portal_employee_edit"),
 
     # Reports

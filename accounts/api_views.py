@@ -37,6 +37,7 @@ class ProfileUpdateView(APIView):
     """
     permission_classes = [IsAuthenticated]
     PROFILE_FIELDS = ["emergency_contact", "address", "bank_name", "bank_account_no", "bank_ifsc_or_swift"]
+    BANK_FIELDS = {"bank_name", "bank_account_no", "bank_ifsc_or_swift"}
 
     def patch(self, request):
         user = request.user
@@ -47,6 +48,8 @@ class ProfileUpdateView(APIView):
         if profile:
             changed = []
             for f in self.PROFILE_FIELDS:
+                if f in self.BANK_FIELDS and not user.can_edit_bank_details:
+                    continue  # bank details are view-only for other roles
                 if f in request.data:
                     setattr(profile, f, str(request.data.get(f, "")))
                     changed.append(f)

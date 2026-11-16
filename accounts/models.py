@@ -152,6 +152,17 @@ class User(AbstractUser):
     def is_director(self):
         return self.role == RoleChoices.DIRECTOR or self.is_superuser
 
+    @property
+    def can_view_reports(self):
+        """Reports & Analytics — every role except plain employees (see reports/access.py)."""
+        from reports.access import can_view_reports
+        return can_view_reports(self)
+
+    @property
+    def can_edit_bank_details(self):
+        """Only HR Coordinators and Directors may edit bank details; others view only."""
+        return self.is_hr_coordinator or self.is_director
+
 
 class UserBranchScope(models.Model):
     """

@@ -1,0 +1,144 @@
+{% comment %}
+Today's & upcoming leaves (role-scoped: see portal.dashboard_services.leave_calendar_scope).
+Render twice:  part="tiles"  inside the KPI row (two compact clickable KPI cards)
+               part="modals" once, outside any card, for the detail dialogs.
+{% endcomment %}
+{% if part == "tiles" %}
+<div class="{{ col_class|default:'col-12 col-sm-6 col-lg-4' }}">
+    <button type="button" class="kpi-card kpi-card-clickable {% if leave_calendar.on_leave_today %}kpi-card-info{% endif %}" data-bs-toggle="modal" data-bs-target="#leaveTodayModal" aria-label="Show who is on leave today">
+        <div class="kpi-icon-wrapper kpi-icon--danger"><i class="bi bi-person-dash"></i></div>
+        <div class="kpi-value">{{ leave_calendar.on_leave_today|length }}</div>
+        <div class="kpi-label">{% if leave_calendar.is_personal %}My Leave Today{% else %}On Leave Today{% endif %}</div>
+        <div class="kpi-meta">{{ leave_calendar.today|date:"D, M d" }} <span class="kpi-card-cta">View <i class="bi bi-arrow-right-short"></i></span></div>
+    </button>
+</div>
+<div class="{{ col_class|default:'col-12 col-sm-6 col-lg-4' }}">
+    <button type="button" class="kpi-card kpi-card-clickable" data-bs-toggle="modal" data-bs-target="#leaveUpcomingModal" aria-label="Show upcoming leaves">
+        <div class="kpi-icon-wrapper kpi-icon--primary"><i class="bi bi-calendar-event"></i></div>
+        <div class="kpi-value">{{ leave_calendar.upcoming|length }}</div>
+        <div class="kpi-label">{% if leave_calendar.is_personal %}My Upcoming Leaves{% else %}Upcoming Leaves{% endif %}</div>
+        <div class="kpi-meta">Next {{ leave_calendar.window_days }} days <span class="kpi-card-cta">View <i class="bi bi-arrow-right-short"></i></span></div>
+    </button>
+</div>
+
+{% elif part == "modals" %}
+<div class="modal fade" id="leaveTodayModal" tabindex="-1" aria-labelledby="leaveTodayModalTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div>
+                    <h5 class="modal-title fw-bold" id="leaveTodayModalTitle">
+                        <i class="bi bi-person-dash text-danger me-2"></i>{% if leave_calendar.is_personal %}My Leave Today{% else %}On Leave Today{% endif %}
+                        <span class="badge rounded-pill bg-light text-secondary border ms-1">{{ leave_calendar.on_leave_today|length }}</span>
+                    </h5>
+                    <small class="text-muted">{{ leave_calendar.today|date:"D, M d, Y" }}</small>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body p-0">
+                <div class="table-responsive">
+                    <table class="table gw-table m-0">
+                        <thead>
+                            <tr>
+                                {% if not leave_calendar.is_personal %}<th>Employee</th>{% endif %}
+                                <th>Leave Type</th>
+                                <th>Dates</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for l in leave_calendar.on_leave_today %}
+                            <tr class="{% if l.employee_id == user.id %}gw-row-hl gw-row-hl--self{% elif l.status != 'APPROVED' %}gw-row-hl gw-row-hl--action{% endif %}">
+                                {% if not leave_calendar.is_personal %}
+                                <td>
+                                    <div class="fw-semibold">{{ l.employee.full_name }}{% if l.employee_id == user.id %} <span class="gw-hl-tag gw-hl-tag--self">You</span>{% endif %}</div>
+                                    <small class="text-muted">{{ l.employee.employee_id }} &bull; {{ l.branch.code }}</small>
+                                </td>
+                                {% endif %}
+                                <td>
+                                    <a href="{% url 'portal_leave_detail' l.pk %}" class="text-decoration-none">{{ l.leave_type.name }}</a>
+                                    {% if l.is_half_day %}<div class="small text-muted">{{ l.get_half_day_period_display }}</div>{% endif %}
+                                </td>
+                                <td class="text-nowrap">
+                                    <span class="fw-semibold">{{ l.start_date|date:"M d" }}{% if l.end_date != l.start_date %} - {{ l.end_date|date:"M d" }}{% endif %}</span>
+                                    <div class="small text-muted">{% if l.days_remaining == 0 %}Back tomorrow{% else %}{{ l.days_remaining }} more day{{ l.days_remaining|pluralize }}{% endif %}</div>
+                                </td>
+                                <td>
+                                    <span class="status-badge {% if l.status == 'APPROVED' %}badge-approved{% else %}badge-pending{% endif %}">{{ l.display_status }}</span>
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="{% if leave_calendar.is_personal %}3{% else %}4{% endif %}" class="text-center text-muted py-4">
+                                    {% if leave_calendar.is_personal %}You are not on leave today.{% else %}No one is on leave today.{% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="leaveUpcomingModal" tabindex="-1" aria-labelledby="leaveUpcomingModalTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div>
+                    <h5 class="modal-title fw-bold" id="leaveUpcomingModalTitle">
+                        <i class="bi bi-calendar-event text-primary me-2"></i>{% if leave_calendar.is_personal %}My Upcoming Leaves{% else %}Upcoming Leaves{% endif %}
+                        <span class="badge rounded-pill bg-light text-secondary border ms-1">{{ leave_calendar.upcoming|length }}</span>
+                    </h5>
+                    <small class="text-muted">Next {{ leave_calendar.window_days }} days (to {{ leave_calendar.window_end|date:"M d" }})</small>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body p-0">
+                <div class="table-responsive">
+                    <table class="table gw-table m-0">
+                        <thead>
+                            <tr>
+                                {% if not leave_calendar.is_personal %}<th>Employee</th>{% endif %}
+                                <th>Leave Type</th>
+                                <th>Dates</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for l in leave_calendar.upcoming %}
+                            <tr class="{% if l.employee_id == user.id %}gw-row-hl gw-row-hl--self{% elif l.status != 'APPROVED' %}gw-row-hl gw-row-hl--action{% endif %}">
+                                {% if not leave_calendar.is_personal %}
+                                <td>
+                                    <div class="fw-semibold">{{ l.employee.full_name }}{% if l.employee_id == user.id %} <span class="gw-hl-tag gw-hl-tag--self">You</span>{% endif %}</div>
+                                    <small class="text-muted">{{ l.employee.employee_id }} &bull; {{ l.branch.code }}</small>
+                                </td>
+                                {% endif %}
+                                <td>
+                                    <a href="{% url 'portal_leave_detail' l.pk %}" class="text-decoration-none">{{ l.leave_type.name }}</a>
+                                    {% if l.is_half_day %}<div class="small text-muted">{{ l.get_half_day_period_display }}</div>{% endif %}
+                                </td>
+                                <td class="text-nowrap">
+                                    <span class="fw-semibold">{{ l.start_date|date:"M d" }}{% if l.end_date != l.start_date %} - {{ l.end_date|date:"M d" }}{% endif %}</span>
+                                    <div class="small text-muted">{% if l.starts_in_days == 1 %}Starts tomorrow{% else %}In {{ l.starts_in_days }} days{% endif %} &bull; {{ l.number_of_days|floatformat:"-1" }} day{{ l.number_of_days|pluralize }}</div>
+                                </td>
+                                <td>
+                                    <span class="status-badge {% if l.status == 'APPROVED' %}badge-approved{% else %}badge-pending{% endif %}">{{ l.display_status }}</span>
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="{% if leave_calendar.is_personal %}3{% else %}4{% endif %}" class="text-center text-muted py-4">
+                                    No leaves scheduled in the next {{ leave_calendar.window_days }} days.
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}

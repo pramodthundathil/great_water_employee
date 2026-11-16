@@ -10,7 +10,9 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 
 from accounts.models import RoleChoices, User
-from expenses.models import ExpenseAttachment, ExpenseCategory, ExpenseClaim, ExpenseClaimStatus
+from expenses.models import (
+    ExpenseAttachment, ExpenseCategory, ExpenseClaim, ExpenseClaimStatus, ReimbursementPayment,
+)
 from leaves.models import LeaveType
 from organization.models import Branch, Organization
 
@@ -297,3 +299,108 @@ class LeaveDetailSnapshotTests(TestCase):
         r = self.client.get(f"/leaves/{app.pk}/")
         self.assertIsNone(r.context["snapshot"])
         self.assertNotContains(r, "Last 3 leaves taken")
+
+
+class ReimbursementsDatatableTests(Base):
+    def setUp(self):
+        super().setUp()
+        self.admin = self.user("adm1", RoleChoices.ADMIN_MANAGER, self.dxb)
+        self.admin2 = self.user("adm2", RoleChoices.ADMIN_MANAGER, self.dxb)
+
+    def approved(self, employee=None):
+        return self.claim(employee or self.employee, ExpenseClaimStatus.APPROVED_BY_DIRECTOR)
+
+    def paid(self, ref="UTR-1", employee=None):
+        c = self.approved(employee)
+        c.record_payment(recorded_by=self.admin, payment_date=date.today(), payment_mode="BANK_TRANSFER",
+                         payment_reference=ref)
+        return c
+
+    def test_pending_tab_paginates_searches_and_counts(self):
+        for _ in range(12):
+            self.approved()
+        self.approved(self.employee2)
+        self.paid()
+        self.client.force_login(self.admin)
+        r = self.client.get("/expenses/reimbursements/?page_size=10")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.context["tab"], "pending")
+        self.assertEqual(r.context["paginator"].count, 13)
+        self.assertEqual(len(r.context["claims"]), 10)
+        self.assertEqual(r.context["kpis"]["pending_count"], 13)
+        self.assertEqual(r.context["kpis"]["paid_count"], 1)
+        r = self.client.get("/expenses/reimbursements/?page_size=10&page=2")
+        self.assertEqual(len(r.context["claims"]), 3)
+        r = self.client.get("/expenses/reimbursements/?q=emp2")
+        self.assertEqual(r.context["paginator"].count, 1)
+
+    def test_paid_tab_filters_by_reference_and_mode(self):
+        self.paid("UTR-AAA")
+        self.paid("CHQ-BBB")
+        self.client.force_login(self.admin)
+        r = self.client.get("/expenses/reimbursements/?tab=paid")
+        self.assertEqual(r.context["paginator"].count, 2)
+        r = self.client.get("/expenses/reimbursements/?tab=paid&q=CHQ")
+        self.assertEqual(r.context["paginator"].count, 1)
+        r = self.client.get("/expenses/reimbursements/?tab=paid&mode=CASH")
+        self.assertEqual(r.context["paginator"].count, 0)
+        r = self.client.get("/expenses/reimbursements/?tab=paid&sort=reference&dir=asc")
+        self.assertEqual(r.context["claims"][0].payment_record.payment_reference, "CHQ-BBB")
+
+    def test_director_bulk_deletes_approved_claims_but_admin_cannot(self):
+        a, b = self.approved(), self.approved()
+        self.client.force_login(self.admin)
+        self.client.post("/expenses/reimbursements/", {"action": "bulk_delete", "selected": [a.pk]})
+        self.assertTrue(ExpenseClaim.objects.filter(pk=a.pk).exists())
+        self.client.force_login(self.director)
+        self.client.post("/expenses/reimbursements/", {"action": "bulk_delete", "selected": [a.pk, b.pk]})
+        self.assertFalse(ExpenseClaim.objects.filter(pk__in=[a.pk, b.pk]).exists())
+
+    def test_paid_claims_are_never_deleted_from_pending_action(self):
+        c = self.paid()
+        self.client.force_login(self.director)
+        self.client.post("/expenses/reimbursements/", {"action": "bulk_delete", "selected": [c.pk]})
+        self.assertTrue(ExpenseClaim.objects.filter(pk=c.pk).exists())
+
+    def test_bulk_void_returns_claims_to_queue_with_audit_entry(self):
+        c1, c2 = self.paid("R1"), self.paid("R2")
+        self.client.force_login(self.admin2)
+        r = self.client.post("/expenses/reimbursements/", {"action": "bulk_void", "selected": [c1.pk, c2.pk]})
+        self.assertEqual(r.status_code, 302)
+        for c in (c1, c2):
+            c.refresh_from_db()
+            self.assertEqual(c.status, ExpenseClaimStatus.APPROVED_BY_DIRECTOR)
+            self.assertFalse(ReimbursementPayment.objects.filter(claim=c).exists())
+            self.assertTrue(c.approval_history.filter(action="PAYMENT_VOIDED").exists())
+        # The claim can be paid again afterwards.
+        c1.record_payment(recorded_by=self.admin2, payment_date=date.today(), payment_mode="CASH", payment_reference="R1b")
+
+    def test_void_rules_director_and_own_claim(self):
+        c = self.paid()
+        own = self.paid(employee=self.admin2)
+        self.client.force_login(self.director)
+        self.client.post("/expenses/reimbursements/", {"action": "bulk_void", "selected": [c.pk]})
+        self.assertTrue(ReimbursementPayment.objects.filter(claim=c).exists())
+        self.client.force_login(self.admin2)
+        self.client.post("/expenses/reimbursements/", {"action": "bulk_void", "selected": [own.pk]})
+        self.assertTrue(ReimbursementPayment.objects.filter(claim=own).exists())
+
+    def test_record_payment_still_works_and_keeps_filters(self):
+        c = self.approved()
+        self.client.force_login(self.admin)
+        r = self.client.post("/expenses/reimbursements/", {
+            "claim_id": c.pk, "payment_date": date.today().isoformat(), "payment_mode": "CHEQUE",
+            "payment_reference": "CHQ-9", "next": "/expenses/reimbursements/?page_size=25",
+        })
+        self.assertRedirects(r, "/expenses/reimbursements/?page_size=25", fetch_redirect_response=False)
+        c.refresh_from_db()
+        self.assertEqual(c.status, ExpenseClaimStatus.PAID)
+
+    def test_page_renders_both_tabs_for_each_role(self):
+        self.approved()
+        self.paid()
+        for u in (self.admin, self.director):
+            self.client.force_login(u)
+            for tab in ("pending", "paid"):
+                r = self.client.get(f"/expenses/reimbursements/?tab={tab}")
+                self.assertEqual(r.status_code, 200)

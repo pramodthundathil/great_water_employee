@@ -14,16 +14,20 @@ from django.contrib.auth import update_session_auth_hash
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.forms import PasswordChangeForm
 from django.core.exceptions import ValidationError
-from django.db.models import Q
+from django.db.models import Count, Q, Prefetch
 from django.shortcuts import render, redirect, get_object_or_404
 from django.urls import reverse
 
 from accounts.models import User, RoleChoices, EmployeeProfile
 from organization.models import Organization, Department
 from expenses.models import ExpenseClaim, ExpenseCategory, ExpenseAttachment, ExpenseClaimStatus
-from leaves.models import LeaveType, LeavePolicy, LeaveAccrualRun, HolidayCalendar, Holiday
+from leaves.models import (
+    LeaveType, LeavePolicy, LeaveAccrualRun, HolidayCalendar, Holiday,
+    LeavePolicyAssignment, PolicyScope,
+)
 from leaves.services import (
     record_leave_on_behalf, LeaveRequestError, run_batch_monthly_accrual,
+    assign_policy, unassign_policy, apply_policy_now, policy_coverage,
 )
 from notifications.services import notify_expense_event
 
@@ -137,6 +141,7 @@ def employee_edit_view(request, pk):
         "active_nav": "employees",
         "emp": emp,
         "profile": profile,
+        "can_edit_bank": user.can_edit_bank_details,
         "all_branches": accessible_branches,
         "all_departments": Department.objects.filter(is_active=True),
         "all_roles": RoleChoices.choices,
@@ -261,9 +266,16 @@ def expense_categories_view(request):
             messages.success(request, f"Category '{cat.name}' {'enabled' if cat.is_active else 'disabled'}.")
         return redirect("portal_expense_categories")
 
+    categories = list(
+        ExpenseCategory.objects.annotate(claim_count=Count("expense_claims"))
+        .order_by("-is_active", "name")
+    )
+    active_count = sum(1 for c in categories if c.is_active)
     context = {
         "active_nav": "expense_categories",
-        "categories": ExpenseCategory.objects.all().order_by("-is_active", "name"),
+        "categories": categories,
+        "active_count": active_count,
+        "disabled_count": len(categories) - active_count,
     }
     return render(request, "portal/expense_categories.html", context)
 
@@ -272,9 +284,11 @@ def expense_categories_view(request):
 # Leave settings (HR Coordinator)
 # ---------------------------------------------------------------------------
 
-def _redirect_leave_settings(tab="types", year=None, open_type=None):
+def _redirect_leave_settings(tab="types", year=None, open_type=None, open_assign=None):
     url = reverse("portal_leave_settings")
     params = {}
+    if open_assign:
+        params["open_assign"] = str(open_assign)
     if tab in ("types", "holidays"):
         params["tab"] = tab
     if year:
@@ -291,6 +305,44 @@ def _safe_int(value, default=None):
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _assignable_employees(user):
+    """Employees HR may target individually: active, with a profile, in branches they can access."""
+    qs = User.objects.filter(is_active=True, profile__isnull=False).select_related("primary_branch", "profile__department")
+    branches = user.get_accessible_branches()
+    if not (user.is_superuser or user.is_global_scope):
+        qs = qs.filter(primary_branch__in=branches)
+    return qs.order_by("first_name", "last_name", "employee_id")
+
+
+def _posted_ids(request, name):
+    return [i for i in (_safe_int(v) for v in request.POST.getlist(name)) if i]
+
+
+def _assign_from_post(request, policy):
+    """
+    Read the 'Applies to' controls (scope + chosen branches / departments / employees)
+    and bulk-assign the policy. Returns (created_count, error_message).
+    """
+    user = request.user
+    scope = request.POST.get("scope", PolicyScope.ALL)
+    if scope == PolicyScope.ALL:
+        return assign_policy(policy, scope, actor=user), None
+    if scope == PolicyScope.BRANCH:
+        targets = list(user.get_accessible_branches().filter(id__in=_posted_ids(request, "branch_ids")))
+        label = "branch"
+    elif scope == PolicyScope.DEPARTMENT:
+        targets = list(Department.objects.filter(is_active=True, id__in=_posted_ids(request, "department_ids")))
+        label = "department"
+    elif scope == PolicyScope.EMPLOYEE:
+        targets = list(_assignable_employees(user).filter(id__in=_posted_ids(request, "employee_ids")))
+        label = "employee"
+    else:
+        return 0, "Choose who the policy applies to."
+    if not targets:
+        return 0, f"Select at least one {label}."
+    return assign_policy(policy, scope, targets, actor=user), None
 
 
 @login_required
@@ -373,9 +425,52 @@ def leave_settings_view(request):
             policy.max_carry_forward = values["max_carry_forward"]
             policy.probation_period_months = max(0, _safe_int(request.POST.get("probation_period_months"), 0))
             policy.is_active = request.POST.get("is_active", "1") == "1"
-            policy.save()
+            is_new = policy.pk is None
+            # New "specific" policies start unassigned; HR picks the audience next.
+            policy.save(assign_to_all=not (is_new and request.POST.get("applies_to") == "SPECIFIC"))
+            if is_new:
+                if request.POST.get("applies_to") == "SPECIFIC":
+                    messages.success(
+                        request,
+                        f"Policy '{policy.name}' created. Choose the branches, departments or employees it applies to.",
+                    )
+                    return _redirect_leave_settings(tab="types", year=posted_year, open_type=lt.id, open_assign=policy.id)
             messages.success(request, f"Policy '{policy.name}' saved.")
             return _redirect_leave_settings(tab="types", year=posted_year, open_type=lt.id)
+
+        elif action == "assign_policy":
+            policy = get_object_or_404(LeavePolicy.objects.select_related("leave_type"), pk=request.POST.get("policy_id"))
+            created, error = _assign_from_post(request, policy)
+            if error:
+                messages.error(request, error)
+            else:
+                msg = f"'{policy.name}' assigned to {created} new target(s)." if created else \
+                    f"Those targets were already assigned to '{policy.name}'."
+                if request.POST.get("apply_now") == "1":
+                    res = apply_policy_now(policy, actor=user)
+                    msg += f" Applied now: {res['credited']} employee(s) credited, {res['skipped']} skipped (already credited, on probation or not yet joined)."
+                messages.success(request, msg)
+            return _redirect_leave_settings(tab="types", year=posted_year, open_type=policy.leave_type_id)
+
+        elif action == "unassign_policy":
+            policy = get_object_or_404(LeavePolicy, pk=request.POST.get("policy_id"))
+            removed = unassign_policy(policy, _posted_ids(request, "assignment_ids"))
+            messages.info(request, f"Removed {removed} assignment(s) from '{policy.name}'." if removed else "Nothing selected to remove.")
+            return _redirect_leave_settings(tab="types", year=posted_year, open_type=policy.leave_type_id)
+
+        elif action == "apply_policy_now":
+            policy = get_object_or_404(LeavePolicy.objects.select_related("leave_type"), pk=request.POST.get("policy_id"))
+            if not policy.is_active:
+                messages.error(request, f"'{policy.name}' is inactive. Activate it before applying.")
+            else:
+                res = apply_policy_now(policy, actor=user)
+                period = "this month's accrual" if policy.accrual_frequency == "MONTHLY" else f"the {date.today().year} entitlement"
+                messages.success(
+                    request,
+                    f"Applied '{policy.name}' ({period}) to {res['covered']} employee(s): "
+                    f"{res['credited']} credited, {res['skipped']} skipped (already credited, on probation or not yet joined).",
+                )
+            return _redirect_leave_settings(tab="types", year=posted_year, open_type=policy.leave_type_id)
 
         elif action == "add_holiday":
             hdate = _parse_date(request.POST.get("date"))
@@ -461,6 +556,7 @@ def leave_settings_view(request):
     year = _safe_int(request.GET.get("year"), today.year)
     active_tab = "holidays" if request.GET.get("tab") == "holidays" else "types"
     open_type_id = _safe_int(request.GET.get("open_type"))
+    open_assign_id = _safe_int(request.GET.get("open_assign"))
 
     holidays = list(
         Holiday.objects.filter(calendar__year=year, calendar__organization=org)
@@ -468,8 +564,28 @@ def leave_settings_view(request):
         .select_related("calendar__branch")
         .order_by("date")
     )
-    leave_types = list(LeaveType.objects.all().prefetch_related("policies").order_by("-is_active", "name"))
+    leave_types = list(
+        LeaveType.objects.all()
+        .prefetch_related(Prefetch(
+            "policies",
+            queryset=LeavePolicy.objects.prefetch_related(Prefetch(
+                "assignments",
+                queryset=LeavePolicyAssignment.objects.select_related("branch", "department", "employee"),
+            )).order_by("-is_active", "effective_date", "id"),
+        ))
+        .order_by("-is_active", "name")
+    )
     branches = list(user.get_accessible_branches())
+    departments = list(Department.objects.filter(is_active=True).order_by("name"))
+    assignable_employees = list(_assignable_employees(user))
+
+    # Who each policy *actually* governs once precedence is applied.
+    coverage = policy_coverage()
+    for lt in leave_types:
+        for p in lt.policies.all():
+            p.covered_employees = coverage.get(p.id, [])
+            p.covered_count = len(p.covered_employees)
+            p.assignment_list = list(p.assignments.all())
 
     current_period_key = today.strftime("%Y-%m")
     current_period_credited_count = LeaveAccrualRun.objects.filter(period_key=current_period_key).count()
@@ -492,12 +608,16 @@ def leave_settings_view(request):
         "active_nav": "leave_settings",
         "active_tab": active_tab,
         "open_type_id": open_type_id,
+        "open_assign_id": open_assign_id,
         "leave_types": leave_types,
         "holidays": holidays,
         "today": today,
         "year": year,
         "years": [year - 1, year, year + 1],
         "branches": branches,
+        "departments": departments,
+        "assignable_employees": assignable_employees,
+        "policy_scopes": PolicyScope.choices,
         "current_period_key": current_period_key,
         "current_period_label": today.strftime("%B %Y"),
         "current_period_credited_count": current_period_credited_count,

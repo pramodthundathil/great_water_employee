@@ -6,7 +6,8 @@ sections that match its responsibilities (see PERMISSION_MATRIX.md):
 
   LEAD_MANAGER    team leave analytics (direct reports)
   ADMIN_MANAGER   branch expense / reimbursement analytics
-  HR_COORDINATOR  branch leave & workforce analytics
+  HR_COORDINATOR  everything (expenses, leave, workforce) for their branches —
+                  all branches when global scope, otherwise only the assigned branches
   DIRECTOR        everything, across all accessible branches (superusers are Directors)
 """
 from collections import defaultdict
@@ -36,7 +37,7 @@ from portal.dashboard_services import (
 ROLE_SECTIONS = {
     RoleChoices.LEAD_MANAGER: {"leaves"},
     RoleChoices.ADMIN_MANAGER: {"expenses"},
-    RoleChoices.HR_COORDINATOR: {"leaves", "workforce"},
+    RoleChoices.HR_COORDINATOR: {"expenses", "leaves", "workforce", "branches"},
     RoleChoices.DIRECTOR: {"expenses", "leaves", "workforce", "branches"},
 }
 
