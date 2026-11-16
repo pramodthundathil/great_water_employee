@@ -240,6 +240,100 @@
     </div>
 </div>
 
+<!-- Departments -->
+<section class="gw-card mb-4" id="departments" aria-labelledby="departmentsTitle">
+    <div class="gw-card-body">
+        <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+            <div>
+                <h2 id="departmentsTitle" class="h5 fw-bold text-dark mb-1">Departments</h2>
+                <p class="small text-muted mb-0">Organization-wide departments available when adding or editing employees.</p>
+            </div>
+            {% if can_manage_branches %}
+            <button type="button" class="btn btn-sm btn-gw-primary js-add-dept-btn">
+                <i class="bi bi-plus-lg" aria-hidden="true"></i>
+                <span>Add Department</span>
+            </button>
+            {% endif %}
+        </div>
+
+        {% if departments %}
+        <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th scope="col">Code</th>
+                        <th scope="col">Name</th>
+                        <th scope="col" class="text-center">Active Staff</th>
+                        <th scope="col">Status</th>
+                        {% if can_manage_branches %}<th scope="col" class="text-end">Actions</th>{% endif %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for d in departments %}
+                    <tr>
+                        <td><span class="gw-lt-code">{{ d.code }}</span></td>
+                        <td class="fw-semibold">{{ d.name }}</td>
+                        <td class="text-center">{{ d.employee_count }}</td>
+                        <td>
+                            <span class="status-badge {% if d.is_active %}badge-approved{% else %}badge-draft{% endif %}">
+                                {% if d.is_active %}Active{% else %}Inactive{% endif %}
+                            </span>
+                        </td>
+                        {% if can_manage_branches %}
+                        <td class="text-end">
+                            <div class="d-inline-flex align-items-center gap-1">
+                                <button
+                                    type="button"
+                                    class="btn btn-sm btn-light border js-edit-dept-btn"
+                                    data-id="{{ d.id }}"
+                                    data-code="{{ d.code }}"
+                                    data-name="{{ d.name }}"
+                                    data-active="{% if d.is_active %}1{% else %}0{% endif %}"
+                                    aria-label="Edit {{ d.name }}"
+                                    title="Edit department"
+                                >
+                                    <i class="bi bi-pencil" aria-hidden="true"></i>
+                                </button>
+                                <form method="post" action="{% url 'portal_branches' %}" class="d-inline"
+                                      onsubmit="return confirm('{% if d.is_active %}Deactivate{% else %}Activate{% endif %} department \'{{ d.name|escapejs }}\'?');">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="action" value="dept_toggle_active">
+                                    <input type="hidden" name="department_id" value="{{ d.id }}">
+                                    <button type="submit" class="btn btn-sm btn-light border"
+                                            aria-label="{% if d.is_active %}Deactivate{% else %}Activate{% endif %} {{ d.name }}"
+                                            title="{% if d.is_active %}Deactivate department{% else %}Activate department{% endif %}">
+                                        <i class="bi {% if d.is_active %}bi-pause-circle text-warning{% else %}bi-play-circle text-success{% endif %}" aria-hidden="true"></i>
+                                    </button>
+                                </form>
+                                {% if d.total_employee_count == 0 %}
+                                <form method="post" action="{% url 'portal_branches' %}" class="d-inline"
+                                      onsubmit="return confirm('Permanently delete department \'{{ d.name|escapejs }}\'?');">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="action" value="dept_delete">
+                                    <input type="hidden" name="department_id" value="{{ d.id }}">
+                                    <button type="submit" class="btn btn-sm btn-outline-danger" aria-label="Delete {{ d.name }}" title="Delete department">
+                                        <i class="bi bi-trash" aria-hidden="true"></i>
+                                    </button>
+                                </form>
+                                {% endif %}
+                            </div>
+                        </td>
+                        {% endif %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <div class="empty-state-icon"><i class="bi bi-diagram-3" aria-hidden="true"></i></div>
+            <div class="empty-state-title">No departments yet</div>
+            <div class="empty-state-desc">Add departments so employees can be grouped by function.</div>
+        </div>
+        {% endif %}
+    </div>
+</section>
+
 {% if can_manage_branches %}
 <!-- Create Branch Native Dialog -->
 <dialog id="createBranchDialog" class="gw-dialog" aria-labelledby="createBranchTitle">
@@ -342,6 +436,52 @@
     </form>
 </dialog>
 
+<!-- Add / Edit Department Dialog -->
+<dialog id="deptDialog" class="gw-dialog" aria-labelledby="deptDialogTitle">
+    <div class="gw-dialog-header">
+        <h2 id="deptDialogTitle" class="gw-dialog-title">
+            <i class="bi bi-diagram-3 me-2 text-primary" aria-hidden="true"></i><span id="deptDialogTitleText">Add Department</span>
+        </h2>
+        <button type="button" class="btn-close" commandfor="deptDialog" command="close" aria-label="Close"></button>
+    </div>
+    <form method="post" action="{% url 'portal_branches' %}" class="gw-settings-form">
+        {% csrf_token %}
+        <input type="hidden" name="action" id="deptAction" value="dept_create">
+        <input type="hidden" name="department_id" id="deptId">
+
+        <div class="gw-dialog-body d-flex flex-column gap-3">
+            <div class="row g-3">
+                <div class="col-sm-4">
+                    <label class="form-label small fw-semibold mb-1" for="deptCode">
+                        Code <span class="text-danger" aria-hidden="true">*</span>
+                    </label>
+                    <input id="deptCode" name="code" type="text" class="form-control text-uppercase font-monospace"
+                           required maxlength="20" placeholder="OPS" autocorrect="off" autocapitalize="characters" spellcheck="false">
+                </div>
+                <div class="col-sm-8">
+                    <label class="form-label small fw-semibold mb-1" for="deptName">
+                        Department name <span class="text-danger" aria-hidden="true">*</span>
+                    </label>
+                    <input id="deptName" name="name" type="text" class="form-control" required maxlength="100" placeholder="e.g. Operations">
+                </div>
+            </div>
+
+            <label class="gw-switch-row" for="deptActive">
+                <span>
+                    <span class="gw-switch-label-title">Active department</span>
+                    <span class="gw-switch-label-hint">Only active departments can be selected on employee profiles.</span>
+                </span>
+                <input class="gw-native-switch" type="checkbox" switch name="is_active" value="1" id="deptActive" checked>
+            </label>
+        </div>
+
+        <div class="gw-dialog-footer">
+            <button type="button" class="btn btn-sm btn-gw-secondary" commandfor="deptDialog" command="close">Cancel</button>
+            <button type="submit" class="btn btn-sm btn-gw-primary" id="deptSubmitBtn">Save Department</button>
+        </div>
+    </form>
+</dialog>
+
 {% url 'portal_branches' as branches_action_url %}
 {% include "portal/_branch_modals.html" with form_action=branches_action_url %}
 {% endif %}
@@ -383,6 +523,21 @@ document.addEventListener('DOMContentLoaded', () => {
         statusBtns.forEach((b) => b.classList.toggle('active', b.dataset.status === 'all'));
         filterBranches();
     });
+
+    const deptDialog = document.getElementById('deptDialog');
+    const openDeptDialog = (data) => {
+        if (!deptDialog) return;
+        const editing = !!data;
+        document.getElementById('deptAction').value = editing ? 'dept_update' : 'dept_create';
+        document.getElementById('deptId').value = editing ? data.id : '';
+        document.getElementById('deptCode').value = editing ? data.code : '';
+        document.getElementById('deptName').value = editing ? data.name : '';
+        document.getElementById('deptActive').checked = editing ? data.active === '1' : true;
+        document.getElementById('deptDialogTitleText').textContent = editing ? 'Edit Department' : 'Add Department';
+        deptDialog.showModal();
+    };
+    document.querySelectorAll('.js-add-dept-btn').forEach((btn) => btn.addEventListener('click', () => openDeptDialog(null)));
+    document.querySelectorAll('.js-edit-dept-btn').forEach((btn) => btn.addEventListener('click', () => openDeptDialog(btn.dataset)));
 });
 </script>
 {% endblock %}

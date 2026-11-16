@@ -1677,6 +1677,9 @@ def _handle_branch_action(request, user, redirect_response, target_branch=None):
 
     action = request.POST.get("action")
 
+    if action and action.startswith("dept_"):
+        return _handle_department_action(request, user, action, redirect_response)
+
     if action == "create":
         fields = _extract_branch_fields(request.POST)
         if not fields["code"] or not fields["name"]:
@@ -1739,6 +1742,66 @@ def _handle_branch_action(request, user, redirect_response, target_branch=None):
     return redirect_response
 
 
+def _handle_department_action(request, user, action, redirect_response):
+    """Create, update, toggle, or delete organization departments (managed from the branches page)."""
+    if action == "dept_create":
+        code = (request.POST.get("code") or "").strip().upper()
+        name = (request.POST.get("name") or "").strip()
+        if not code or not name:
+            messages.error(request, "Department code and name are required.")
+            return redirect_response
+        if Department.objects.filter(code__iexact=code).exists():
+            messages.error(request, f"A department with code '{code}' already exists.")
+            return redirect_response
+        dept = Department.objects.create(
+            organization=get_default_organization(user),
+            code=code,
+            name=name,
+            is_active=request.POST.get("is_active") == "1",
+        )
+        messages.success(request, f"Department '{dept.name}' ({dept.code}) created.")
+        return redirect_response
+
+    dept = get_object_or_404(Department, pk=request.POST.get("department_id"))
+
+    if action == "dept_update":
+        code = (request.POST.get("code") or "").strip().upper()
+        name = (request.POST.get("name") or "").strip()
+        if not code or not name:
+            messages.error(request, "Department code and name are required.")
+            return redirect_response
+        if Department.objects.filter(code__iexact=code).exclude(pk=dept.pk).exists():
+            messages.error(request, f"Another department already uses code '{code}'.")
+            return redirect_response
+        dept.code = code
+        dept.name = name
+        dept.is_active = request.POST.get("is_active") == "1"
+        dept.save()
+        messages.success(request, f"Department '{dept.name}' updated.")
+        return redirect_response
+
+    if action == "dept_toggle_active":
+        dept.is_active = not dept.is_active
+        dept.save(update_fields=["is_active"])
+        state_label = "active" if dept.is_active else "inactive"
+        messages.success(request, f"Department '{dept.name}' is now {state_label}.")
+        return redirect_response
+
+    if action == "dept_delete":
+        if dept.employees.exists():
+            messages.error(
+                request,
+                f"Cannot delete '{dept.name}' because employees are assigned to it. Deactivate it instead.",
+            )
+            return redirect_response
+        label = f"{dept.name} ({dept.code})"
+        dept.delete()
+        messages.info(request, f"Department '{label}' permanently deleted.")
+        return redirect_response
+
+    return redirect_response
+
+
 @login_required
 def branches_view(request):
     user = request.user
@@ -1776,6 +1839,10 @@ def branches_view(request):
         "active_branches_count": active_branches_count,
         "inactive_branches_count": inactive_branches_count,
         "total_staff_count": total_staff_count,
+        "departments": Department.objects.annotate(
+            employee_count=Count("employees", filter=Q(employees__user__is_active=True), distinct=True),
+            total_employee_count=Count("employees", distinct=True),
+        ).order_by("-is_active", "name"),
     }
     return render(request, "portal/branches.html", context)
 
