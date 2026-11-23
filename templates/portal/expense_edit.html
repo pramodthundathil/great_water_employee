@@ -30,9 +30,7 @@
                         <textarea name="description" class="form-control" rows="3" required>{{ claim.description }}</textarea>
                     </div>
                     <div class="col-12">
-                        <label class="form-label small fw-bold">Add more proofs</label>
-                        <input type="file" name="receipts" class="form-control" multiple accept="image/*,application/pdf">
-                        <small class="text-muted">You can select several files at once.</small>
+                        {% include "portal/_receipts_uploader.html" with required=True existing_count=attachments|length label="Add receipts / proofs" %}
                     </div>
                     <div class="col-12 d-flex gap-2 justify-content-end">
                         <button type="submit" name="action" value="save" class="btn btn-outline-primary">Save</button>
@@ -50,7 +48,7 @@
             <div class="gw-card-body">
                 {% for a in attachments %}
                 <div class="d-flex align-items-center justify-content-between border-bottom py-2">
-                    <a href="{{ a.file.url }}" data-gw-filename="{{ a.original_filename }}" class="small text-truncate me-2">{{ a.original_filename }}</a>
+                    <a href="{{ a.file.url }}" data-gw-gallery="claim-{{ claim.pk }}" data-gw-filename="{{ a.original_filename }}" class="small text-truncate me-2">{{ a.original_filename }}</a>
                     <a href="{{ a.file.url }}" download="{{ a.original_filename }}" class="btn btn-sm btn-link p-0 me-2" title="Download" aria-label="Download {{ a.original_filename }}"><i class="bi bi-download"></i></a>
                     <form method="post" onsubmit="return confirm('Remove this file?');">
                         {% csrf_token %}

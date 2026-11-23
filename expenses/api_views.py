@@ -19,7 +19,7 @@ from expenses.serializers import (
 )
 from accounts.models import RoleChoices
 from notifications.services import notify_expense_event
-from portal.admin_views import validate_upload, EDITABLE_EXPENSE_STATUSES
+from portal.admin_views import validate_upload, validate_receipt_count, EDITABLE_EXPENSE_STATUSES
 from expenses.items import ItemError, clean_items, raw_items_from_request, replace_items, summary_header
 from organization.currencies import all_currencies_json
 
@@ -108,6 +108,9 @@ class ExpenseClaimListCreateView(APIView):
             description = items[0]["description"] or "Expense claim"
 
         files = request.FILES.getlist("receipts") or request.FILES.getlist("file")
+        count_err = validate_receipt_count(len(files))
+        if count_err:
+            return Response({"detail": count_err}, status=status.HTTP_400_BAD_REQUEST)
         for f in files:
             err = validate_upload(f)
             if err:
@@ -207,6 +210,9 @@ class ExpenseAttachmentView(APIView):
         files = request.FILES.getlist("receipts") or request.FILES.getlist("file")
         if not files:
             return Response({"detail": "No file uploaded."}, status=status.HTTP_400_BAD_REQUEST)
+        count_err = validate_receipt_count(len(files), claim.attachments.count())
+        if count_err:
+            return Response({"detail": count_err}, status=status.HTTP_400_BAD_REQUEST)
         for f in files:
             err = validate_upload(f)
             if err:

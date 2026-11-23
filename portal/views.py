@@ -37,7 +37,7 @@ from leaves.services import (
     filter_leave_track, leave_track_counts, leave_review_options, leave_correction_options, notify_leave_review,
     employee_leave_snapshot,
 )
-from portal.admin_views import validate_upload, can_manage_users, get_default_organization
+from portal.admin_views import validate_upload, validate_receipt_count, can_manage_users, get_default_organization
 from expenses.services import (
     approved_claim_delete_block_reason, bulk_delete_approved_claims, bulk_delete_claims,
     bulk_void_payments, claim_delete_block_reason, payment_void_block_reason,
@@ -383,6 +383,10 @@ def expenses_list_view(request):
         files = request.FILES.getlist("receipts")
         if not files:
             messages.error(request, "At least one supporting receipt / proof is required.")
+            return redirect("portal_expenses")
+        count_err = validate_receipt_count(len(files))
+        if count_err:
+            messages.error(request, count_err)
             return redirect("portal_expenses")
         for f in files:
             err = validate_upload(f)

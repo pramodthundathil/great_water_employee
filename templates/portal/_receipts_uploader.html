@@ -1,0 +1,181 @@
+{% comment %}
+Multi-file receipt uploader: drag & drop, click to browse, camera (phones), paste screenshots.
+Files accumulate across several picks, each with a preview and a remove button; posted as `receipts`.
+Params: required (bool) – at least one file before submit; existing_count (int) – files already on the claim;
+        label (optional).
+{% endcomment %}
+<style>
+    .gw-up-zone { border: 2px dashed var(--bs-border-color); border-radius: 14px; padding: 22px 16px; text-align: center; background: var(--bs-tertiary-bg); cursor: pointer; transition: border-color .15s, background .15s; }
+    .gw-up-zone:hover, .gw-up-zone:focus-visible { border-color: var(--bs-primary); outline: none; }
+    .gw-up-zone.is-drag { border-color: var(--bs-primary); background: var(--bs-primary-bg-subtle); }
+    .gw-up-zone.is-invalid { border-color: var(--bs-danger); background: var(--bs-danger-bg-subtle); }
+    .gw-up-icon { font-size: 2rem; color: var(--bs-primary); line-height: 1; }
+    .gw-up-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+    .gw-up-card { position: relative; border: 1px solid var(--bs-border-color); border-radius: 10px; overflow: hidden; background: var(--bs-body-bg); }
+    .gw-up-thumb { height: 96px; display: flex; align-items: center; justify-content: center; background: var(--bs-secondary-bg); overflow: hidden; }
+    .gw-up-thumb img { width: 100%; height: 100%; object-fit: cover; }
+    .gw-up-thumb i { font-size: 2.2rem; }
+    .gw-up-meta { padding: 6px 8px; font-size: .75rem; }
+    .gw-up-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .gw-up-remove { position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; border-radius: 50%; border: 0; background: rgba(0,0,0,.6); color: #fff; display: flex; align-items: center; justify-content: center; font-size: .85rem; }
+    .gw-up-remove:hover { background: var(--bs-danger); }
+    .gw-up-badge { position: absolute; top: 6px; left: 6px; font-size: .65rem; }
+    .gw-up-file { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+</style>
+
+<div class="gw-uploader" data-required="{% if required %}1{% else %}0{% endif %}" data-existing="{{ existing_count|default:0 }}">
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
+        <label class="form-label small fw-bold m-0">
+            {{ label|default:"Supporting Receipts / Proofs" }}
+            {% if required %}<span class="text-danger">*</span>{% endif %}
+        </label>
+        <span class="small text-muted gw-up-summary">No files added yet</span>
+    </div>
+
+    {# Real file input that is posted. JS keeps its FileList in sync with the cards below. #}
+    <input type="file" name="receipts" class="gw-up-file" multiple tabindex="-1" aria-hidden="true">
+    <input type="file" class="gw-up-pick d-none" multiple accept="image/*,application/pdf,.heic,.heif">
+    <input type="file" class="gw-up-camera d-none" accept="image/*" capture="environment">
+
+    <div class="gw-up-zone" tabindex="0" role="button" aria-label="Add receipts: drop files here or press Enter to browse">
+        <div class="gw-up-icon mb-2"><i class="bi bi-cloud-arrow-up"></i></div>
+        <div class="fw-semibold">Drag &amp; drop bills here, or <span class="text-primary text-decoration-underline">browse</span></div>
+        <div class="small text-muted mt-1">Add one file per bill &mdash; you can add more any time. Paste a screenshot with Ctrl/⌘ + V.</div>
+        <div class="d-flex flex-wrap justify-content-center gap-2 mt-3">
+            <button type="button" class="btn btn-sm btn-gw-primary gw-up-browse"><i class="bi bi-folder2-open me-1"></i>Choose files</button>
+            <button type="button" class="btn btn-sm btn-outline-primary gw-up-snap"><i class="bi bi-camera me-1"></i>Take photo</button>
+        </div>
+        <div class="small text-muted mt-2">JPG, PNG, HEIC, WEBP or PDF &middot; up to 10 MB each &middot; max 20 files</div>
+    </div>
+
+    <div class="gw-up-error small text-danger mt-2 d-none" role="alert"></div>
+    <div class="gw-up-grid mt-3"></div>
+</div>
+
+<script>
+(function () {
+    const root = document.currentScript.previousElementSibling;
+    if (!root || !root.classList.contains('gw-uploader')) return;
+    const MAX_BYTES = 10 * 1024 * 1024, MAX_FILES = 20;
+    const OK_TYPES = ['image/jpeg', 'image/png', 'image/heic', 'image/heif', 'image/webp', 'application/pdf'];
+    const OK_EXT = /\.(jpe?g|png|heic|heif|webp|pdf)$/i;
+    const real = root.querySelector('.gw-up-file');
+    const pick = root.querySelector('.gw-up-pick');
+    const cam = root.querySelector('.gw-up-camera');
+    const zone = root.querySelector('.gw-up-zone');
+    const grid = root.querySelector('.gw-up-grid');
+    const errBox = root.querySelector('.gw-up-error');
+    const summary = root.querySelector('.gw-up-summary');
+    const required = root.dataset.required === '1';
+    const existing = parseInt(root.dataset.existing || '0', 10);
+    const form = root.closest('form');
+    let files = [];
+    const urls = new Map();
+
+    const size = b => b < 1024 * 1024 ? Math.max(1, Math.round(b / 1024)) + ' KB' : (b / 1024 / 1024).toFixed(1) + ' MB';
+    const isPdf = f => f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
+    const isImg = f => (f.type || '').startsWith('image/') && !/hei[cf]/i.test(f.type) && !/\.hei[cf]$/i.test(f.name);
+    const key = f => f.name + '|' + f.size + '|' + f.lastModified;
+
+    function showError(msgs) {
+        errBox.innerHTML = msgs.map(m => '<div><i class="bi bi-exclamation-circle me-1"></i>' + m + '</div>').join('');
+        errBox.classList.toggle('d-none', !msgs.length);
+    }
+
+    function sync() {
+        const dt = new DataTransfer();
+        files.forEach(f => dt.items.add(f));
+        real.files = dt.files;
+        const total = files.reduce((t, f) => t + f.size, 0);
+        summary.textContent = files.length
+            ? files.length + (files.length === 1 ? ' file' : ' files') + ' · ' + size(total)
+            : (existing ? existing + ' already attached' : 'No files added yet');
+        if (files.length) zone.classList.remove('is-invalid');
+        render();
+    }
+
+    function render() {
+        grid.innerHTML = '';
+        files.forEach((f, i) => {
+            const card = document.createElement('div');
+            card.className = 'gw-up-card';
+            const thumb = document.createElement('div');
+            thumb.className = 'gw-up-thumb';
+            if (isImg(f)) {
+                if (!urls.has(key(f))) urls.set(key(f), URL.createObjectURL(f));
+                const img = document.createElement('img');
+                img.src = urls.get(key(f)); img.alt = '';
+                thumb.appendChild(img);
+            } else {
+                thumb.innerHTML = isPdf(f) ? '<i class="bi bi-file-earmark-pdf-fill text-danger"></i>' : '<i class="bi bi-file-earmark-image text-info"></i>';
+            }
+            const meta = document.createElement('div');
+            meta.className = 'gw-up-meta';
+            const nm = document.createElement('div'); nm.className = 'gw-up-name'; nm.textContent = f.name; nm.title = f.name;
+            const sz = document.createElement('div'); sz.className = 'text-muted'; sz.textContent = size(f.size);
+            meta.append(nm, sz);
+            const badge = document.createElement('span');
+            badge.className = 'badge text-bg-light gw-up-badge'; badge.textContent = '#' + (i + 1);
+            const rm = document.createElement('button');
+            rm.type = 'button'; rm.className = 'gw-up-remove'; rm.innerHTML = '<i class="bi bi-x-lg"></i>';
+            rm.setAttribute('aria-label', 'Remove ' + f.name);
+            rm.addEventListener('click', e => {
+                e.stopPropagation();
+                const u = urls.get(key(f)); if (u) { URL.revokeObjectURL(u); urls.delete(key(f)); }
+                files.splice(i, 1); showError([]); sync();
+            });
+            card.append(thumb, meta, badge, rm);
+            grid.appendChild(card);
+        });
+    }
+
+    function add(list) {
+        const errors = [];
+        const seen = new Set(files.map(key));
+        Array.from(list || []).forEach(f => {
+            if (!(OK_TYPES.includes((f.type || '').toLowerCase()) || OK_EXT.test(f.name))) { errors.push(f.name + ': only images and PDF files are accepted.'); return; }
+            if (f.size > MAX_BYTES) { errors.push(f.name + ' is larger than 10 MB.'); return; }
+            if (seen.has(key(f))) return; // same file picked twice
+            if (files.length >= MAX_FILES) { errors.push('You can attach up to ' + MAX_FILES + ' files.'); return; }
+            seen.add(key(f)); files.push(f);
+        });
+        showError([...new Set(errors)]);
+        sync();
+    }
+
+    zone.addEventListener('click', e => { if (!e.target.closest('.gw-up-snap')) pick.click(); });
+    zone.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick.click(); } });
+    root.querySelector('.gw-up-snap').addEventListener('click', e => { e.stopPropagation(); cam.click(); });
+    root.querySelector('.gw-up-browse').addEventListener('click', e => { e.stopPropagation(); pick.click(); });
+    [pick, cam].forEach(inp => inp.addEventListener('change', () => { add(inp.files); inp.value = ''; }));
+
+    ['dragenter', 'dragover'].forEach(ev => zone.addEventListener(ev, e => { e.preventDefault(); zone.classList.add('is-drag'); }));
+    ['dragleave', 'dragend', 'drop'].forEach(ev => zone.addEventListener(ev, e => { e.preventDefault(); zone.classList.remove('is-drag'); }));
+    zone.addEventListener('drop', e => add(e.dataTransfer.files));
+
+    // Paste screenshots / copied images while the form is open.
+    (form || document).addEventListener('paste', e => {
+        const pasted = Array.from(e.clipboardData?.files || []);
+        if (!pasted.length) return;
+        e.preventDefault();
+        add(pasted.map((f, i) => f.name && f.name !== 'image.png' ? f
+            : new File([f], 'pasted-' + Date.now() + '-' + (i + 1) + '.png', { type: f.type || 'image/png' })));
+    });
+
+    if (form) {
+        form.addEventListener('submit', e => {
+            const action = (e.submitter && e.submitter.value) || '';
+            if (required && action !== 'save' && files.length + existing === 0) {
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                zone.classList.add('is-invalid');
+                showError(['Attach at least one bill or receipt.']);
+                zone.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                zone.focus();
+            }
+        });
+        form.addEventListener('reset', () => { files = []; showError([]); sync(); });
+    }
+    sync();
+})();
+</script>

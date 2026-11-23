@@ -40,6 +40,7 @@ EDITABLE_EXPENSE_STATUSES = [
 
 ALLOWED_UPLOAD_TYPES = ("image/jpeg", "image/png", "image/heic", "image/heif", "image/webp", "application/pdf")
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+MAX_RECEIPTS_PER_CLAIM = 20
 
 
 from accounts.services import (  # noqa: E402  (shared with the mobile API)
@@ -60,6 +61,13 @@ def get_default_organization(user=None):
             defaults={"name": "Great Waters"},
         )
     return org
+
+
+def validate_receipt_count(new_count, existing_count=0):
+    """Error string when a claim would end up with too many receipt files, else None."""
+    if new_count + existing_count > MAX_RECEIPTS_PER_CLAIM:
+        return f"A claim can have at most {MAX_RECEIPTS_PER_CLAIM} receipt files."
+    return None
 
 
 def validate_upload(f):
@@ -191,6 +199,10 @@ def expense_edit_view(request, pk):
             if err:
                 messages.error(request, err)
                 return redirect("portal_expense_edit", pk=claim.pk)
+        count_err = validate_receipt_count(len(files), claim.attachments.count())
+        if count_err:
+            messages.error(request, count_err)
+            return redirect("portal_expense_edit", pk=claim.pk)
 
         claim.description = request.POST.get("description", "").strip() or claim.description
         claim.project_reference = request.POST.get("project_reference", "").strip()

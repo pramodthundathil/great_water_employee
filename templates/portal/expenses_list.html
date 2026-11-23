@@ -200,9 +200,7 @@
                         </div>
 
                         <div class="col-12">
-                            <label class="form-label small fw-bold">Supporting Receipts / Proofs <span class="text-danger">*</span></label>
-                            <input type="file" name="receipts" class="form-control" multiple accept="image/*,application/pdf" required>
-                            <small class="text-muted">Select several files at once (one per bill) — JPEG, PNG, HEIC or PDF, up to 10MB each.</small>
+                            {% include "portal/_receipts_uploader.html" with required=True %}
                         </div>
 
                     </div>

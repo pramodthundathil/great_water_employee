@@ -120,34 +120,58 @@
         </div>
 
         <!-- Receipts & Attachments Gallery -->
+        <style>
+            .gw-rc-card { border: 1px solid var(--bs-border-color); border-radius: 12px; overflow: hidden; background: var(--bs-body-bg); height: 100%; display: flex; flex-direction: column; transition: box-shadow .15s, transform .15s; }
+            .gw-rc-card:hover { box-shadow: 0 8px 20px rgba(26,35,48,.12); transform: translateY(-2px); }
+            .gw-rc-thumb { position: relative; display: flex; align-items: center; justify-content: center; height: 150px; background: var(--bs-secondary-bg); overflow: hidden; text-decoration: none; }
+            .gw-rc-thumb img { width: 100%; height: 100%; object-fit: cover; }
+            .gw-rc-thumb .gw-rc-icon { font-size: 3rem; }
+            .gw-rc-thumb .gw-rc-hover { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 6px; background: rgba(12,16,22,.55); color: #fff; font-weight: 600; opacity: 0; transition: opacity .15s; }
+            .gw-rc-thumb:hover .gw-rc-hover, .gw-rc-thumb:focus-visible .gw-rc-hover { opacity: 1; }
+            .gw-rc-num { position: absolute; top: 8px; left: 8px; }
+        </style>
         <div class="gw-card">
-            <div class="gw-card-header">
-                <h5 class="gw-card-title"><i class="bi bi-paperclip me-2"></i>Verified Receipts & Proofs ({{ attachments.count }})</h5>
+            <div class="gw-card-header d-flex flex-wrap align-items-center justify-content-between gap-2">
+                <h5 class="gw-card-title mb-0"><i class="bi bi-paperclip me-2"></i>Receipts &amp; Proofs ({{ attachments|length }})</h5>
+                {% if attachments %}
+                {% with first=attachments.0 %}
+                <a href="{{ first.file.url }}" data-gw-gallery="claim-{{ claim.pk }}" data-gw-filename="{{ first.original_filename }}" class="btn btn-sm btn-gw-primary">
+                    <i class="bi bi-images me-1"></i>View all{% if attachments|length > 1 %} ({{ attachments|length }}){% endif %}
+                </a>
+                {% endwith %}
+                {% endif %}
             </div>
             <div class="gw-card-body">
                 <div class="row g-3">
                     {% for att in attachments %}
-                    <div class="col-md-6">
-                        <div class="border rounded-3 p-3 d-flex align-items-center justify-content-between bg-light">
-                            <div class="d-flex align-items-center gap-3 overflow-hidden">
-                                <div class="bg-white p-2 rounded shadow-sm text-primary">
-                                    <i class="bi {% if 'pdf' in att.file_type %}bi-file-earmark-pdf-fill text-danger{% else %}bi-file-earmark-image-fill text-info{% endif %} fs-3"></i>
-                                </div>
-                                <div class="text-truncate">
-                                    <div class="fw-bold small text-truncate">{{ att.original_filename }}</div>
+                    {% with name=att.original_filename|default:"Receipt" %}
+                    {% with lower=name|lower %}
+                    <div class="col-sm-6 col-xl-4">
+                        <div class="gw-rc-card">
+                            <a href="{{ att.file.url }}" class="gw-rc-thumb" data-gw-gallery="claim-{{ claim.pk }}" data-gw-filename="{{ name }}" aria-label="View {{ name }}">
+                                {% if 'pdf' in att.file_type or lower|slice:'-4:' == '.pdf' %}
+                                    <i class="bi bi-file-earmark-pdf-fill text-danger gw-rc-icon"></i>
+                                {% elif 'heic' in att.file_type or 'heif' in att.file_type or lower|slice:'-5:' == '.heic' or lower|slice:'-5:' == '.heif' %}
+                                    <i class="bi bi-file-earmark-image text-info gw-rc-icon"></i>
+                                {% else %}
+                                    <img src="{{ att.file.url }}" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('i'),{className:'bi bi-file-earmark-image text-info gw-rc-icon'}))">
+                                {% endif %}
+                                <span class="badge text-bg-light gw-rc-num">#{{ forloop.counter }}</span>
+                                <span class="gw-rc-hover"><i class="bi bi-arrows-fullscreen"></i>View</span>
+                            </a>
+                            <div class="p-2 d-flex align-items-center gap-2">
+                                <div class="flex-grow-1 overflow-hidden">
+                                    <div class="fw-semibold small text-truncate" title="{{ name }}">{{ name }}</div>
                                     <small class="text-muted">{{ att.uploaded_at|date:"M d, Y" }} &bull; {{ att.file_size|filesizeformat }}</small>
                                 </div>
-                            </div>
-                            <div class="d-flex gap-2 ms-2 flex-shrink-0">
-                                <a href="{{ att.file.url }}" data-gw-filename="{{ att.original_filename }}" class="btn btn-sm btn-white border shadow-sm" title="View">
-                                    <i class="bi bi-eye"></i>
-                                </a>
-                                <a href="{{ att.file.url }}" download="{{ att.original_filename }}" class="btn btn-sm btn-white border shadow-sm" title="Download">
+                                <a href="{{ att.file.url }}" download="{{ name }}" class="btn btn-sm btn-light border flex-shrink-0" title="Download" aria-label="Download {{ name }}">
                                     <i class="bi bi-download"></i>
                                 </a>
                             </div>
                         </div>
                     </div>
+                    {% endwith %}
+                    {% endwith %}
                     {% empty %}
                     <div class="col-12 text-center py-4 text-muted">
                         <i class="bi bi-exclamation-circle fs-3 text-warning mb-2 d-block"></i>
@@ -155,6 +179,9 @@
                     </div>
                     {% endfor %}
                 </div>
+                {% if attachments|length > 1 %}
+                <p class="small text-muted mt-3 mb-0"><i class="bi bi-keyboard me-1"></i>In the viewer use ← → to move between receipts, + / − to zoom, R to rotate, F for full screen.</p>
+                {% endif %}
             </div>
         </div>
     </div>

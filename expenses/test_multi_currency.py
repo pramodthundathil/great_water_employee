@@ -233,3 +233,43 @@ class BranchCurrencyChangeTests(MultiCurrencyTests):
         self.kch.refresh_from_db(); c.refresh_from_db()
         self.assertEqual(self.kch.currency_code, "INR")
         self.assertEqual(c.currency_code, "INR")
+
+
+class ReceiptUploaderTests(TestCase):
+    def setUp(self):
+        org = Organization.objects.create(name="GW", code="GW")
+        self.branch = Branch.objects.create(organization=org, code="GW-DXB", name="Dubai", currency_code="AED")
+        self.cat = ExpenseCategory.objects.create(organization=org, code="T", name="Travel")
+        self.emp = User.objects.create_user(username="e", employee_id="GW-E", email="e@gw.test",
+                                            password="Password@123", role=RoleChoices.EMPLOYEE,
+                                            primary_branch=self.branch)
+        self.client.force_login(self.emp)
+
+    def post(self, n):
+        return self.client.post("/expenses/", {
+            "item_category": self.cat.id, "item_date": "2026-01-05", "item_currency": "AED", "item_amount": "10",
+            "item_rate": "1", "description": f"claim-{n}", "receipts": [pdf(f"{i}.pdf") for i in range(n)],
+        })
+
+    def test_page_renders_uploader(self):
+        r = self.client.get("/expenses/")
+        self.assertContains(r, 'class="gw-uploader"')
+        self.assertContains(r, 'data-required="1"')
+
+    def test_multiple_files_saved_and_limit_enforced(self):
+        self.post(5)
+        self.assertEqual(ExpenseClaim.objects.get(description="claim-5").attachments.count(), 5)
+        self.post(21)
+        self.assertFalse(ExpenseClaim.objects.filter(description="claim-21").exists())
+        self.post(0)
+        self.assertFalse(ExpenseClaim.objects.filter(description="claim-0").exists())
+
+
+class ReceiptViewerTests(ReceiptUploaderTests):
+    def test_detail_page_lists_receipts_as_gallery(self):
+        self.post(3)
+        claim = ExpenseClaim.objects.get(description="claim-3")
+        r = self.client.get(f"/expenses/{claim.id}/")
+        self.assertEqual(r.status_code, 200)
+        self.assertContains(r, f'data-gw-gallery="claim-{claim.id}"', count=4)  # "View all" + 3 cards
+        self.assertContains(r, "View all (3)")
