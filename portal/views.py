@@ -28,6 +28,7 @@ from leaves.services import (
     log_leave_audit, client_ip, resubmit_leave_application,
     initial_leave_route, visible_leave_applications, can_view_leave_application,
     filter_leave_track, leave_track_counts, leave_review_options, leave_correction_options, notify_leave_review,
+    employee_leave_snapshot,
 )
 from portal.admin_views import validate_upload, can_manage_users, get_default_organization
 from expenses.services import (
@@ -1267,7 +1268,7 @@ def leave_detail_view(request, pk):
     corrections = leave_correction_options(user, app)
     context = {
         "active_nav": "leaves",
-        "snapshot": _employee_leave_snapshot(app) if app.employee_id != user.id else None,
+        "snapshot": employee_leave_snapshot(app) if app.employee_id != user.id else None,
         "app": app,
         "approval_history": approval_history,
         "progress": _leave_progress(app, approval_history),
@@ -1323,40 +1324,6 @@ def _handle_leave_correction(request, app, action):
                                       f"{app.end_date:%d %b %Y}, {fmt_days(app.number_of_days)} day(s).{extra}")
     except ValidationError as e:
         messages.error(request, " ".join(e.messages))
-
-
-def _employee_leave_snapshot(app):
-    """
-    What a reviewer needs next to the decision: the employee's balances (this leave type first,
-    with the balance left after this request) and their three most recent approved leaves.
-    """
-    balances = get_employee_leave_balances(app.employee)
-    pending_statuses = (
-        LeaveApplicationStatus.PENDING_LEAD_RECOMMENDATION,
-        LeaveApplicationStatus.PENDING_HR_VERIFICATION,
-        LeaveApplicationStatus.PENDING_DIRECTOR_APPROVAL,
-    )
-    current = next((b for b in balances if b["leave_type"].id == app.leave_type_id), None)
-    if current:
-        this_pending = app.status in pending_statuses
-        # Balance once this request is deducted (it is only deducted on Director approval).
-        current["after_this"] = current["available_balance"] - (app.number_of_days if this_pending else 0)
-        current["other_pending"] = current["pending_days"] - (app.number_of_days if this_pending else 0)
-        current["is_short"] = this_pending and current["after_this"] < 0
-    others = [b for b in balances if b["leave_type"].id != app.leave_type_id
-              and (b["available_balance"] or b["pending_days"] or b["taken_days"])]
-    recent = (LeaveApplication.objects
-              .filter(employee=app.employee, status=LeaveApplicationStatus.APPROVED)
-              .exclude(pk=app.pk)
-              .select_related("leave_type")
-              .order_by("-start_date", "-id")[:3])
-    today = date.today()
-    recent = list(recent)
-    for r in recent:
-        d = (today - r.end_date).days
-        r.ago_label = ("Upcoming" if d < 0 else "Today" if d == 0 else f"{d}d ago" if d < 31
-                       else f"{d // 30} mo ago" if d < 365 else f"{d // 365} yr ago")
-    return {"current": current, "others": others, "recent": recent}
 
 
 LEAVE_PROGRESS_STAGES = [

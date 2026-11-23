@@ -918,3 +918,76 @@ def run_yearly_leave_reset(year, actor=None):
                 results["granted" if run else "skipped"] += 1
 
     return results
+
+
+def employee_leave_snapshot(app):
+    """
+    What a reviewer needs next to the decision: the employee's balances (this leave type first,
+    with the balance left after this request) and their three most recent approved leaves.
+    """
+    balances = get_employee_leave_balances(app.employee)
+    pending_statuses = (
+        LeaveApplicationStatus.PENDING_LEAD_RECOMMENDATION,
+        LeaveApplicationStatus.PENDING_HR_VERIFICATION,
+        LeaveApplicationStatus.PENDING_DIRECTOR_APPROVAL,
+    )
+    current = next((b for b in balances if b["leave_type"].id == app.leave_type_id), None)
+    if current:
+        this_pending = app.status in pending_statuses
+        # Balance once this request is deducted (it is only deducted on Director approval).
+        current["after_this"] = current["available_balance"] - (app.number_of_days if this_pending else 0)
+        current["other_pending"] = current["pending_days"] - (app.number_of_days if this_pending else 0)
+        current["is_short"] = this_pending and current["after_this"] < 0
+    others = [b for b in balances if b["leave_type"].id != app.leave_type_id
+              and (b["available_balance"] or b["pending_days"] or b["taken_days"])]
+    recent = (LeaveApplication.objects
+              .filter(employee=app.employee, status=LeaveApplicationStatus.APPROVED)
+              .exclude(pk=app.pk)
+              .select_related("leave_type")
+              .order_by("-start_date", "-id")[:3])
+    today = date.today()
+    recent = list(recent)
+    for r in recent:
+        d = (today - r.end_date).days
+        r.ago_label = ("Upcoming" if d < 0 else "Today" if d == 0 else f"{d}d ago" if d < 31
+                       else f"{d // 30} mo ago" if d < 365 else f"{d // 365} yr ago")
+    return {"current": current, "others": others, "recent": recent}
+
+
+def employee_leave_snapshot_data(app):
+    """employee_leave_snapshot() as plain JSON for the API (mobile reviewers)."""
+    snap = employee_leave_snapshot(app)
+
+    def lt(t):
+        return {"id": t.id, "name": t.name, "code": t.code}
+
+    def num(v):
+        return float(v or 0)
+
+    c = snap["current"]
+    current = None
+    if c:
+        current = {
+            "leave_type": lt(c["leave_type"]),
+            "available_balance": num(c["available_balance"]),
+            "this_request": num(app.number_of_days),
+            "other_pending": num(c["other_pending"]),
+            "after_this": num(c["after_this"]),
+            "taken_days": num(c["taken_days"]),
+            "earned_days": num(c["earned_days"]),
+            "is_short": bool(c["is_short"]),
+        }
+    return {
+        "current": current,
+        "others": [
+            {"leave_type": lt(b["leave_type"]), "available_balance": num(b["available_balance"]),
+             "pending_days": num(b["pending_days"]), "taken_days": num(b["taken_days"])}
+            for b in snap["others"]
+        ],
+        "recent": [
+            {"id": r.id, "application_number": r.application_number, "leave_type": lt(r.leave_type),
+             "start_date": r.start_date.isoformat(), "end_date": r.end_date.isoformat(),
+             "is_half_day": r.is_half_day, "number_of_days": num(r.number_of_days), "ago_label": r.ago_label}
+            for r in snap["recent"]
+        ],
+    }

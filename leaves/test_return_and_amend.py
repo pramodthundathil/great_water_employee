@@ -86,6 +86,19 @@ class ReturnAndAmendTests(TestCase):
         hist = self.api.get(f"/api/v1/leaves/applications/{app.pk}/").data["approval_history"]
         self.assertEqual(hist[-1]["returned_to"], "HR_COORDINATOR")
 
+    def test_api_snapshot_for_reviewers_only(self):
+        app = self._apply(self.emp)
+        self.api.force_authenticate(self.lead)
+        snap = self.api.get(f"/api/v1/leaves/applications/{app.pk}/").data["snapshot"]
+        self.assertIsNotNone(snap)
+        self.assertEqual(snap["current"]["leave_type"]["id"], app.leave_type_id)
+        self.assertEqual(snap["current"]["this_request"], float(app.number_of_days))
+        self.assertEqual(snap["current"]["after_this"],
+                         snap["current"]["available_balance"] - float(app.number_of_days))
+        self.assertIsInstance(snap["recent"], list)
+        self.api.force_authenticate(self.emp)
+        self.assertIsNone(self.api.get(f"/api/v1/leaves/applications/{app.pk}/").data["snapshot"])
+
     # ------------------------------------------------------------------ amend
     def test_lead_changes_type_and_dates(self):
         sl = LeaveType.objects.create(organization=self.org, code="SL", name="Sick", is_paid=True)

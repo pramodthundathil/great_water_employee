@@ -136,11 +136,20 @@ class LeaveApplicationDetailSerializer(serializers.ModelSerializer):
             "requested_start_date", "requested_end_date", "requested_number_of_days",
             "is_partially_approved", "is_reduced", "resubmission_count", "can_resubmit",
             "starts_at_stage", "skipped_stages", "route_note", "current_stage",
-            "review",
+            "review", "snapshot",
             "submitted_at", "updated_at"
         ]
 
     review = serializers.SerializerMethodField()
+    snapshot = serializers.SerializerMethodField()
+
+    def get_snapshot(self, obj):
+        """Employee's balances and recent leave for reviewers (null for the employee themselves), as on the web."""
+        from leaves.services import employee_leave_snapshot_data
+        request = self.context.get("request")
+        if not request or not request.user.is_authenticated or obj.employee_id == request.user.id:
+            return None
+        return employee_leave_snapshot_data(obj)
 
     def get_review(self, obj):
         """Decision the signed-in user can take on this application now (null if none)."""
