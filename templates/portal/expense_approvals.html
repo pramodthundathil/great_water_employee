@@ -166,7 +166,7 @@
                                 </button>
                                 <ul class="dropdown-menu dropdown-menu-end shadow-sm border-0 p-2" style="border-radius: 12px; min-width: 220px;">
                                     {% for att in c.attachments.all %}
-                                    <li><a class="dropdown-item rounded small text-truncate" href="{{ att.file.url }}" target="_blank" rel="noopener"><i class="bi bi-file-earmark-text me-2"></i>{{ att.original_filename|default:"Receipt" }}</a></li>
+                                    <li><a class="dropdown-item rounded small text-truncate" href="{{ att.file.url }}" data-gw-filename="{{ att.original_filename|default:'Receipt' }}"><i class="bi bi-file-earmark-text me-2"></i>{{ att.original_filename|default:"Receipt" }}</a></li>
                                     {% endfor %}
                                 </ul>
                             </div>

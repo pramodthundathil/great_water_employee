@@ -141,9 +141,14 @@
         <div class="gw-card-body">
             <p class="ld-reason">{{ app.reason }}</p>
             {% if app.attachment %}
-            <a href="{{ app.attachment.url }}" target="_blank" rel="noopener" class="ld-attachment">
-                <i class="bi bi-paperclip"></i><span>Supporting attachment</span><i class="bi bi-box-arrow-up-right ms-auto"></i>
-            </a>
+            <div class="d-flex align-items-stretch gap-2">
+                <a href="{{ app.attachment.url }}" class="ld-attachment flex-grow-1">
+                    <i class="bi bi-paperclip"></i><span>Supporting attachment</span><i class="bi bi-eye ms-auto"></i>
+                </a>
+                <a href="{{ app.attachment.url }}" download class="ld-attachment" title="Download attachment" aria-label="Download attachment">
+                    <i class="bi bi-download"></i>
+                </a>
+            </div>
             {% endif %}
         </div>
     </section>
@@ -559,7 +564,7 @@
                             <label class="form-label small">Supporting Attachment</label>
                             {% if app.attachment %}
                             <div class="small mb-2">
-                                Current: <a href="{{ app.attachment.url }}" target="_blank">view file</a>
+                                Current: <a href="{{ app.attachment.url }}">view file</a> &middot; <a href="{{ app.attachment.url }}" download>download</a>
                                 <div class="form-check form-check-inline ms-2">
                                     <input class="form-check-input" type="checkbox" name="remove_attachment" value="1" id="rsRemoveAtt">
                                     <label class="form-check-label" for="rsRemoveAtt">Remove</label>

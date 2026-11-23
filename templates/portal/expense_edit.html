@@ -61,7 +61,8 @@
             <div class="gw-card-body">
                 {% for a in attachments %}
                 <div class="d-flex align-items-center justify-content-between border-bottom py-2">
-                    <a href="{{ a.file.url }}" target="_blank" class="small text-truncate me-2">{{ a.original_filename }}</a>
+                    <a href="{{ a.file.url }}" data-gw-filename="{{ a.original_filename }}" class="small text-truncate me-2">{{ a.original_filename }}</a>
+                    <a href="{{ a.file.url }}" download="{{ a.original_filename }}" class="btn btn-sm btn-link p-0 me-2" title="Download" aria-label="Download {{ a.original_filename }}"><i class="bi bi-download"></i></a>
                     <form method="post" onsubmit="return confirm('Remove this file?');">
                         {% csrf_token %}
                         <input type="hidden" name="action" value="delete_attachment">

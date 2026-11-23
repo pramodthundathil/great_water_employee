@@ -101,9 +101,14 @@
                                     <small class="text-muted">{{ att.uploaded_at|date:"M d, Y" }} &bull; {{ att.file_size|filesizeformat }}</small>
                                 </div>
                             </div>
-                            <a href="{{ att.file.url }}" target="_blank" class="btn btn-sm btn-white border shadow-sm ms-2" title="View or Download">
-                                <i class="bi bi-box-arrow-up-right"></i>
-                            </a>
+                            <div class="d-flex gap-2 ms-2 flex-shrink-0">
+                                <a href="{{ att.file.url }}" data-gw-filename="{{ att.original_filename }}" class="btn btn-sm btn-white border shadow-sm" title="View">
+                                    <i class="bi bi-eye"></i>
+                                </a>
+                                <a href="{{ att.file.url }}" download="{{ att.original_filename }}" class="btn btn-sm btn-white border shadow-sm" title="Download">
+                                    <i class="bi bi-download"></i>
+                                </a>
+                            </div>
                         </div>
                     </div>
                     {% empty %}

@@ -67,6 +67,9 @@ MIDDLEWARE = [
     "accounts.middleware.InactivityLogoutMiddleware",
 ]
 
+# Allow the portal to show uploaded PDFs in its own in-page viewer (iframe); other sites still cannot frame it.
+X_FRAME_OPTIONS = "SAMEORIGIN"
+
 ROOT_URLCONF = "config.urls"
 
 TEMPLATES = [
