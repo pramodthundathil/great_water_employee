@@ -1838,6 +1838,9 @@ def leave_ledger_view(request):
         return redirect(f"{request.path}?emp_id={target_emp.id}")
 
     balances = get_employee_leave_balances(target_emp)
+    for b in balances:
+        # A negative official balance is leave taken beyond entitlement: Loss of Pay.
+        b["lop_days"] = -b["available_balance"] if b["available_balance"] < 0 else 0
     entries = LeaveLedgerEntry.objects.filter(employee=target_emp).select_related("leave_type", "created_by").order_by("-created_at")
     leave_types = LeaveType.objects.filter(is_active=True)
 

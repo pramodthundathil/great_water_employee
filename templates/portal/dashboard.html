@@ -722,7 +722,8 @@
                             {% endif %}
                         </td>
                         <td class="text-end text-nowrap">
-                            <span class="fs-6 fw-extrabold text-success">{{ b.available_balance|floatformat:1 }} days</span>
+                            <span class="fs-6 fw-extrabold {% if b.available_balance < 0 %}text-danger{% else %}text-success{% endif %}">{{ b.available_balance|floatformat:1 }} days</span>
+                            {% if b.available_balance < 0 %}<div class="small text-danger fw-semibold">Loss of Pay</div>{% endif %}
                         </td>
                     </tr>
                     {% empty %}

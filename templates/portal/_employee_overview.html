@@ -82,7 +82,7 @@
         <div class="gw-eo-balance">
             <div class="gw-eo-balance-top">
                 <span class="gw-eo-balance-name">{{ b.leave_type.name }} <small>{{ b.leave_type.code }}{% if not b.leave_type.is_paid %} · unpaid{% endif %}</small></span>
-                <span class="gw-eo-balance-val"><strong>{{ b.available_balance|floatformat:"-1" }}</strong> left</span>
+                <span class="gw-eo-balance-val{% if b.available_balance < 0 %} text-danger{% endif %}"><strong{% if b.available_balance < 0 %} class="text-danger"{% endif %}>{{ b.available_balance|floatformat:"-1" }}</strong> {% if b.available_balance < 0 %}· Loss of Pay{% else %}left{% endif %}</span>
             </div>
             <div class="gw-eo-bar" role="img" aria-label="{{ b.leave_type.name }}: {{ b.taken_days|floatformat:'-1' }} taken, {{ b.pending_days|floatformat:'-1' }} pending, {{ b.available_balance|floatformat:'-1' }} available">
                 <span class="is-taken" style="width: {{ b.taken_pct|floatformat:2 }}%"></span>

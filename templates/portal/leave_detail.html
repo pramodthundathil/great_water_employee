@@ -277,7 +277,7 @@
                 <div class="ls-stats">
                     <div class="ls-stat">
                         <span class="ls-stat-label">Current balance</span>
-                        <span class="ls-stat-value">{{ c.available_balance|floatformat:"-1" }}<small> days</small></span>
+                        <span class="ls-stat-value{% if c.available_balance < 0 %} text-danger{% endif %}">{{ c.available_balance|floatformat:"-1" }}<small> days</small></span>
                     </div>
                     <div class="ls-stat">
                         <span class="ls-stat-label">This request</span>
@@ -289,11 +289,12 @@
                     </div>
                     <div class="ls-stat is-result">
                         <span class="ls-stat-label">{% if app.status == 'APPROVED' %}Balance now{% else %}After this leave{% endif %}</span>
-                        <span class="ls-stat-value">{{ c.after_this|floatformat:"-1" }}<small> days</small></span>
+                        <span class="ls-stat-value{% if c.after_this < 0 %} text-danger{% endif %}">{{ c.after_this|floatformat:"-1" }}<small> days</small></span>
+                        {% if c.after_this < 0 %}<span class="small text-danger fw-semibold">Loss of Pay</span>{% endif %}
                     </div>
                 </div>
                 {% if c.is_short %}
-                <div class="ls-warning"><i class="bi bi-exclamation-triangle-fill"></i>Approving this request takes the {{ c.leave_type.name }} balance below zero.</div>
+                <div class="ls-warning"><i class="bi bi-exclamation-triangle-fill"></i>Approving this request takes the {{ c.leave_type.name }} balance below zero — the excess will be Loss of Pay.</div>
                 {% endif %}
                 <div class="ls-foot">Taken so far: <strong>{{ c.taken_days|floatformat:"-1" }}</strong> days · Credited: <strong>{{ c.earned_days|floatformat:"-1" }}</strong> days</div>
             </div>
@@ -305,7 +306,7 @@
                 {% for b in snapshot.others %}
                 <div class="ls-other" title="{{ b.pending_days|floatformat:'-1' }} day(s) pending · {{ b.taken_days|floatformat:'-1' }} taken">
                     <span>{{ b.leave_type.name }}</span>
-                    <strong>{{ b.available_balance|floatformat:"-1" }}</strong>
+                    <strong{% if b.available_balance < 0 %} class="text-danger"{% endif %}>{{ b.available_balance|floatformat:"-1" }}</strong>
                 </div>
                 {% endfor %}
             </div>
