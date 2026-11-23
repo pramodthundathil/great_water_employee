@@ -1,0 +1,57 @@
+{% comment %}
+Branch currency configuration. Params: prefix ("new" / "edit"), all_currencies, optional selected (code).
+Posts: currency_code, allowed_currencies (repeated; none checked = any currency allowed).
+{% endcomment %}
+<div class="border rounded-3 p-3 bg-body-tertiary gw-branch-currency" data-prefix="{{ prefix }}">
+    <div class="row g-3">
+        <div class="col-sm-6">
+            <label class="form-label small fw-semibold mb-1" for="{{ prefix }}BranchCurrency">
+                Reimbursement currency <span class="text-danger" aria-hidden="true">*</span>
+            </label>
+            <select id="{{ prefix }}BranchCurrency" name="currency_code" class="form-select" required>
+                {% for cur in all_currencies %}
+                <option value="{{ cur.code }}" {% if cur.code == selected %}selected{% endif %}>{{ cur.code }} — {{ cur.name }}</option>
+                {% endfor %}
+            </select>
+            <div class="form-text">Claims from this office are approved and paid in this currency (e.g. AED for Dubai, INR for Kochi).</div>
+        </div>
+        <div class="col-sm-6">
+            <label class="form-label small fw-semibold mb-1" for="{{ prefix }}CurrencyFilter">Currencies employees can claim in</label>
+            <input id="{{ prefix }}CurrencyFilter" type="search" class="form-control form-control-sm mb-1" placeholder="Filter currencies…" autocomplete="off">
+            <div class="border rounded bg-body px-2 py-1" style="max-height: 9.5rem; overflow-y: auto;" role="group" aria-label="Accepted expense currencies">
+                {% for cur in all_currencies %}
+                <label class="d-flex align-items-center gap-2 small py-1 gw-cur-opt" data-search="{{ cur.code|lower }} {{ cur.name|lower }}">
+                    <input type="checkbox" class="form-check-input m-0" name="allowed_currencies" value="{{ cur.code }}">
+                    <span><strong>{{ cur.code }}</strong> {{ cur.name }}</span>
+                </label>
+                {% endfor %}
+            </div>
+            <div class="form-text">Leave all unticked to accept <strong>any currency</strong>. The reimbursement currency is always accepted.</div>
+        </div>
+    </div>
+</div>
+<script>
+(function () {
+    const box = document.currentScript.previousElementSibling;
+    const filter = box.querySelector('input[type=search]');
+    filter.addEventListener('input', () => {
+        const q = filter.value.trim().toLowerCase();
+        box.querySelectorAll('.gw-cur-opt').forEach(l => {
+            const checked = l.querySelector('input').checked;
+            l.classList.toggle('d-none', !!q && !checked && !l.dataset.search.includes(q));
+        });
+    });
+    // Keep ticked currencies at the top so the current configuration is visible at a glance.
+    box.gwSetCurrencies = function (base, allowed) {
+        const sel = box.querySelector('select[name=currency_code]');
+        if (base) sel.value = base;
+        const list = (allowed || '').split(',').map(s => s.trim()).filter(Boolean);
+        const wrap = box.querySelector('[role=group]');
+        const opts = Array.from(wrap.querySelectorAll('.gw-cur-opt'));
+        opts.forEach(l => { l.querySelector('input').checked = list.includes(l.querySelector('input').value); });
+        opts.filter(l => l.querySelector('input').checked).reverse().forEach(l => wrap.prepend(l));
+        filter.value = '';
+        opts.forEach(l => l.classList.remove('d-none'));
+    };
+})();
+</script>

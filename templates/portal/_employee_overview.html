@@ -50,19 +50,19 @@
         </div>
         <div class="gw-eo-kpi">
             <div class="gw-eo-kpi-icon is-info"><i class="bi bi-receipt"></i></div>
-            <div class="gw-eo-kpi-val">${{ claimed_year|floatformat:2 }}</div>
+            <div class="gw-eo-kpi-val">{{ claimed_year|floatformat:2 }}</div>
             <div class="gw-eo-kpi-label">Expenses claimed</div>
             <div class="gw-eo-kpi-hint">{{ claims_year_count }} claim(s) in {{ today.year }}</div>
         </div>
         <div class="gw-eo-kpi">
             <div class="gw-eo-kpi-icon is-paid"><i class="bi bi-cash-coin"></i></div>
-            <div class="gw-eo-kpi-val">${{ reimbursed_year|floatformat:2 }}</div>
+            <div class="gw-eo-kpi-val">{{ reimbursed_year|floatformat:2 }}</div>
             <div class="gw-eo-kpi-label">Reimbursed</div>
             <div class="gw-eo-kpi-hint">Paid out in {{ today.year }}</div>
         </div>
         <div class="gw-eo-kpi">
             <div class="gw-eo-kpi-icon is-warning"><i class="bi bi-clock-history"></i></div>
-            <div class="gw-eo-kpi-val">${{ pending_claims_amount|floatformat:2 }}</div>
+            <div class="gw-eo-kpi-val">{{ pending_claims_amount|floatformat:2 }}</div>
             <div class="gw-eo-kpi-label">Pending claims</div>
             <div class="gw-eo-kpi-hint">{{ pending_claims_count }} in review / awaiting payment</div>
         </div>
@@ -107,7 +107,7 @@
             <div class="gw-eo-statusrow">
                 <span class="status-badge {{ r.css }}">{{ r.label }}</span>
                 <span class="gw-eo-statusrow-count">{{ r.count }} claim{{ r.count|pluralize }}</span>
-                <strong>${{ r.amount|floatformat:2 }}</strong>
+                <strong>{{ r.currency_code }} {{ r.amount|floatformat:2 }}</strong>
             </div>
             {% endfor %}
         </div>
@@ -137,7 +137,7 @@
         {% for c in recent_claims %}
         <a class="gw-eo-item" href="{% url 'portal_expense_detail' c.pk %}">
             <div>
-                <div class="gw-eo-item-title">{{ c.category.name }} · ${{ c.amount|floatformat:2 }}</div>
+                <div class="gw-eo-item-title">{{ c.category.name }} · {{ c.currency_code }} {{ c.amount|floatformat:2 }}</div>
                 <div class="gw-eo-item-sub">{{ c.claim_number }} · {{ c.expense_date|date:"d M Y" }}</div>
             </div>
             <span class="status-badge {% if 'REJECTED' in c.status %}badge-rejected{% elif c.status == 'PAID' %}badge-paid{% elif 'APPROVED' in c.status %}badge-approved{% elif c.status == 'WITHDRAWN' %}badge-draft{% else %}badge-pending{% endif %}">{{ c.get_status_display }}</span>

@@ -13,6 +13,12 @@ from decimal import Decimal
 
 from accounts.models import User, RoleChoices, EmployeeProfile, UserBranchScope
 from organization.models import Branch, Department
+from organization.currencies import (
+    all_currencies_json, currency_json, default_currency_for_country, normalize_code, parse_code_list,
+)
+from expenses.items import (
+    ItemError, clean_items, expense_currency_context, raw_items_from_post, replace_items, summary_header,
+)
 from expenses.models import (
     ExpenseClaim, ExpenseCategory, ExpenseAttachment,
     ExpenseClaimStatus, PaymentMode, ReimbursementPayment, review_message
@@ -356,27 +362,22 @@ def expenses_list_view(request):
                 messages.error(request, "Select at least one claim.")
             return redirect(back)
 
-        # Create + submit a new expense claim (claims are always submitted; no drafts)
-        category_id = request.POST.get("category")
-        amount = request.POST.get("amount")
-        expense_date = request.POST.get("expense_date")
+        # Create + submit a new expense claim (claims are always submitted; no drafts).
+        # A claim holds one or more item rows, each in any currency with a manual exchange rate
+        # to the branch's reimbursement currency.
         description = request.POST.get("description", "").strip()
         project_ref = request.POST.get("project_reference", "").strip()
-
-        if not category_id or not amount or not expense_date or not description:
-            messages.error(request, "Category, amount, expense date and description are required.")
+        branch = user.primary_branch or accessible_branches.first()
+        if not branch:
+            messages.error(request, "Your account has no branch assigned. Contact the Admin Manager.")
             return redirect("portal_expenses")
-
-        category = get_object_or_404(ExpenseCategory, id=category_id, is_active=True)
         try:
-            amount_dec = Decimal(str(amount))
-        except Exception:
-            amount_dec = Decimal("0")
-        if amount_dec <= 0:
-            messages.error(request, "Amount must be greater than zero.")
+            items = clean_items(raw_items_from_post(request.POST), branch)
+        except ItemError as e:
+            messages.error(request, str(e))
             return redirect("portal_expenses")
-        if expense_date > date.today().isoformat():
-            messages.error(request, "Expense date cannot be in the future.")
+        if not description:
+            messages.error(request, "Describe the business purpose of the claim.")
             return redirect("portal_expenses")
         files = request.FILES.getlist("receipts")
         if not files:
@@ -387,22 +388,22 @@ def expenses_list_view(request):
             if err:
                 messages.error(request, err)
                 return redirect("portal_expenses")
-        if not (user.primary_branch or accessible_branches.exists()):
-            messages.error(request, "Your account has no branch assigned. Contact the Admin Manager.")
-            return redirect("portal_expenses")
 
         try:
             with transaction.atomic():
+                header = summary_header(items)
                 claim = ExpenseClaim.objects.create(
                     employee=user,
-                    branch=user.primary_branch or accessible_branches.first(),
-                    category=category,
-                    amount=amount_dec,
-                    expense_date=expense_date,
+                    branch=branch,
+                    currency_code=branch.currency_code,
+                    category=header["category"],
+                    amount=header["amount"],
+                    expense_date=header["expense_date"],
                     description=description,
                     project_reference=project_ref,
                     status=ExpenseClaimStatus.DRAFT,
                 )
+                replace_items(claim, items)
                 for f in files:
                     ExpenseAttachment.objects.create(
                         claim=claim, file=f, original_filename=f.name,
@@ -521,6 +522,7 @@ def expenses_list_view(request):
         "is_filtered": bool(q or status_filter or category_filter),
         "categories": ExpenseCategory.objects.filter(is_active=True),
         "today": date.today(),
+        **expense_currency_context(user.primary_branch or accessible_branches.first()),
     }
     return render(request, "portal/expenses_list.html", context)
 
@@ -568,6 +570,7 @@ def expense_detail_view(request, pk):
         "active_nav": "expenses",
         "claim": claim,
         "attachments": claim.attachments.all(),
+        "items": claim.items.select_related("category"),
         "approval_history": claim.approval_history.all().order_by("created_at"),
         "can_edit": claim.employee == user and claim.status in [
             ExpenseClaimStatus.DRAFT, ExpenseClaimStatus.UNDER_ADMIN_REVIEW,
@@ -1890,6 +1893,9 @@ def _extract_branch_fields(post_data):
         "country": post_data.get("country", "").strip(),
         "phone": post_data.get("phone", "").strip(),
         "address": post_data.get("address", "").strip(),
+        "currency_code": normalize_code(post_data.get("currency_code")) or default_currency_for_country(
+            post_data.get("country", ""), city=post_data.get("city", "")),
+        "allowed_currencies": ",".join(parse_code_list(post_data.getlist("allowed_currencies"))),
         "is_active": post_data.get("is_active") == "1",
     }
 
@@ -2064,6 +2070,7 @@ def branches_view(request):
         "active_branches_count": active_branches_count,
         "inactive_branches_count": inactive_branches_count,
         "total_staff_count": total_staff_count,
+        "all_currencies": all_currencies_json(),
         "departments": Department.objects.annotate(
             employee_count=Count("employees", filter=Q(employees__user__is_active=True), distinct=True),
             total_employee_count=Count("employees", distinct=True),
@@ -2138,6 +2145,8 @@ def branch_detail_view(request, pk):
         "current_year": current_year,
         "can_delete": len(deps) == 0,
         "delete_block_reasons": ", ".join(deps),
+        "all_currencies": all_currencies_json(),
+        "branch_currency": currency_json(branch.currency_code),
     }
     return render(request, "portal/branch_detail.html", context)
 

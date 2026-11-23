@@ -1,0 +1,137 @@
+{% comment %}
+Multi-row, multi-currency expense item editor.
+Context: categories, claim_currency ({code,name,symbol}), claim_currencies (list), today, optional items_initial (list).
+Posts repeated fields: item_category, item_date, item_description, item_currency, item_amount, item_rate.
+{% endcomment %}
+<div class="gw-items-editor" data-base="{{ claim_currency.code|default:'' }}" data-today="{{ today|date:'Y-m-d' }}">
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
+        <label class="form-label small fw-bold m-0">Expense items <span class="text-danger">*</span></label>
+        {% if claim_currency %}
+        <span class="small text-muted">
+            <i class="bi bi-cash-coin me-1"></i>Reimbursed in
+            <strong>{{ claim_currency.code }}</strong> ({{ claim_currency.name }})
+        </span>
+        {% endif %}
+    </div>
+    <p class="small text-muted mb-2">
+        Add one row per bill. Pick the currency you paid in; if it differs from
+        {{ claim_currency.code|default:"the branch currency" }}, enter the exchange rate
+        (1 unit of that currency = ? {{ claim_currency.code|default:"" }}). The amount is converted automatically.
+    </p>
+
+    <div class="gw-items-rows d-flex flex-column gap-2"></div>
+
+    <template class="gw-item-template">
+        <div class="gw-item-row border rounded-3 p-3 bg-body-tertiary position-relative">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <span class="small fw-bold text-muted gw-item-label">Item 1</span>
+                <button type="button" class="btn btn-sm btn-link text-danger p-0" data-remove-item aria-label="Remove item">
+                    <i class="bi bi-trash3"></i> Remove
+                </button>
+            </div>
+            <div class="row g-2">
+                <div class="col-md-4">
+                    <label class="form-label small mb-1">Category <span class="text-danger">*</span></label>
+                    <select name="item_category" class="form-select form-select-sm" required>
+                        <option value="">Select…</option>
+                        {% for cat in categories %}<option value="{{ cat.id }}">{{ cat.name }}</option>{% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small mb-1">Date <span class="text-danger">*</span></label>
+                    <input type="date" name="item_date" class="form-control form-control-sm" required max="{{ today|date:'Y-m-d' }}">
+                </div>
+                <div class="col-md-5">
+                    <label class="form-label small mb-1">Description</label>
+                    <input type="text" name="item_description" class="form-control form-control-sm" maxlength="255" placeholder="e.g. Taxi to client site">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small mb-1">Currency paid <span class="text-danger">*</span></label>
+                    <select name="item_currency" class="form-select form-select-sm" required>
+                        {% for cur in claim_currencies %}<option value="{{ cur.code }}">{{ cur.code }} — {{ cur.name }}</option>{% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small mb-1">Amount <span class="text-danger">*</span></label>
+                    <input type="number" name="item_amount" class="form-control form-control-sm" step="0.01" min="0.01" placeholder="0.00" required>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small mb-1 gw-rate-label">Exchange rate</label>
+                    <input type="number" name="item_rate" class="form-control form-control-sm" step="0.000001" min="0.000001" placeholder="Rate">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small mb-1">In {{ claim_currency.code|default:"claim currency" }}</label>
+                    <div class="form-control form-control-sm bg-body fw-bold gw-item-converted" aria-live="polite">0.00</div>
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mt-2">
+        <button type="button" class="btn btn-sm btn-outline-primary" data-add-item><i class="bi bi-plus-lg me-1"></i>Add item</button>
+        <div class="fs-6">Claim total: <strong>{{ claim_currency.code|default:"" }} <span data-items-total>0.00</span></strong></div>
+    </div>
+    {{ items_initial|default_if_none:""|json_script:"gwItemsInitial" }}
+</div>
+
+<script>
+(function () {
+    const root = document.currentScript.previousElementSibling;
+    if (!root || !root.classList.contains('gw-items-editor')) return;
+    const base = root.dataset.base;
+    const rows = root.querySelector('.gw-items-rows');
+    const tpl = root.querySelector('.gw-item-template');
+    const totalEl = root.querySelector('[data-items-total]');
+    const fmt = v => (Math.round(v * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+    function refresh() {
+        let total = 0;
+        rows.querySelectorAll('.gw-item-row').forEach((row, i) => {
+            row.querySelector('.gw-item-label').textContent = 'Item ' + (i + 1);
+            const cur = row.querySelector('[name=item_currency]').value;
+            const rate = row.querySelector('[name=item_rate]');
+            const same = !base || cur === base;
+            rate.readOnly = same;
+            rate.required = !same;
+            if (same) rate.value = '1';
+            else if (rate.value === '1' && rate.dataset.userSet !== '1') rate.value = '';
+            row.querySelector('.gw-rate-label').textContent = same ? 'Exchange rate' : ('1 ' + cur + ' = ? ' + base);
+            const amt = parseFloat(row.querySelector('[name=item_amount]').value) || 0;
+            const r = parseFloat(rate.value) || 0;
+            const conv = Math.round(amt * r * 100) / 100;
+            row.querySelector('.gw-item-converted').textContent = fmt(conv);
+            total += conv;
+        });
+        rows.querySelectorAll('[data-remove-item]').forEach(b => { b.hidden = rows.children.length < 2; });
+        totalEl.textContent = fmt(total);
+    }
+
+    function addRow(data) {
+        const node = tpl.content.firstElementChild.cloneNode(true);
+        const set = (name, v) => { if (v !== undefined && v !== null && v !== '') node.querySelector('[name=' + name + ']').value = v; };
+        node.querySelector('[name=item_date]').value = root.dataset.today;
+        node.querySelector('[name=item_currency]').value = base || node.querySelector('[name=item_currency]').value;
+        if (data) {
+            set('item_category', data.category); set('item_date', data.expense_date);
+            set('item_description', data.description); set('item_currency', data.currency);
+            set('item_amount', data.amount); set('item_rate', data.exchange_rate);
+            if (data.exchange_rate && String(data.exchange_rate) !== '1') node.querySelector('[name=item_rate]').dataset.userSet = '1';
+        }
+        node.addEventListener('input', e => { if (e.target.name === 'item_rate') e.target.dataset.userSet = '1'; refresh(); });
+        node.addEventListener('change', refresh);
+        node.querySelector('[data-remove-item]').addEventListener('click', () => { node.remove(); refresh(); });
+        rows.appendChild(node);
+        refresh();
+        return node;
+    }
+
+    root.querySelector('[data-add-item]').addEventListener('click', () => {
+        const node = addRow();
+        node.querySelector('[name=item_category]').focus();
+    });
+
+    let initial = [];
+    try { initial = JSON.parse(document.getElementById('gwItemsInitial').textContent) || []; } catch (e) { initial = []; }
+    if (Array.isArray(initial) && initial.length) initial.forEach(addRow); else addRow();
+})();
+</script>

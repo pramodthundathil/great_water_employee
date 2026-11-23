@@ -3,7 +3,7 @@ from django.utils import timezone
 from django.core.exceptions import ValidationError
 import uuid
 from datetime import date
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 
 class ExpenseClaimStatus(models.TextChoices):
@@ -31,7 +31,7 @@ PAYMENT_ACTION = "PAID"
 
 def payment_trail_remarks(payment):
     """One-line summary of a disbursement for the claim's audit trail."""
-    parts = [f"Disbursed {payment.claim.amount:,.2f} via {payment.get_payment_mode_display()}"]
+    parts = [f"Disbursed {payment.claim.currency_code} {payment.claim.amount:,.2f} via {payment.get_payment_mode_display()}"]
     if payment.payment_reference:
         parts.append(f"Ref {payment.payment_reference}")
     paid_on = payment.payment_date
@@ -49,12 +49,13 @@ def payment_trail_remarks(payment):
 
 def review_message(claim, recorded):
     """Human-readable outcome of an expense review, shared by the API and the web portal."""
+    cur = claim.currency_code
     if recorded == "REJECTED":
         return f"Claim {claim.claim_number} rejected."
     if recorded == "PARTIALLY_APPROVED":
         return (f"Claim {claim.claim_number} partially approved: "
-                f"{claim.amount:,.2f} of {claim.claimed_amount:,.2f} claimed.")
-    return f"Claim {claim.claim_number} approved for {claim.amount:,.2f}."
+                f"{cur} {claim.amount:,.2f} of {cur} {claim.claimed_amount:,.2f} claimed.")
+    return f"Claim {claim.claim_number} approved for {cur} {claim.amount:,.2f}."
 
 
 class ExpenseCategory(models.Model):
@@ -96,6 +97,11 @@ class ExpenseClaim(models.Model):
         related_name="expense_claims"
     )
     expense_date = models.DateField(db_index=True)
+    currency_code = models.CharField(
+        max_length=3, blank=True,
+        help_text="Reimbursement currency (the branch currency when the claim was raised). "
+                  "All amounts on the claim are in this currency.",
+    )
     amount = models.DecimalField(
         max_digits=12, decimal_places=2,
         help_text="Current payable amount. Reduced when an approver grants only part of the claim."
@@ -134,6 +140,8 @@ class ExpenseClaim(models.Model):
             date_prefix = timezone.now().strftime("%Y%m")
             unique_part = uuid.uuid4().hex[:6].upper()
             self.claim_number = f"EXP-{date_prefix}-{unique_part}"
+        if not self.currency_code and self.branch_id:
+            self.currency_code = self.branch.currency_code
         if self.requested_amount is None and self.amount is not None:
             self.requested_amount = self.amount
         super().save(*args, **kwargs)
@@ -217,7 +225,8 @@ class ExpenseClaim(models.Model):
             raise ValidationError("Approved amount must be greater than zero. Reject the claim instead.")
         if value > self.amount:
             raise ValidationError(
-                f"Approved amount cannot exceed the amount currently under review ({self.amount:,.2f})."
+                f"Approved amount cannot exceed the amount currently under review "
+                f"({self.currency_code} {self.amount:,.2f})."
             )
         return value
 
@@ -319,6 +328,51 @@ class ExpenseClaim(models.Model):
         self.status = ExpenseClaimStatus.PAID
         self.save()
         return payment
+
+
+def _q2(value):
+    return Decimal(value).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+class ExpenseItem(models.Model):
+    """
+    One line of an expense claim. The employee records what was spent in the currency it was spent in,
+    plus a manually entered exchange rate to the claim's (branch's) reimbursement currency.
+    """
+    claim = models.ForeignKey(ExpenseClaim, on_delete=models.CASCADE, related_name="items")
+    category = models.ForeignKey(ExpenseCategory, on_delete=models.PROTECT, related_name="expense_items")
+    expense_date = models.DateField()
+    description = models.CharField(max_length=255, blank=True)
+    currency_code = models.CharField(max_length=3, help_text="Currency the expense was paid in.")
+    original_amount = models.DecimalField(max_digits=14, decimal_places=2)
+    exchange_rate = models.DecimalField(
+        max_digits=18, decimal_places=6, default=Decimal("1"),
+        help_text="Value of 1 unit of the spent currency in the claim currency.",
+    )
+    converted_amount = models.DecimalField(
+        max_digits=12, decimal_places=2, help_text="original_amount × exchange_rate, in the claim currency."
+    )
+    position = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        verbose_name = "Expense Item"
+        verbose_name_plural = "Expense Items"
+        ordering = ["position", "id"]
+
+    def __str__(self):
+        return f"{self.claim.claim_number} #{self.position + 1}: {self.currency_code} {self.original_amount}"
+
+    @staticmethod
+    def convert(original_amount, exchange_rate):
+        return _q2(Decimal(original_amount) * Decimal(exchange_rate))
+
+    @property
+    def is_foreign(self):
+        return self.currency_code != self.claim.currency_code
+
+    def save(self, *args, **kwargs):
+        self.converted_amount = self.convert(self.original_amount, self.exchange_rate)
+        super().save(*args, **kwargs)
 
 
 class ExpenseAttachment(models.Model):

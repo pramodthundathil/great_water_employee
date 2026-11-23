@@ -178,14 +178,11 @@ def expense_edit_view(request, pk):
             messages.info(request, "Attachment removed.")
             return redirect("portal_expense_edit", pk=claim.pk)
 
-        category = ExpenseCategory.objects.filter(id=request.POST.get("category"), is_active=True).first()
-        amount = _parse_decimal(request.POST.get("amount"))
-        expense_date = _parse_date(request.POST.get("expense_date"))
-        if not category or amount is None or amount <= 0 or not expense_date:
-            messages.error(request, "Category, a positive amount and the expense date are required.")
-            return redirect("portal_expense_edit", pk=claim.pk)
-        if expense_date > date.today():
-            messages.error(request, "Expense date cannot be in the future.")
+        from expenses.items import ItemError, clean_items, raw_items_from_post, replace_items
+        try:
+            items = clean_items(raw_items_from_post(request.POST), claim.branch, base=claim.currency_code)
+        except ItemError as e:
+            messages.error(request, str(e))
             return redirect("portal_expense_edit", pk=claim.pk)
 
         files = request.FILES.getlist("receipts")
@@ -195,12 +192,9 @@ def expense_edit_view(request, pk):
                 messages.error(request, err)
                 return redirect("portal_expense_edit", pk=claim.pk)
 
-        claim.category = category
-        claim.set_claimed_amount(amount)
-        claim.expense_date = expense_date
-        claim.description = request.POST.get("description", "").strip()
+        claim.description = request.POST.get("description", "").strip() or claim.description
         claim.project_reference = request.POST.get("project_reference", "").strip()
-        claim.save()
+        replace_items(claim, items)  # also saves the claim with the new total
 
         for f in files:
             ExpenseAttachment.objects.create(
@@ -225,9 +219,31 @@ def expense_edit_view(request, pk):
         "claim": claim,
         "categories": ExpenseCategory.objects.filter(is_active=True),
         "attachments": claim.attachments.all(),
+        "items": claim.items.select_related("category"),
         "today": date.today(),
+        **_edit_currency_context(claim),
     }
     return render(request, "portal/expense_edit.html", context)
+
+
+def _edit_currency_context(claim):
+    from organization.currencies import currency_json
+    from expenses.items import expense_currency_context
+    ctx = expense_currency_context(claim.branch)
+    # The claim keeps the currency it was raised in, even if the branch currency changed later.
+    ctx["claim_currency"] = currency_json(claim.currency_code)
+    ctx["items_initial"] = [
+        {"category": i.category_id, "expense_date": i.expense_date.isoformat(), "description": i.description,
+         "currency": i.currency_code, "amount": f"{i.original_amount:.2f}",
+         "exchange_rate": f"{i.exchange_rate.normalize():f}"}
+        for i in claim.items.all()
+    ]
+    codes = [c["code"] for c in ctx["claim_currencies"]]
+    for item in claim.items.all():
+        if item.currency_code not in codes:
+            ctx["claim_currencies"].append(currency_json(item.currency_code))
+            codes.append(item.currency_code)
+    return ctx
 
 
 @login_required

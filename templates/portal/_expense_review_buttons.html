@@ -4,21 +4,21 @@
     title="{% if stage == 'director' %}Final approve{% else %}Approve{% endif %} full amount"
     data-claim-id="{{ c.id }}" data-claim-number="{{ c.claim_number }}" data-employee="{{ c.employee.full_name }}"
     data-branch="{{ c.branch.name }} ({{ c.branch.code }})" data-category="{{ c.category.name }}"
-    data-amount="{{ amt }}" data-claimed="{{ claimed }}" data-stage="{{ stage }}"
+    data-amount="{{ amt }}" data-currency="{{ c.currency_code }}" data-claimed="{{ claimed }}" data-stage="{{ stage }}"
     data-detail-url="{% url 'portal_expense_detail' c.pk %}">
     <i class="bi bi-check-lg{% if not compact %} me-1{% endif %}"></i>{% if not compact %}{% if stage == "director" %}Final Approve{% else %}Approve{% endif %}{% endif %}
 </button>
 <button type="button" class="btn btn-sm btn-outline-warning text-dark{% if compact %} gw-review-btn{% else %} me-1{% endif %}" title="Approve a partial amount" data-expense-review data-decision="PARTIAL"
     data-claim-id="{{ c.id }}" data-claim-number="{{ c.claim_number }}" data-employee="{{ c.employee.full_name }}"
     data-branch="{{ c.branch.name }} ({{ c.branch.code }})" data-category="{{ c.category.name }}"
-    data-amount="{{ amt }}" data-claimed="{{ claimed }}" data-stage="{{ stage }}"
+    data-amount="{{ amt }}" data-currency="{{ c.currency_code }}" data-claimed="{{ claimed }}" data-stage="{{ stage }}"
     data-detail-url="{% url 'portal_expense_detail' c.pk %}">
     <i class="bi bi-dash-circle{% if not compact %} me-1{% endif %}"></i>{% if not compact %}Partial{% endif %}
 </button>
 <button type="button" class="btn btn-sm btn-outline-danger{% if compact %} gw-review-btn{% endif %}" title="Reject" data-expense-review data-decision="REJECTED"
     data-claim-id="{{ c.id }}" data-claim-number="{{ c.claim_number }}" data-employee="{{ c.employee.full_name }}"
     data-branch="{{ c.branch.name }} ({{ c.branch.code }})" data-category="{{ c.category.name }}"
-    data-amount="{{ amt }}" data-claimed="{{ claimed }}" data-stage="{{ stage }}"
+    data-amount="{{ amt }}" data-currency="{{ c.currency_code }}" data-claimed="{{ claimed }}" data-stage="{{ stage }}"
     data-detail-url="{% url 'portal_expense_detail' c.pk %}">
     <i class="bi bi-x-lg{% if not compact %} me-1{% endif %}"></i>{% if not compact %}Reject{% endif %}
 </button>

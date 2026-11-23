@@ -21,6 +21,7 @@ from accounts.services import (
 from expenses.models import ExpenseCategory
 from leaves.models import LeavePolicy, LeaveType
 from organization.models import Branch, Department
+from organization.currencies import default_currency_for_country, normalize_code, parse_code_list
 
 MANAGER_ROLES = [RoleChoices.DIRECTOR, RoleChoices.ADMIN_MANAGER, RoleChoices.HR_COORDINATOR]
 
@@ -285,6 +286,7 @@ def _branch_json(b, employee_count):
     return {
         "id": b.id, "code": b.code, "name": b.name, "address": b.address, "city": b.city,
         "country": b.country, "phone": b.phone, "is_active": b.is_active, "employee_count": employee_count,
+        "currency_code": b.currency_code, "allowed_currencies": b.allowed_currency_list,
     }
 
 
@@ -299,6 +301,16 @@ def _branch_fields(data, partial=False):
         fields["name"] = fields["name"][:255]
     if "is_active" in data:
         fields["is_active"] = _bool(data.get("is_active"))
+    if "currency_code" in data or not partial:
+        raw_cur = _text(data, "currency_code")
+        code = normalize_code(raw_cur) or (
+            "" if raw_cur else default_currency_for_country(fields.get("country", ""), city=fields.get("city", ""))
+        )
+        if not code:
+            return None, f"Unknown currency code '{raw_cur}'."
+        fields["currency_code"] = code
+    if "allowed_currencies" in data:
+        fields["allowed_currencies"] = ",".join(parse_code_list(data.get("allowed_currencies")))
     if ("code" in fields and not fields["code"]) or ("name" in fields and not fields["name"]):
         return None, "Branch code and name are required."
     return fields, None

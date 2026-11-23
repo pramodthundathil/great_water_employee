@@ -94,7 +94,7 @@
                     <tr data-href="{% url 'portal_expense_detail' c.pk %}" tabindex="0">
                         <td class="gw-dt-check">
                             <input type="checkbox" class="form-check-input" name="selected" value="{{ c.pk }}" form="bulkForm"
-                                   data-row-check data-label="{{ c.claim_number }} · ${{ c.amount|floatformat:2 }}"
+                                   data-row-check data-label="{{ c.claim_number }} · {{ c.currency_code }} {{ c.amount|floatformat:2 }}"
                                    data-deletable="{{ c.deletable|yesno:'1,0' }}"
                                    data-reason="{% if c.status == 'APPROVED_BY_DIRECTOR' or c.status == 'PAID' %}approved / paid{% else %}not permitted{% endif %}"
                                    aria-label="Select {{ c.claim_number }}">
@@ -117,8 +117,8 @@
                         <td><span class="gw-dt-dept">{{ c.category.name }}</span></td>
                         <td class="text-nowrap">{{ c.expense_date|date:"M d, Y" }}</td>
                         <td class="text-nowrap">
-                            <span class="fw-bold">${{ c.amount|floatformat:2 }}</span>
-                            {% if c.is_partially_approved %}<div class="gw-dt-sub text-warning-emphasis">of ${{ c.claimed_amount|floatformat:2 }}</div>{% endif %}
+                            <span class="fw-bold">{{ c.currency_code }} {{ c.amount|floatformat:2 }}</span>
+                            {% if c.is_partially_approved %}<div class="gw-dt-sub text-warning-emphasis">of {{ c.currency_code }} {{ c.claimed_amount|floatformat:2 }}</div>{% endif %}
                         </td>
                         <td class="text-center">
                             {% if c.attachment_count %}
@@ -136,7 +136,7 @@
                             <div class="gw-dt-actions">
                                 <a href="{% url 'portal_expense_detail' c.pk %}" class="btn btn-sm btn-light" title="View details"><i class="bi bi-eye"></i></a>
                                 {% if c.deletable %}
-                                <button type="button" class="btn btn-sm btn-light text-danger" title="Delete claim" data-row-delete="{{ c.pk }}" data-label="{{ c.claim_number }} · ${{ c.amount|floatformat:2 }}"><i class="bi bi-trash3"></i></button>
+                                <button type="button" class="btn btn-sm btn-light text-danger" title="Delete claim" data-row-delete="{{ c.pk }}" data-label="{{ c.claim_number }} · {{ c.currency_code }} {{ c.amount|floatformat:2 }}"><i class="bi bi-trash3"></i></button>
                                 {% endif %}
                             </div>
                         </td>
@@ -169,7 +169,7 @@
 
 <!-- Modal: New Expense Claim -->
 <div class="modal fade" id="newExpenseModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-xl">
         <div class="modal-content border-0 shadow">
             <div class="modal-header bg-light">
                 <h5 class="modal-title fw-bold"><i class="bi bi-receipt text-primary me-2"></i>Submit Business Expense Claim</h5>
@@ -184,29 +184,11 @@
                     </div>
 
                     <div class="row g-3">
-                        <div class="col-md-6">
-                            <label class="form-label small fw-bold">Expense Category <span class="text-danger">*</span></label>
-                            <select name="category" class="form-select" required>
-                                <option value="">Select category...</option>
-                                {% for cat in categories %}
-                                <option value="{{ cat.id }}">{{ cat.name }}</option>
-                                {% endfor %}
-                            </select>
-                        </div>
-                        <div class="col-md-6">
-                            <label class="form-label small fw-bold">Expense Date <span class="text-danger">*</span></label>
-                            <input type="date" name="expense_date" class="form-control" required value="{{ today|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}">
+                        <div class="col-12">
+                            {% include "portal/_expense_items_editor.html" %}
                         </div>
 
-                        <div class="col-md-6">
-                            <label class="form-label small fw-bold">Claim Amount (USD) <span class="text-danger">*</span></label>
-                            <div class="input-group">
-                                <span class="input-group-text">$</span>
-                                <input type="number" step="0.01" min="0.01" name="amount" class="form-control" placeholder="0.00" required>
-                            </div>
-                        </div>
-
-                        <div class="col-md-6">
+                        <div class="col-md-12">
                             <label class="form-label small fw-bold">Project / Department Reference</label>
                             <input type="text" name="project_reference" class="form-control" placeholder="e.g. GW-MAR-2026 or OPS-FIELD">
                         </div>
@@ -219,7 +201,7 @@
                         <div class="col-12">
                             <label class="form-label small fw-bold">Supporting Receipts / Proofs <span class="text-danger">*</span></label>
                             <input type="file" name="receipts" class="form-control" multiple accept="image/*,application/pdf" required>
-                            <small class="text-muted">Multiple files allowed (JPEG, PNG, HEIC or PDF, up to 10MB each).</small>
+                            <small class="text-muted">Select several files at once (one per bill) — JPEG, PNG, HEIC or PDF, up to 10MB each.</small>
                         </div>
 
                     </div>

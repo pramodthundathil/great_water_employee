@@ -222,7 +222,7 @@ class TemplateRenderTests(Base):
             self.assertEqual(r.status_code, 200, url)
             self.assertContains(r, 'id="expenseReviewModal"')
         r = self.client.get("/expenses/approvals/")
-        self.assertContains(r, "of $500.00 claimed")
+        self.assertContains(r, "of USD 500.00 claimed")
         self.assertContains(r, "Direct · Admin Manager")
         self.client.force_login(self.admin)
         r = self.client.get(f"/expenses/{c.id}/")

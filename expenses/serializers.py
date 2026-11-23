@@ -1,9 +1,10 @@
 from rest_framework import serializers
 from decimal import Decimal
 from expenses.models import (
-    ExpenseCategory, ExpenseClaim, ExpenseAttachment,
+    ExpenseCategory, ExpenseClaim, ExpenseAttachment, ExpenseItem,
     ExpenseApproval, ReimbursementPayment, ExpenseClaimStatus
 )
+from organization.currencies import currency_json
 from organization.models import Branch
 from accounts.models import User
 
@@ -26,6 +27,20 @@ class ExpenseAttachmentSerializer(serializers.ModelSerializer):
         if obj.file:
             return request.build_absolute_uri(obj.file.url) if request else obj.file.url
         return None
+
+
+class ExpenseItemSerializer(serializers.ModelSerializer):
+    category = serializers.SerializerMethodField()
+    currency = serializers.CharField(source="currency_code", read_only=True)
+    amount = serializers.DecimalField(source="original_amount", max_digits=14, decimal_places=2, read_only=True)
+
+    class Meta:
+        model = ExpenseItem
+        fields = ["id", "position", "category", "expense_date", "description", "currency",
+                  "amount", "exchange_rate", "converted_amount"]
+
+    def get_category(self, obj):
+        return {"id": obj.category_id, "name": obj.category.name}
 
 
 class ExpenseApprovalSerializer(serializers.ModelSerializer):
@@ -57,14 +72,15 @@ class ExpenseClaimListSerializer(serializers.ModelSerializer):
     status_display = serializers.CharField(source="get_status_display", read_only=True)
     claimed_amount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     is_partially_approved = serializers.BooleanField(read_only=True)
+    items_count = serializers.IntegerField(source="items.count", read_only=True)
 
     class Meta:
         model = ExpenseClaim
         fields = [
-            "id", "claim_number", "expense_date", "amount", "claimed_amount", "is_partially_approved",
-            "description", "project_reference", "status", "status_display", "category_name",
-            "branch_code", "employee_name", "employee_id_str", "attachments_count",
-            "submitted_at", "created_at"
+            "id", "claim_number", "expense_date", "currency_code", "amount", "claimed_amount",
+            "is_partially_approved", "description", "project_reference", "status", "status_display",
+            "category_name", "branch_code", "employee_name", "employee_id_str", "attachments_count",
+            "items_count", "submitted_at", "created_at"
         ]
 
 
@@ -73,6 +89,8 @@ class ExpenseClaimDetailSerializer(serializers.ModelSerializer):
     branch = serializers.SerializerMethodField()
     employee = serializers.SerializerMethodField()
     attachments = ExpenseAttachmentSerializer(many=True, read_only=True)
+    items = ExpenseItemSerializer(many=True, read_only=True)
+    currency = serializers.SerializerMethodField()
     approval_history = ExpenseApprovalSerializer(many=True, read_only=True)
     payment_record = ReimbursementPaymentSerializer(read_only=True)
     status_display = serializers.CharField(source="get_status_display", read_only=True)
@@ -84,15 +102,19 @@ class ExpenseClaimDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = ExpenseClaim
         fields = [
-            "id", "claim_number", "expense_date", "amount", "claimed_amount", "is_partially_approved",
-            "skips_admin_stage", "can_withdraw", "description",
+            "id", "claim_number", "expense_date", "currency_code", "currency", "amount", "claimed_amount",
+            "is_partially_approved", "skips_admin_stage", "can_withdraw", "description",
             "project_reference", "status", "status_display", "category",
-            "branch", "employee", "attachments", "approval_history",
+            "branch", "employee", "items", "attachments", "approval_history",
             "payment_record", "submitted_at", "created_at", "updated_at"
         ]
 
+    def get_currency(self, obj):
+        return currency_json(obj.currency_code)
+
     def get_branch(self, obj):
-        return {"id": obj.branch.id, "code": obj.branch.code, "name": obj.branch.name}
+        return {"id": obj.branch.id, "code": obj.branch.code, "name": obj.branch.name,
+                "currency_code": obj.branch.currency_code}
 
     def get_employee(self, obj):
         return {

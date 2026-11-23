@@ -86,7 +86,7 @@ The form posts to the expense approvals view; `next` brings the reviewer back to
     modalEl.dataset.bound = '1';
 
     const $ = (id) => document.getElementById(id);
-    const money = (n) => '$' + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const money = (n) => ((current && current.currency) ? current.currency + ' ' : '') + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     let current = null;
 
     function decision() {
@@ -143,6 +143,7 @@ The form posts to the expense approvals view; `next` brings the reviewer back to
             stage: d.stage,
             amount: parseFloat(d.amount),
             claimed: parseFloat(d.claimed || d.amount),
+            currency: d.currency || '',
         };
         $('erClaimId').value = d.claimId;
         $('expenseReviewTitle').textContent = `${d.stage === 'director' ? 'Director approval' : 'Admin review'} · ${d.claimNumber}`;

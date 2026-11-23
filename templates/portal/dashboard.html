@@ -89,9 +89,9 @@
             <div class="kpi-icon-wrapper kpi-icon--success">
                 <i class="bi bi-cash-stack"></i>
             </div>
-            <div class="kpi-value">${{ total_paid_expenses|floatformat:2 }}</div>
+            <div class="kpi-value">{{ total_paid_expenses|floatformat:2 }}</div>
             <div class="kpi-label">Total Reimbursed YTD</div>
-            <div class="kpi-meta">${{ pipeline_summary.approved_awaiting_payment_amount|floatformat:2 }} awaiting payout</div>
+            <div class="kpi-meta">{{ pipeline_summary.approved_awaiting_payment_amount|floatformat:2 }} awaiting payout</div>
         </div>
     </div>
 
@@ -116,7 +116,7 @@
                             <span class="pipeline-step-num">{{ forloop.counter }}</span>
                             <div class="min-w-0">
                                 <div class="fw-bold text-dark small">{{ st.stage }}</div>
-                                <div class="text-muted" style="font-size: 0.78rem;">Owner: {{ st.owner }} &bull; <strong class="text-dark">${{ st.metric|floatformat:2 }}</strong></div>
+                                <div class="text-muted" style="font-size: 0.78rem;">Owner: {{ st.owner }} &bull; <strong class="text-dark">{{ st.metric|floatformat:2 }}</strong></div>
                             </div>
                         </div>
                         <div class="d-flex align-items-center gap-2 flex-shrink-0">
@@ -223,8 +223,8 @@
                                         </div>
                                     </td>
                                     <td class="fw-bold text-dark text-nowrap">
-                                        ${{ c.amount|floatformat:2 }}
-                                        {% if c.is_partially_approved %}<div class="small fw-normal text-warning-emphasis">of ${{ c.claimed_amount|floatformat:2 }}</div>{% endif %}
+                                        {{ c.currency_code }} {{ c.amount|floatformat:2 }}
+                                        {% if c.is_partially_approved %}<div class="small fw-normal text-warning-emphasis">of {{ c.currency_code }} {{ c.claimed_amount|floatformat:2 }}</div>{% endif %}
                                         {% if c.skips_admin_stage %}<div class="small fw-normal text-info-emphasis">Direct (Admin Mgr)</div>{% endif %}
                                     </td>
                                     <td class="text-end text-nowrap">
@@ -516,10 +516,10 @@
                                 <div class="small text-muted mt-1">{{ s.department }}</div>
                             </td>
                             <td class="text-end text-nowrap">
-                                <div class="fw-semibold">${{ s.expense_claimed|floatformat:2 }}</div>
+                                <div class="fw-semibold">{{ s.expense_claimed|floatformat:2 }}</div>
                                 <small class="text-muted">{{ s.expense_count }} claim{{ s.expense_count|pluralize }}</small>
                             </td>
-                            <td class="text-end fw-bold text-success text-nowrap">${{ s.expense_paid|floatformat:2 }}</td>
+                            <td class="text-end fw-bold text-success text-nowrap">{{ s.expense_paid|floatformat:2 }}</td>
                             <td class="text-center text-nowrap">
                                 <span class="fw-semibold">{{ s.leave_approved_days|floatformat:1 }} days</span>
                                 <div class="small text-muted">{{ s.leave_approved_count }} req</div>
@@ -575,8 +575,8 @@
                                 <small class="text-muted">{{ b.branch.code }}{% if b.branch.city %} &bull; {{ b.branch.city }}{% endif %}</small>
                             </td>
                             <td class="text-center fw-semibold">{{ b.staff_count }}</td>
-                            <td class="text-end fw-semibold">${{ b.claimed_total|floatformat:2 }}</td>
-                            <td class="text-end fw-bold text-success">${{ b.paid_total|floatformat:2 }}</td>
+                            <td class="text-end fw-semibold">{{ b.claimed_total|floatformat:2 }}</td>
+                            <td class="text-end fw-bold text-success">{{ b.paid_total|floatformat:2 }}</td>
                             <td class="text-center fw-semibold">{{ b.approved_leave_days|floatformat:1 }} days</td>
                             <td class="text-center">
                                 {% if b.pending_items > 0 %}
@@ -676,7 +676,7 @@
             <div class="kpi-icon-wrapper kpi-icon--success">
                 <i class="bi bi-wallet2"></i>
             </div>
-            <div class="kpi-value">${{ total_paid_expenses|floatformat:2 }}</div>
+            <div class="kpi-value">{{ total_paid_expenses|floatformat:2 }}</div>
             <div class="kpi-label">Total Reimbursed YTD</div>
         </div>
     </div>
@@ -802,7 +802,7 @@
                                     <div class="small text-muted">{{ c.expense_date|date:"M d, Y" }}</div>
                                 </td>
                                 <td>{{ c.category.name }}</td>
-                                <td class="fw-bold text-nowrap">${{ c.amount|floatformat:2 }}</td>
+                                <td class="fw-bold text-nowrap">{{ c.currency_code }} {{ c.amount|floatformat:2 }}</td>
                                 <td>
                                     <span class="status-badge {% if 'REJECTED' in c.status %}badge-rejected{% elif c.status == 'PAID' %}badge-paid{% elif 'APPROVED' in c.status %}badge-approved{% elif c.status == 'DRAFT' %}badge-draft{% else %}badge-pending{% endif %}">
                                         {{ c.get_status_display }}

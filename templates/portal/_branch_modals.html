@@ -75,6 +75,8 @@
                 <textarea id="editBranchAddress" name="address" class="form-control" rows="2" placeholder="Building, street, or port zone..."></textarea>
             </div>
 
+            {% include "portal/_branch_currency_fields.html" with prefix="edit" %}
+
             <label class="gw-switch-row" for="editBranchActive">
                 <span>
                     <span class="gw-switch-label-title">Active office</span>
@@ -153,6 +155,7 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('editBranchCountry').value = btn.dataset.country || '';
             document.getElementById('editBranchPhone').value = btn.dataset.phone || '';
             document.getElementById('editBranchAddress').value = btn.dataset.address || '';
+            editDialog.querySelector('.gw-branch-currency')?.gwSetCurrencies(btn.dataset.currency, btn.dataset.allowedCurrencies);
             const activeEl = document.getElementById('editBranchActive');
             activeEl.checked = (btn.dataset.active === '1');
             if (activeEl.hasAttribute('aria-checked')) activeEl.setAttribute('aria-checked', String(activeEl.checked));

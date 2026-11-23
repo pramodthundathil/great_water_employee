@@ -30,7 +30,7 @@
         <span class="gw-stage-tab-icon"><i class="bi {% if t.key == 'admin' %}bi-person-badge{% else %}bi-shield-check{% endif %}"></i></span>
         <span class="gw-stage-tab-body">
             <span class="gw-stage-tab-label">{% if stage_tabs|length > 1 %}Stage {{ forloop.counter }} · {% endif %}{{ t.label }}</span>
-            <span class="gw-stage-tab-meta"><strong>{{ t.count }}</strong> waiting · ${{ t.total|floatformat:2 }}</span>
+            <span class="gw-stage-tab-meta"><strong>{{ t.count }}</strong> waiting · {{ t.total|floatformat:2 }}</span>
         </span>
     </a>
     {% endfor %}
@@ -49,7 +49,7 @@
         </div>
         <div class="gw-queue-summary">
             <span><strong>{{ filtered_count }}</strong> claim{{ filtered_count|pluralize }}</span>
-            <span><strong>${{ filtered_total|floatformat:2 }}</strong> total</span>
+            <span><strong>{{ filtered_total|floatformat:2 }}</strong> total</span>
             {% if overdue_count %}
             <span class="is-overdue"><i class="bi bi-hourglass-split"></i><strong>{{ overdue_count }}</strong> waiting &gt; 7 days</span>
             {% endif %}
@@ -132,8 +132,8 @@
                     <tr data-href="{% url 'portal_expense_detail' c.pk %}" tabindex="0">
                         <td class="gw-dt-check">
                             <input type="checkbox" class="form-check-input" name="selected" value="{{ c.pk }}" form="bulkForm"
-                                   data-row-check data-amount="{{ c.amount|stringformat:'.2f' }}"
-                                   data-label="{{ c.claim_number }} · {{ c.employee.full_name }} · ${{ c.amount|floatformat:2 }}"
+                                   data-row-check data-amount="{{ c.amount|stringformat:'.2f' }}" data-currency="{{ c.currency_code }}"
+                                   data-label="{{ c.claim_number }} · {{ c.employee.full_name }} · {{ c.currency_code }} {{ c.amount|floatformat:2 }}"
                                    aria-label="Select {{ c.claim_number }}">
                         </td>
                         <td>
@@ -154,8 +154,8 @@
                             {% if c.description %}<div class="gw-dt-sub gw-dt-ellipsis" title="{{ c.description }}">{{ c.description|truncatechars:42 }}</div>{% endif %}
                         </td>
                         <td class="text-nowrap">
-                            <span class="gw-amount">${{ c.amount|floatformat:2 }}</span>
-                            {% if c.is_partially_approved %}<div class="gw-dt-sub text-warning-emphasis">of ${{ c.claimed_amount|floatformat:2 }} claimed</div>{% endif %}
+                            <span class="gw-amount">{{ c.currency_code }} {{ c.amount|floatformat:2 }}</span>
+                            {% if c.is_partially_approved %}<div class="gw-dt-sub text-warning-emphasis">of {{ c.currency_code }} {{ c.claimed_amount|floatformat:2 }} claimed</div>{% endif %}
                         </td>
                         <td class="text-center">
                             {% with n=c.attachments.all|length %}
@@ -259,11 +259,19 @@
     if (!bulk) return;
 
     const isDirector = '{{ stage }}' === 'director';
-    const money = n => '$' + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const fmt2 = n => Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    // Selected claims may be in different branch currencies (AED, INR, …): total each currency separately.
+    const money = (n, boxes) => {
+        if (!boxes) return fmt2(n);
+        const by = {};
+        boxes.forEach(b => { const c = b.dataset.currency || ''; by[c] = (by[c] || 0) + parseFloat(b.dataset.amount || 0); });
+        const parts = Object.keys(by).map(c => (c ? c + ' ' : '') + fmt2(by[c]));
+        return parts.length ? parts.join(' + ') : fmt2(0);
+    };
     const sum = boxes => boxes.reduce((t, b) => t + parseFloat(b.dataset.amount || 0), 0);
     const $ = id => document.getElementById(id);
 
-    function updateTotal() { $('bulkTotal').textContent = money(sum(bulk.selected())); }
+    function updateTotal() { $('bulkTotal').textContent = money(sum(bulk.selected()), bulk.selected()); }
     bulk.onChange(updateTotal);
     updateTotal();
 
@@ -283,7 +291,7 @@
         $('bulkReviewTitle').textContent = (reject ? 'Reject ' : (isDirector ? 'Final approve ' : 'Approve ')) + n + ' claim' + (n > 1 ? 's' : '') + '?';
         $('bulkReviewMessage').textContent = reject
             ? 'The selected claims will be returned to the employees, who can correct and resubmit them.'
-            : 'Each claim will be approved for its full amount (' + money(sum(sel)) + ' in total)' + (isDirector ? ' and move to payment.' : ' and move to Director approval.');
+            : 'Each claim will be approved for its full amount (' + money(sum(sel), sel) + ' in total)' + (isDirector ? ' and move to payment.' : ' and move to Director approval.');
 
         const list = $('bulkReviewList');
         list.innerHTML = '';

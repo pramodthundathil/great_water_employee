@@ -37,6 +37,8 @@ def _expense_item(c, stage, endpoint):
         "branch_name": c.branch.name,
         "title": f"{c.category.name}",
         "subtitle": c.description[:120],
+        "currency_code": c.currency_code,
+        "items_count": c.items.count(),
         "amount": float(c.amount),
         "claimed_amount": float(c.claimed_amount),
         "is_partially_approved": c.is_partially_approved,

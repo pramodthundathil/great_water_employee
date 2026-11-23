@@ -30,7 +30,7 @@
             <div class="kpi-icon-wrapper kpi-icon--warning"><i class="bi bi-hourglass-split"></i></div>
             <div class="kpi-value">{{ kpis.pending_count }}</div>
             <div class="kpi-label">Awaiting payment</div>
-            <div class="kpi-meta">${{ kpis.pending_total|floatformat:2 }} to pay</div>
+            <div class="kpi-meta">{{ kpis.pending_total|floatformat:2 }} to pay</div>
         </div>
     </div>
     <div class="col-12 col-sm-6 col-xl-3">
@@ -44,7 +44,7 @@
     <div class="col-12 col-sm-6 col-xl-3">
         <div class="kpi-card">
             <div class="kpi-icon-wrapper kpi-icon--success"><i class="bi bi-cash-coin"></i></div>
-            <div class="kpi-value">${{ kpis.month_total|floatformat:2 }}</div>
+            <div class="kpi-value">{{ kpis.month_total|floatformat:2 }}</div>
             <div class="kpi-label">Paid this month</div>
             <div class="kpi-meta">{{ kpis.month_count }} claim{{ kpis.month_count|pluralize }} since {{ today|date:"M 1" }}</div>
         </div>
@@ -52,7 +52,7 @@
     <div class="col-12 col-sm-6 col-xl-3">
         <div class="kpi-card">
             <div class="kpi-icon-wrapper kpi-icon--primary"><i class="bi bi-check2-all"></i></div>
-            <div class="kpi-value">${{ kpis.paid_total|floatformat:2 }}</div>
+            <div class="kpi-value">{{ kpis.paid_total|floatformat:2 }}</div>
             <div class="kpi-label">Total paid</div>
             <div class="kpi-meta">{{ kpis.paid_count }} claim{{ kpis.paid_count|pluralize }} on record</div>
         </div>
@@ -65,14 +65,14 @@
         <span class="gw-stage-tab-icon"><i class="bi bi-hourglass-split"></i></span>
         <span class="gw-stage-tab-body">
             <span class="gw-stage-tab-label">Awaiting payment</span>
-            <span class="gw-stage-tab-meta"><strong>{{ kpis.pending_count }}</strong> claim{{ kpis.pending_count|pluralize }} · ${{ kpis.pending_total|floatformat:2 }}</span>
+            <span class="gw-stage-tab-meta"><strong>{{ kpis.pending_count }}</strong> claim{{ kpis.pending_count|pluralize }} · {{ kpis.pending_total|floatformat:2 }}</span>
         </span>
     </a>
     <a href="?tab=paid" class="gw-stage-tab{% if tab == 'paid' %} is-active{% endif %}" {% if tab == 'paid' %}aria-current="page"{% endif %}>
         <span class="gw-stage-tab-icon"><i class="bi bi-receipt"></i></span>
         <span class="gw-stage-tab-body">
             <span class="gw-stage-tab-label">Payment history</span>
-            <span class="gw-stage-tab-meta"><strong>{{ kpis.paid_count }}</strong> payment{{ kpis.paid_count|pluralize }} · ${{ kpis.paid_total|floatformat:2 }}</span>
+            <span class="gw-stage-tab-meta"><strong>{{ kpis.paid_count }}</strong> payment{{ kpis.paid_count|pluralize }} · {{ kpis.paid_total|floatformat:2 }}</span>
         </span>
     </a>
 </nav>
@@ -97,7 +97,7 @@
         </div>
         <div class="gw-queue-summary">
             <span><strong>{{ filtered_count }}</strong> claim{{ filtered_count|pluralize }}</span>
-            <span><strong>${{ filtered_total|floatformat:2 }}</strong> total</span>
+            <span><strong>{{ filtered_total|floatformat:2 }}</strong> total</span>
             {% if tab == 'pending' and kpis.overdue_count %}
             <span class="is-overdue"><i class="bi bi-hourglass-split"></i><strong>{{ kpis.overdue_count }}</strong> waiting &gt; 7 days</span>
             {% endif %}
@@ -201,8 +201,8 @@
                         {% if show_check %}
                         <td class="gw-dt-check">
                             <input type="checkbox" class="form-check-input" name="selected" value="{{ c.pk }}" form="bulkForm"
-                                   data-row-check data-amount="{{ c.amount|stringformat:'.2f' }}"
-                                   data-label="{{ c.claim_number }} · {{ c.employee.full_name }} · ${{ c.amount|floatformat:2 }}"
+                                   data-row-check data-amount="{{ c.amount|stringformat:'.2f' }}" data-currency="{{ c.currency_code }}"
+                                   data-label="{{ c.claim_number }} · {{ c.employee.full_name }} · {{ c.currency_code }} {{ c.amount|floatformat:2 }}"
                                    data-deletable="{% if c.delete_block %}0{% else %}1{% endif %}"
                                    data-reason="{{ c.delete_block|default:'' }}"
                                    aria-label="Select {{ c.claim_number }}">
@@ -227,8 +227,8 @@
                             {% if c.description %}<div class="gw-dt-sub gw-dt-ellipsis" title="{{ c.description }}">{{ c.description|truncatechars:42 }}</div>{% endif %}
                         </td>
                         <td class="text-nowrap">
-                            <span class="gw-amount">${{ c.amount|floatformat:2 }}</span>
-                            {% if c.is_partially_approved %}<div class="gw-dt-sub text-warning-emphasis">of ${{ c.claimed_amount|floatformat:2 }} claimed</div>{% endif %}
+                            <span class="gw-amount">{{ c.currency_code }} {{ c.amount|floatformat:2 }}</span>
+                            {% if c.is_partially_approved %}<div class="gw-dt-sub text-warning-emphasis">of {{ c.currency_code }} {{ c.claimed_amount|floatformat:2 }} claimed</div>{% endif %}
                         </td>
                         <td class="text-nowrap">
                             <span class="gw-wait {% if c.waiting_days > 7 %}is-overdue{% elif c.waiting_days >= 3 %}is-aging{% endif %}" title="Approved {{ c.updated_at|date:'M d, Y H:i' }}">
@@ -241,7 +241,7 @@
                                 {% if c.payable %}
                                 <button type="button" class="btn btn-sm btn-gw-success gw-pay-btn" data-pay
                                         data-id="{{ c.pk }}" data-number="{{ c.claim_number }}"
-                                        data-amount="{{ c.amount|floatformat:2 }}" data-payee="{{ c.employee.full_name }}"
+                                        data-amount="{{ c.amount|floatformat:2 }}" data-currency="{{ c.currency_code }}" data-payee="{{ c.employee.full_name }}"
                                         data-account="{{ c.employee.employee_id }} · {{ c.branch.code }}">
                                     <i class="bi bi-cash-coin"></i><span>Record payment</span>
                                 </button>
@@ -250,13 +250,13 @@
                                 {% endif %}
                                 {% if can_delete_approved and not c.delete_block %}
                                 <button type="button" class="btn btn-light text-danger" data-row-delete="{{ c.pk }}"
-                                        data-label="{{ c.claim_number }} · {{ c.employee.full_name }} · ${{ c.amount|floatformat:2 }}"
+                                        data-label="{{ c.claim_number }} · {{ c.employee.full_name }} · {{ c.currency_code }} {{ c.amount|floatformat:2 }}"
                                         title="Delete claim" aria-label="Delete {{ c.claim_number }}"><i class="bi bi-trash3"></i></button>
                                 {% endif %}
                             </div>
                         </td>
                         {% else %}
-                        <td class="text-nowrap"><span class="gw-amount">${{ c.amount|floatformat:2 }}</span></td>
+                        <td class="text-nowrap"><span class="gw-amount">{{ c.currency_code }} {{ c.amount|floatformat:2 }}</span></td>
                         <td class="text-nowrap">
                             {{ c.payment_record.payment_date|date:"M d, Y" }}
                             <div class="gw-dt-sub">Recorded {{ c.payment_record.created_at|date:"M d, H:i" }}</div>
@@ -382,7 +382,15 @@
 <script>
 (function () {
     const isPending = '{{ tab }}' === 'pending';
-    const money = n => '$' + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const fmt2 = n => Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    // Selected claims may be in different branch currencies (AED, INR, …): total each currency separately.
+    const money = (n, boxes) => {
+        if (!boxes) return fmt2(n);
+        const by = {};
+        boxes.forEach(b => { const c = b.dataset.currency || ''; by[c] = (by[c] || 0) + parseFloat(b.dataset.amount || 0); });
+        const parts = Object.keys(by).map(c => (c ? c + ' ' : '') + fmt2(by[c]));
+        return parts.length ? parts.join(' + ') : fmt2(0);
+    };
 
     const bulk = GwDatatable.init({
         toolbar: '#reimbDtForm',
@@ -414,7 +422,7 @@
 
     if (bulk) {
         const totalEl = document.getElementById('bulkTotal');
-        const update = () => { totalEl.textContent = money(bulk.selected().reduce((t, b) => t + parseFloat(b.dataset.amount || 0), 0)); };
+        const update = () => { totalEl.textContent = money(0, bulk.selected()); };
         bulk.onChange(update);
         update();
     }
@@ -433,7 +441,7 @@
         set('modalClaimNum', 'Claim ' + d.number);
         set('modalPayeeName', d.payee);
         set('modalPayeeAccount', d.account);
-        set('modalClaimAmt', '$' + d.amount);
+        set('modalClaimAmt', (d.currency ? d.currency + ' ' : '') + d.amount);
         form.reset();
         document.getElementById('paymentClaimId').value = d.id;
         ref.classList.remove('is-invalid');

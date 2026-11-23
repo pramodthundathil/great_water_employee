@@ -27,6 +27,15 @@ class Branch(models.Model):
     city = models.CharField(max_length=100, blank=True)
     country = models.CharField(max_length=100, blank=True)
     phone = models.CharField(max_length=50, blank=True)
+    currency_code = models.CharField(
+        max_length=3, default="USD",
+        help_text="Reimbursement currency: every expense claim of this branch is approved and paid in it "
+                  "(e.g. AED for Dubai, INR for Kochi).",
+    )
+    allowed_currencies = models.CharField(
+        max_length=255, blank=True,
+        help_text="Comma-separated currency codes employees may spend in. Blank = any currency.",
+    )
     is_active = models.BooleanField(default=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -38,6 +47,31 @@ class Branch(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.code})"
+
+    @property
+    def allowed_currency_list(self):
+        """Explicitly configured expense currencies (empty list = any currency is allowed)."""
+        from organization.currencies import parse_code_list
+        return parse_code_list(self.allowed_currencies)
+
+    def claim_currencies(self):
+        """Currencies an employee of this branch can pick for an expense item (reimbursement currency first)."""
+        from organization.currencies import CURRENCIES
+        allowed = self.allowed_currency_list
+        codes = allowed or [c[0] for c in CURRENCIES]
+        return [self.currency_code] + [c for c in codes if c != self.currency_code]
+
+    def accepts_currency(self, code):
+        allowed = self.allowed_currency_list
+        return not allowed or code == self.currency_code or code in allowed
+
+    def currency_config(self):
+        from organization.currencies import currency_json
+        return {
+            "currency": currency_json(self.currency_code),
+            "allowed_currencies": self.allowed_currency_list,
+            "claim_currencies": [currency_json(c) for c in self.claim_currencies()],
+        }
 
 
 class Department(models.Model):

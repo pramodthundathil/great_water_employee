@@ -125,7 +125,8 @@ class ExpensesDatatableTests(Base):
 
     def test_create_requires_receipt_and_submits_immediately(self):
         self.client.force_login(self.employee)
-        data = {"category": self.category.pk, "amount": "12.50", "expense_date": "2026-01-05", "description": "Taxi"}
+        data = {"item_category": self.category.pk, "item_amount": "12.50", "item_date": "2026-01-05",
+                "item_currency": self.dxb.currency_code, "item_rate": "1", "description": "Taxi"}
         self.client.post("/expenses/", data)
         self.assertFalse(ExpenseClaim.objects.filter(description="Taxi").exists())
         data["receipts"] = SimpleUploadedFile("r.pdf", b"%PDF-1.4 test", content_type="application/pdf")

@@ -15,7 +15,7 @@ from organization.config_api import (
     LeaveSettingsView, LeaveTypeUpdateView, LeavePolicyCreateView, LeavePolicyUpdateView,
 )
 from expenses.api_views import (
-    ExpenseCategoryListView, ExpenseClaimListCreateView,
+    ExpenseCategoryListView, ExpenseClaimListCreateView, ExpenseCurrencyConfigView,
     ExpenseClaimDetailView, ExpenseClaimSubmitView, ExpenseClaimWithdrawView,
     ExpenseClaimAdminReviewView, ExpenseClaimDirectorApprovalView,
     ExpenseClaimRecordPaymentView, ExpenseAttachmentView
@@ -71,6 +71,7 @@ urlpatterns = [
 
     # Expenses
     path("expenses/categories/", ExpenseCategoryListView.as_view(), name="api_expense_categories"),
+    path("expenses/currencies/", ExpenseCurrencyConfigView.as_view(), name="api_expense_currencies"),
     path("expenses/claims/", ExpenseClaimListCreateView.as_view(), name="api_expense_claims"),
     path("expenses/claims/<int:pk>/", ExpenseClaimDetailView.as_view(), name="api_expense_claim_detail"),
     path("expenses/claims/<int:pk>/attachments/", ExpenseAttachmentView.as_view(), name="api_expense_attachments"),

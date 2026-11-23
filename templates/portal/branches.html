@@ -178,6 +178,8 @@
                             data-country="{{ b.country }}"
                             data-phone="{{ b.phone }}"
                             data-address="{{ b.address }}"
+                            data-currency="{{ b.currency_code }}"
+                            data-allowed-currencies="{{ b.allowed_currencies }}"
                             data-active="{% if b.is_active %}1{% else %}0{% endif %}"
                             aria-label="Edit {{ b.name }}"
                             title="Edit branch"
@@ -414,6 +416,8 @@
                 <label class="form-label small fw-semibold mb-1" for="newBranchAddress">Street address</label>
                 <textarea id="newBranchAddress" name="address" class="form-control" rows="2" placeholder="Building, street, or port zone..."></textarea>
             </div>
+
+            {% include "portal/_branch_currency_fields.html" with prefix="new" selected="AED" %}
 
             <label class="gw-switch-row" for="newBranchActive">
                 <span>

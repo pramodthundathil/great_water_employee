@@ -47,20 +47,57 @@
                 <div class="row g-3 mb-4">
                     <div class="col-md-4">
                         <small class="text-muted text-uppercase fw-bold">{% if claim.is_partially_approved %}Approved Amount{% else %}Amount{% endif %}</small>
-                        <div class="fs-4 fw-extrabold text-primary">${{ claim.amount|floatformat:2 }}</div>
+                        <div class="fs-4 fw-extrabold text-primary">{{ claim.currency_code }} {{ claim.amount|floatformat:2 }}</div>
                         {% if claim.is_partially_approved %}
                         <div class="small text-warning-emphasis fw-semibold">
-                            <i class="bi bi-dash-circle me-1"></i>Partially approved · claimed ${{ claim.claimed_amount|floatformat:2 }}
+                            <i class="bi bi-dash-circle me-1"></i>Partially approved · claimed {{ claim.currency_code }} {{ claim.claimed_amount|floatformat:2 }}
                         </div>
                         {% endif %}
                     </div>
                     <div class="col-md-4">
-                        <small class="text-muted text-uppercase fw-bold">Category</small>
+                        <small class="text-muted text-uppercase fw-bold">{% if items|length > 1 %}Main Category{% else %}Category{% endif %}</small>
                         <div class="fs-6 fw-bold text-dark">{{ claim.category.name }}</div>
                     </div>
                     <div class="col-md-4">
-                        <small class="text-muted text-uppercase fw-bold">Expense Date</small>
+                        <small class="text-muted text-uppercase fw-bold">{% if items|length > 1 %}First Expense Date{% else %}Expense Date{% endif %}</small>
                         <div class="fs-6 fw-bold text-dark">{{ claim.expense_date|date:"F d, Y" }}</div>
+                    </div>
+                </div>
+
+                <div class="mb-4">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <small class="text-muted text-uppercase fw-bold">Expense Items ({{ items|length }})</small>
+                        <small class="text-muted">Reimbursement currency: <strong>{{ claim.currency_code }}</strong></small>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>#</th><th>Date</th><th>Category</th><th>Description</th>
+                                    <th class="text-end">Amount paid</th><th class="text-end">Rate</th>
+                                    <th class="text-end">In {{ claim.currency_code }}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for it in items %}
+                                <tr>
+                                    <td class="text-muted">{{ forloop.counter }}</td>
+                                    <td class="text-nowrap">{{ it.expense_date|date:"d M Y" }}</td>
+                                    <td>{{ it.category.name }}</td>
+                                    <td>{{ it.description|default:"—" }}</td>
+                                    <td class="text-end text-nowrap">{{ it.currency_code }} {{ it.original_amount|floatformat:2 }}</td>
+                                    <td class="text-end text-nowrap small text-muted">{% if it.currency_code != claim.currency_code %}1 {{ it.currency_code }} = {{ it.exchange_rate.normalize }} {{ claim.currency_code }}{% else %}—{% endif %}</td>
+                                    <td class="text-end text-nowrap fw-semibold">{{ it.converted_amount|floatformat:2 }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                            <tfoot>
+                                <tr>
+                                    <th colspan="6" class="text-end">Total claimed</th>
+                                    <th class="text-end text-nowrap">{{ claim.currency_code }} {{ claim.claimed_amount|floatformat:2 }}</th>
+                                </tr>
+                            </tfoot>
+                        </table>
                     </div>
                 </div>
 
@@ -133,7 +170,7 @@
             </div>
             <div class="gw-card-body">
                 <p class="small text-muted mb-3">
-                    Check the receipts, then approve the full ${{ claim.amount|floatformat:2 }}, approve a lower amount, or reject with remarks.
+                    Check the receipts, then approve the full {{ claim.currency_code }} {{ claim.amount|floatformat:2 }}, approve a lower amount, or reject with remarks.
                     {% if claim.skips_admin_stage %}<br><span class="text-info-emphasis">This is an Admin Manager's own claim, so it came directly to you.</span>{% endif %}
                 </p>
                 <div class="d-flex flex-wrap gap-1">
@@ -185,7 +222,7 @@
                         <div class="fw-bold small text-dark">{{ h.approver.full_name }} ({{ h.approver.employee_id }})</div>
                         <div class="small text-muted">{% if h.stage == 'PAYMENT' %}Payment (Admin Manager){% elif h.stage == 'ADMIN_MANAGER' %}Admin Manager review{% elif h.stage == 'DIRECTOR' %}Director approval{% else %}{{ h.stage }}{% endif %}</div>
                         {% if h.approved_amount %}
-                        <div class="small fw-semibold text-warning-emphasis mt-1">Approved ${{ h.approved_amount|floatformat:2 }}</div>
+                        <div class="small fw-semibold text-warning-emphasis mt-1">Approved {{ claim.currency_code }} {{ h.approved_amount|floatformat:2 }}</div>
                         {% endif %}
                         {% if h.remarks %}
                         <div class="p-2 bg-light rounded small mt-2 text-secondary">

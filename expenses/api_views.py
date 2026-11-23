@@ -20,23 +20,8 @@ from expenses.serializers import (
 from accounts.models import RoleChoices
 from notifications.services import notify_expense_event
 from portal.admin_views import validate_upload, EDITABLE_EXPENSE_STATUSES
-from datetime import date as _date
-
-
-def _validate_claim_fields(amount, expense_date):
-    try:
-        amount_dec = Decimal(str(amount))
-    except Exception:
-        return "Amount must be a number."
-    if amount_dec <= 0:
-        return "Amount must be greater than zero."
-    try:
-        d = _date.fromisoformat(str(expense_date)[:10])
-    except ValueError:
-        return "Invalid expense date. Use YYYY-MM-DD."
-    if d > _date.today():
-        return "Expense date cannot be in the future."
-    return None
+from expenses.items import ItemError, clean_items, raw_items_from_request, replace_items, summary_header
+from organization.currencies import all_currencies_json
 
 
 class ExpenseCategoryListView(APIView):
@@ -45,6 +30,23 @@ class ExpenseCategoryListView(APIView):
     def get(self, request):
         categories = ExpenseCategory.objects.filter(is_active=True)
         return Response(ExpenseCategorySerializer(categories, many=True).data)
+
+
+class ExpenseCurrencyConfigView(APIView):
+    """
+    GET /api/v1/expenses/currencies/
+    The current user's reimbursement currency (their branch's), the currencies they may claim in,
+    and the full ISO-4217 list (for branch configuration screens).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        branch = request.user.primary_branch or request.user.get_accessible_branches().first()
+        data = {"all_currencies": all_currencies_json()}
+        if branch:
+            data.update(branch.currency_config())
+            data["branch"] = {"id": branch.id, "code": branch.code, "name": branch.name}
+        return Response(data)
 
 
 class ExpenseClaimListCreateView(APIView):
@@ -75,7 +77,7 @@ class ExpenseClaimListCreateView(APIView):
         if category_id:
             qs = qs.filter(category_id=category_id)
 
-        qs = qs.select_related("category", "branch", "employee").prefetch_related("attachments")
+        qs = qs.select_related("category", "branch", "employee").prefetch_related("attachments", "items")
         serializer = ExpenseClaimListSerializer(qs[:50], many=True)
         return Response(serializer.data)
 
@@ -89,36 +91,40 @@ class ExpenseClaimListCreateView(APIView):
         if not branch:
             return Response({"detail": "User has no primary branch assigned."}, status=status.HTTP_400_BAD_REQUEST)
 
-        category_id = request.data.get("category")
-        amount = request.data.get("amount")
-        expense_date = request.data.get("expense_date")
-        description = request.data.get("description", "")
+        description = (request.data.get("description") or "").strip()
         project_ref = request.data.get("project_reference", "")
         submit_now = str(request.data.get("submit_now", "false")).lower() in ("true", "1")
 
-        if not category_id or not amount or not expense_date:
-            return Response({"detail": "Category, amount, and expense date are required."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            raw = raw_items_from_request(request.data)
+            if raw is None:
+                return Response({"detail": "Add at least one expense item (category, date, amount)."},
+                                status=status.HTTP_400_BAD_REQUEST)
+            items = clean_items(raw, branch)
+        except ItemError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        if not description:
+            description = items[0]["description"] or "Expense claim"
 
-        category = get_object_or_404(ExpenseCategory, id=category_id, is_active=True)
-        error = _validate_claim_fields(amount, expense_date)
-        if error:
-            return Response({"detail": error}, status=status.HTTP_400_BAD_REQUEST)
         files = request.FILES.getlist("receipts") or request.FILES.getlist("file")
         for f in files:
             err = validate_upload(f)
             if err:
                 return Response({"detail": err}, status=status.HTTP_400_BAD_REQUEST)
 
+        header = summary_header(items)
         claim = ExpenseClaim.objects.create(
             employee=user,
             branch=branch,
-            category=category,
-            amount=Decimal(str(amount)),
-            expense_date=expense_date,
+            currency_code=branch.currency_code,
+            category=header["category"],
+            amount=header["amount"],
+            expense_date=header["expense_date"],
             description=description,
             project_reference=project_ref,
             status=ExpenseClaimStatus.DRAFT
         )
+        replace_items(claim, items)
 
         # Handle uploaded proof files (mandatory if submit_now is true)
         for f in files:
@@ -152,15 +158,12 @@ class ExpenseClaimDetailView(APIView):
         if claim.status not in EDITABLE_EXPENSE_STATUSES:
             return Response({"detail": "This claim can no longer be edited because review has started."}, status=status.HTTP_400_BAD_REQUEST)
         data = request.data
-        if "category" in data:
-            claim.category = get_object_or_404(ExpenseCategory, id=data.get("category"), is_active=True)
-        amount = data.get("amount", claim.amount)
-        expense_date = data.get("expense_date", claim.expense_date.isoformat())
-        error = _validate_claim_fields(amount, expense_date)
-        if error:
-            return Response({"detail": error}, status=status.HTTP_400_BAD_REQUEST)
-        claim.set_claimed_amount(Decimal(str(amount)))
-        claim.expense_date = str(expense_date)[:10]
+        try:
+            raw = raw_items_from_request(data, claim=claim)
+            if raw is not None:
+                replace_items(claim, clean_items(raw, claim.branch, base=claim.currency_code))
+        except ItemError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         if "description" in data:
             claim.description = data.get("description", "")
         if "project_reference" in data:

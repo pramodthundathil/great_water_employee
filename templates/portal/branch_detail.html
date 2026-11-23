@@ -39,6 +39,8 @@
             data-country="{{ branch.country }}"
             data-phone="{{ branch.phone }}"
             data-address="{{ branch.address }}"
+            data-currency="{{ branch.currency_code }}"
+            data-allowed-currencies="{{ branch.allowed_currencies }}"
             data-active="{% if branch.is_active %}1{% else %}0{% endif %}"
         >
             <i class="bi bi-pencil" aria-hidden="true"></i>
@@ -143,6 +145,12 @@
 
                     <dt class="col-4 text-muted">Country</dt>
                     <dd class="col-8">{{ branch.country|default:"—" }}</dd>
+
+                    <dt class="col-4 text-muted">Reimbursement currency</dt>
+                    <dd class="col-8 fw-semibold">{{ branch_currency.code }} — {{ branch_currency.name }}</dd>
+
+                    <dt class="col-4 text-muted">Claim currencies</dt>
+                    <dd class="col-8">{% if branch.allowed_currency_list %}{{ branch.allowed_currency_list|join:", " }}{% else %}Any currency{% endif %}</dd>
 
                     <dt class="col-4 text-muted">Phone</dt>
                     <dd class="col-8">{{ branch.phone|default:"—" }}</dd>
@@ -326,7 +334,7 @@
                                 <td data-label="Employee">{{ c.employee.full_name }}</td>
                                 <td data-label="Category">{{ c.category.name }}</td>
                                 <td data-label="Date">{{ c.expense_date|date:"d M Y" }}</td>
-                                <td data-label="Amount" class="fw-semibold">{{ c.amount }}</td>
+                                <td data-label="Amount" class="fw-semibold">{{ c.currency_code }} {{ c.amount|floatformat:2 }}</td>
                                 <td data-label="Status"><span class="badge bg-light text-dark border">{{ c.get_status_display }}</span></td>
                             </tr>
                             {% empty %}

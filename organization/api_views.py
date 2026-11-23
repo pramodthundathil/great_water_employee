@@ -14,7 +14,8 @@ class OrganizationSerializer(serializers.ModelSerializer):
 class BranchSerializer(serializers.ModelSerializer):
     class Meta:
         model = Branch
-        fields = ["id", "code", "name", "address", "city", "country", "phone", "is_active"]
+        fields = ["id", "code", "name", "address", "city", "country", "phone", "currency_code",
+                  "allowed_currencies", "is_active"]
 
 
 class DepartmentSerializer(serializers.ModelSerializer):

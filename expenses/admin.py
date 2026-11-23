@@ -1,5 +1,13 @@
 from django.contrib import admin
-from expenses.models import ExpenseCategory, ExpenseClaim, ExpenseAttachment, ExpenseApproval, ReimbursementPayment
+from expenses.models import (
+    ExpenseCategory, ExpenseClaim, ExpenseAttachment, ExpenseApproval, ExpenseItem, ReimbursementPayment,
+)
+
+
+class ItemInline(admin.TabularInline):
+    model = ExpenseItem
+    extra = 0
+    readonly_fields = ("converted_amount",)
 
 
 class AttachmentInline(admin.TabularInline):
@@ -15,10 +23,10 @@ class ApprovalInline(admin.TabularInline):
 
 @admin.register(ExpenseClaim)
 class ExpenseClaimAdmin(admin.ModelAdmin):
-    list_display = ("claim_number", "employee", "branch", "category", "amount", "expense_date", "status")
+    list_display = ("claim_number", "employee", "branch", "currency_code", "amount", "expense_date", "status")
     list_filter = ("status", "branch", "category")
     search_fields = ("claim_number", "employee__employee_id", "employee__first_name")
-    inlines = [AttachmentInline, ApprovalInline]
+    inlines = [ItemInline, AttachmentInline, ApprovalInline]
 
 
 admin.site.register(ExpenseCategory, list_display=("code", "name", "is_active"))
