@@ -17,7 +17,8 @@ from organization.currencies import (
     all_currencies_json, currency_json, default_currency_for_country, normalize_code, parse_code_list,
 )
 from expenses.items import (
-    ItemError, clean_items, expense_currency_context, raw_items_from_post, replace_items, summary_header,
+    ItemError, clean_items, expense_currency_context, raw_items_from_post, replace_items,
+    retag_claims_to_branch_currency, summary_header,
 )
 from expenses.models import (
     ExpenseClaim, ExpenseCategory, ExpenseAttachment,
@@ -1936,10 +1937,20 @@ def _handle_branch_action(request, user, redirect_response, target_branch=None):
         if Branch.objects.filter(code=fields["code"]).exclude(pk=branch.pk).exists():
             messages.error(request, f"Another branch already uses code '{fields['code']}'.")
             return redirect_response
+        old_currency = branch.currency_code
         for key, value in fields.items():
             setattr(branch, key, value)
         branch.save()
         messages.success(request, f"Branch '{branch.name}' updated.")
+        if branch.currency_code != old_currency:
+            moved, skipped = retag_claims_to_branch_currency(branch)
+            note = f"Reimbursement currency changed {old_currency} → {branch.currency_code}."
+            if moved:
+                note += f" {len(moved)} open claim(s) now in {branch.currency_code}."
+            if skipped:
+                note += f" {len(skipped)} claim(s) with foreign-currency bills kept their currency: {', '.join(skipped[:5])}."
+            note += " Approved and paid claims are unchanged."
+            messages.info(request, note)
         return redirect_response
 
     if action == "toggle_active":

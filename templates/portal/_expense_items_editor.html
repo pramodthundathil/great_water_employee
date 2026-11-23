@@ -3,73 +3,98 @@ Multi-row, multi-currency expense item editor.
 Context: categories, claim_currency ({code,name,symbol}), claim_currencies (list), today, optional items_initial (list).
 Posts repeated fields: item_category, item_date, item_description, item_currency, item_amount, item_rate.
 {% endcomment %}
-<div class="gw-items-editor" data-base="{{ claim_currency.code|default:'' }}" data-today="{{ today|date:'Y-m-d' }}">
-    <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
-        <label class="form-label small fw-bold m-0">Expense items <span class="text-danger">*</span></label>
-        {% if claim_currency %}
-        <span class="small text-muted">
-            <i class="bi bi-cash-coin me-1"></i>Reimbursed in
-            <strong>{{ claim_currency.code }}</strong> ({{ claim_currency.name }})
-        </span>
-        {% endif %}
-    </div>
-    <p class="small text-muted mb-2">
-        Add one row per bill. Pick the currency you paid in; if it differs from
-        {{ claim_currency.code|default:"the branch currency" }}, enter the exchange rate
-        (1 unit of that currency = ? {{ claim_currency.code|default:"" }}). The amount is converted automatically.
-    </p>
+<style>
+    .gw-items-editor .gw-item-row { border: 1px solid var(--bs-border-color); border-radius: 12px; padding: 14px 16px; background: var(--bs-body-bg); }
+    .gw-items-editor .gw-item-num { width: 26px; height: 26px; border-radius: 50%; background: var(--bs-primary-bg-subtle); color: var(--bs-primary-text-emphasis); font-weight: 700; font-size: .8rem; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    .gw-items-editor .gw-calc { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; margin-top: 10px; }
+    .gw-items-editor .gw-calc .gw-op { font-size: 1.25rem; font-weight: 700; color: var(--bs-secondary-color); padding-bottom: 4px; }
+    .gw-items-editor .gw-calc-paid { flex: 1 1 230px; min-width: 210px; }
+    .gw-items-editor .gw-calc-rate { flex: 0 1 170px; min-width: 140px; }
+    .gw-items-editor .gw-calc-result { flex: 0 1 170px; min-width: 140px; }
+    .gw-items-editor .gw-result-box { height: 38px; display: flex; align-items: center; justify-content: flex-end; padding: 0 12px; border-radius: 8px; background: var(--bs-success-bg-subtle); color: var(--bs-success-text-emphasis); font-weight: 700; font-variant-numeric: tabular-nums; }
+    .gw-items-editor .gw-paid-currency { max-width: 110px; font-weight: 600; }
+    .gw-items-editor .gw-rate-hint { font-size: .78rem; color: var(--bs-secondary-color); margin-top: 4px; }
+    .gw-items-editor .gw-total { border-radius: 12px; background: var(--bs-primary-bg-subtle); padding: 14px 18px; }
+    .gw-items-editor .gw-total-value { font-size: 1.5rem; font-weight: 800; color: var(--bs-primary-text-emphasis); font-variant-numeric: tabular-nums; }
+    .gw-items-editor .gw-label { font-size: .78rem; font-weight: 600; color: var(--bs-secondary-color); margin-bottom: 4px; display: block; }
+</style>
 
-    <div class="gw-items-rows d-flex flex-column gap-2"></div>
+<div class="gw-items-editor" data-base="{{ claim_currency.code|default:'' }}" data-today="{{ today|date:'Y-m-d' }}">
+    {% if claim_currency %}
+    <div class="alert alert-primary py-2 px-3 small d-flex align-items-center gap-2 mb-3">
+        <i class="bi bi-cash-coin fs-5"></i>
+        <span>
+            You will be reimbursed in <strong>{{ claim_currency.code }} ({{ claim_currency.name }})</strong>.
+            Paid in another currency? Choose it on the row and type the exchange rate &mdash; we convert it for you.
+        </span>
+    </div>
+    {% endif %}
+
+    <div class="gw-items-rows d-flex flex-column gap-3"></div>
 
     <template class="gw-item-template">
-        <div class="gw-item-row border rounded-3 p-3 bg-body-tertiary position-relative">
-            <div class="d-flex justify-content-between align-items-center mb-2">
-                <span class="small fw-bold text-muted gw-item-label">Item 1</span>
-                <button type="button" class="btn btn-sm btn-link text-danger p-0" data-remove-item aria-label="Remove item">
-                    <i class="bi bi-trash3"></i> Remove
+        <div class="gw-item-row">
+            <div class="d-flex align-items-center gap-2 mb-2">
+                <span class="gw-item-num">1</span>
+                <span class="fw-bold">Bill <span class="gw-item-idx">1</span></span>
+                <button type="button" class="btn btn-sm btn-link text-danger ms-auto p-0" data-remove-item>
+                    <i class="bi bi-x-circle me-1"></i>Remove
                 </button>
             </div>
+
             <div class="row g-2">
                 <div class="col-md-4">
-                    <label class="form-label small mb-1">Category <span class="text-danger">*</span></label>
-                    <select name="item_category" class="form-select form-select-sm" required>
-                        <option value="">Select…</option>
+                    <span class="gw-label">Category *</span>
+                    <select name="item_category" class="form-select" required>
+                        <option value="">Choose…</option>
                         {% for cat in categories %}<option value="{{ cat.id }}">{{ cat.name }}</option>{% endfor %}
                     </select>
                 </div>
                 <div class="col-md-3">
-                    <label class="form-label small mb-1">Date <span class="text-danger">*</span></label>
-                    <input type="date" name="item_date" class="form-control form-control-sm" required max="{{ today|date:'Y-m-d' }}">
+                    <span class="gw-label">Date *</span>
+                    <input type="date" name="item_date" class="form-control" required max="{{ today|date:'Y-m-d' }}">
                 </div>
                 <div class="col-md-5">
-                    <label class="form-label small mb-1">Description</label>
-                    <input type="text" name="item_description" class="form-control form-control-sm" maxlength="255" placeholder="e.g. Taxi to client site">
-                </div>
-                <div class="col-md-3">
-                    <label class="form-label small mb-1">Currency paid <span class="text-danger">*</span></label>
-                    <select name="item_currency" class="form-select form-select-sm" required>
-                        {% for cur in claim_currencies %}<option value="{{ cur.code }}">{{ cur.code }} — {{ cur.name }}</option>{% endfor %}
-                    </select>
-                </div>
-                <div class="col-md-3">
-                    <label class="form-label small mb-1">Amount <span class="text-danger">*</span></label>
-                    <input type="number" name="item_amount" class="form-control form-control-sm" step="0.01" min="0.01" placeholder="0.00" required>
-                </div>
-                <div class="col-md-3">
-                    <label class="form-label small mb-1 gw-rate-label">Exchange rate</label>
-                    <input type="number" name="item_rate" class="form-control form-control-sm" step="0.000001" min="0.000001" placeholder="Rate">
-                </div>
-                <div class="col-md-3">
-                    <label class="form-label small mb-1">In {{ claim_currency.code|default:"claim currency" }}</label>
-                    <div class="form-control form-control-sm bg-body fw-bold gw-item-converted" aria-live="polite">0.00</div>
+                    <span class="gw-label">What was it for?</span>
+                    <input type="text" name="item_description" class="form-control" maxlength="255" placeholder="e.g. Taxi to client site">
                 </div>
             </div>
+
+            <div class="gw-calc">
+                <div class="gw-calc-paid">
+                    <span class="gw-label">Amount paid *</span>
+                    <div class="input-group">
+                        <select name="item_currency" class="form-select gw-paid-currency" required aria-label="Currency paid" title="Currency paid">
+                            {% for cur in claim_currencies %}<option value="{{ cur.code }}" title="{{ cur.name }}">{{ cur.code }}</option>{% endfor %}
+                        </select>
+                        <input type="number" name="item_amount" class="form-control" step="0.01" min="0.01" placeholder="0.00" required aria-label="Amount paid">
+                    </div>
+                </div>
+                <span class="gw-op" aria-hidden="true">&times;</span>
+                <div class="gw-calc-rate">
+                    <span class="gw-label gw-rate-label">Exchange rate</span>
+                    <input type="number" name="item_rate" class="form-control" step="0.000001" min="0.000001" placeholder="e.g. 3.6725" aria-label="Exchange rate">
+                </div>
+                <span class="gw-op" aria-hidden="true">=</span>
+                <div class="gw-calc-result">
+                    <span class="gw-label">You get ({{ claim_currency.code|default:"claim currency" }})</span>
+                    <div class="gw-result-box gw-item-converted" aria-live="polite">0.00</div>
+                </div>
+            </div>
+            <div class="gw-rate-hint"></div>
         </div>
     </template>
 
-    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mt-2">
-        <button type="button" class="btn btn-sm btn-outline-primary" data-add-item><i class="bi bi-plus-lg me-1"></i>Add item</button>
-        <div class="fs-6">Claim total: <strong>{{ claim_currency.code|default:"" }} <span data-items-total>0.00</span></strong></div>
+    <button type="button" class="btn btn-outline-primary w-100 mt-3 py-2" data-add-item>
+        <i class="bi bi-plus-circle me-1"></i>Add another bill
+    </button>
+
+    <div class="gw-total d-flex flex-wrap justify-content-between align-items-center gap-2 mt-3">
+        <div>
+            <div class="fw-bold">Total to be reimbursed</div>
+            <div class="small text-muted"><span data-items-count>1 bill</span></div>
+        </div>
+        <div class="gw-total-value">{{ claim_currency.code|default:"" }} <span data-items-total>0.00</span></div>
     </div>
     {{ items_initial|default_if_none:""|json_script:"gwItemsInitial" }}
 </div>
@@ -82,35 +107,53 @@ Posts repeated fields: item_category, item_date, item_description, item_currency
     const rows = root.querySelector('.gw-items-rows');
     const tpl = root.querySelector('.gw-item-template');
     const totalEl = root.querySelector('[data-items-total]');
+    const countEl = root.querySelector('[data-items-count]');
     const fmt = v => (Math.round(v * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
     function refresh() {
         let total = 0;
-        rows.querySelectorAll('.gw-item-row').forEach((row, i) => {
-            row.querySelector('.gw-item-label').textContent = 'Item ' + (i + 1);
+        const all = rows.querySelectorAll('.gw-item-row');
+        all.forEach((row, i) => {
+            row.querySelector('.gw-item-num').textContent = i + 1;
+            row.querySelector('.gw-item-idx').textContent = i + 1;
             const cur = row.querySelector('[name=item_currency]').value;
             const rate = row.querySelector('[name=item_rate]');
+            const hint = row.querySelector('.gw-rate-hint');
             const same = !base || cur === base;
             rate.readOnly = same;
             rate.required = !same;
+            rate.classList.toggle('bg-body-secondary', same);
             if (same) rate.value = '1';
             else if (rate.value === '1' && rate.dataset.userSet !== '1') rate.value = '';
-            row.querySelector('.gw-rate-label').textContent = same ? 'Exchange rate' : ('1 ' + cur + ' = ? ' + base);
+            row.querySelector('.gw-rate-label').textContent = same ? 'Exchange rate' : ('Rate: 1 ' + cur + ' = ? ' + base + ' *');
             const amt = parseFloat(row.querySelector('[name=item_amount]').value) || 0;
             const r = parseFloat(rate.value) || 0;
             const conv = Math.round(amt * r * 100) / 100;
             row.querySelector('.gw-item-converted').textContent = fmt(conv);
+            if (same) {
+                hint.textContent = base ? 'Paid in ' + base + ', so no conversion is needed.' : '';
+            } else if (!r) {
+                hint.innerHTML = '<span class="text-warning-emphasis"><i class="bi bi-exclamation-triangle me-1"></i>Type how many ' + base + ' one ' + cur + ' is worth (check your bank / card statement or xe.com).</span>';
+            } else {
+                hint.textContent = fmt(amt) + ' ' + cur + ' × ' + r + ' = ' + fmt(conv) + ' ' + base;
+            }
             total += conv;
         });
-        rows.querySelectorAll('[data-remove-item]').forEach(b => { b.hidden = rows.children.length < 2; });
+        rows.querySelectorAll('[data-remove-item]').forEach(b => { b.hidden = all.length < 2; });
         totalEl.textContent = fmt(total);
+        countEl.textContent = all.length + (all.length === 1 ? ' bill' : ' bills');
     }
 
     function addRow(data) {
         const node = tpl.content.firstElementChild.cloneNode(true);
         const set = (name, v) => { if (v !== undefined && v !== null && v !== '') node.querySelector('[name=' + name + ']').value = v; };
-        node.querySelector('[name=item_date]').value = root.dataset.today;
-        node.querySelector('[name=item_currency]').value = base || node.querySelector('[name=item_currency]').value;
+        const last = rows.lastElementChild;
+        node.querySelector('[name=item_date]').value = last ? last.querySelector('[name=item_date]').value : root.dataset.today;
+        node.querySelector('[name=item_currency]').value = last ? last.querySelector('[name=item_currency]').value : (base || node.querySelector('[name=item_currency]').value);
+        if (!data && last && last.querySelector('[name=item_currency]').value !== base) {
+            node.querySelector('[name=item_rate]').value = last.querySelector('[name=item_rate]').value;
+            node.querySelector('[name=item_rate]').dataset.userSet = '1';
+        }
         if (data) {
             set('item_category', data.category); set('item_date', data.expense_date);
             set('item_description', data.description); set('item_currency', data.currency);

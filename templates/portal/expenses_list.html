@@ -175,9 +175,10 @@
                 <h5 class="modal-title fw-bold"><i class="bi bi-receipt text-primary me-2"></i>Submit Business Expense Claim</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
-            <form method="post" enctype="multipart/form-data" action="{% url 'portal_expenses' %}">
+            {# The form wraps body + footer: make it a flex column so the body scrolls and the footer (Submit) stays visible. #}
+            <form method="post" enctype="multipart/form-data" action="{% url 'portal_expenses' %}" class="d-flex flex-column overflow-hidden" style="min-height: 0;">
                 {% csrf_token %}
-                <div class="modal-body p-4">
+                <div class="modal-body p-4 overflow-y-auto">
                     <div class="alert alert-info py-2 small d-flex align-items-center mb-3">
                         <i class="bi bi-info-circle-fill fs-5 me-2"></i>
                         <span>Every expense claim must be backed by an uploaded proof (tax invoice, receipt, or photo voucher).</span>

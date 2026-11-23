@@ -180,3 +180,56 @@ class MultiCurrencyTests(TestCase):
 
     def test_item_conversion_rounding(self):
         self.assertEqual(ExpenseItem.convert(Decimal("10.00"), Decimal("3.672500")), Decimal("36.73"))
+
+
+class BranchCurrencyChangeTests(MultiCurrencyTests):
+    """Changing a branch's currency moves its open claims to it; approved / paid claims keep theirs."""
+
+    def _claim(self, status, items):
+        c = ExpenseClaim.objects.create(employee=self.dxb_emp, branch=self.dxb, category=self.travel,
+                                        expense_date=date(2026, 1, 5), amount=Decimal("1"), description="x",
+                                        status=status, currency_code="USD")
+        for cur, amt, rate in items:
+            ExpenseItem.objects.create(claim=c, category=self.travel, expense_date=date(2026, 1, 5),
+                                       currency_code=cur, original_amount=Decimal(amt), exchange_rate=Decimal(rate))
+        return c
+
+    def test_web_currency_change_relabels_open_claims_only(self):
+        self.dxb.currency_code = "USD"
+        self.dxb.save()
+        open_claim = self._claim(ExpenseClaimStatus.UNDER_ADMIN_REVIEW, [("USD", "100", "1")])
+        paid = self._claim(ExpenseClaimStatus.PAID, [("USD", "50", "1")])
+        foreign = self._claim(ExpenseClaimStatus.DRAFT, [("EUR", "10", "1.1")])
+        self.client.force_login(self.director)
+        self.client.post(f"/branches/{self.dxb.id}/", {
+            "action": "update", "branch_id": self.dxb.id, "code": "GW-DXB", "name": "Dubai",
+            "country": "UAE", "currency_code": "AED", "is_active": "1",
+        })
+        self.dxb.refresh_from_db()
+        self.assertEqual(self.dxb.currency_code, "AED")
+        open_claim.refresh_from_db(); paid.refresh_from_db(); foreign.refresh_from_db()
+        self.assertEqual(open_claim.currency_code, "AED")
+        self.assertEqual(open_claim.items.get().currency_code, "AED")
+        self.assertEqual(paid.currency_code, "USD")
+        self.assertEqual(foreign.currency_code, "USD")
+
+    def test_currency_endpoint_uses_primary_branch_only(self):
+        r = self.api(self.director).get("/api/v1/expenses/currencies/")
+        self.assertNotIn("currency", r.data)  # no own branch, so no payout currency is implied
+
+    def test_sync_command(self):
+        from io import StringIO
+        from django.core.management import call_command
+        self.kch.currency_code = "USD"
+        self.kch.save()
+        c = ExpenseClaim.objects.create(employee=self.kch_emp, branch=self.kch, category=self.travel,
+                                        expense_date=date(2026, 1, 5), amount=Decimal("10"), description="x",
+                                        status=ExpenseClaimStatus.PAID, currency_code="USD")
+        out = StringIO()
+        call_command("sync_branch_currencies", "--set", "GW-KCH=INR", stdout=out)
+        self.kch.refresh_from_db()
+        self.assertEqual(self.kch.currency_code, "USD")  # dry run
+        call_command("sync_branch_currencies", "--set", "GW-KCH=INR", "--include-closed", "--apply", stdout=out)
+        self.kch.refresh_from_db(); c.refresh_from_db()
+        self.assertEqual(self.kch.currency_code, "INR")
+        self.assertEqual(c.currency_code, "INR")

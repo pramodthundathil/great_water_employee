@@ -329,9 +329,13 @@ class BranchUpdateView(APIView):
             return _bad(error)
         if "code" in fields and Branch.objects.filter(code=fields["code"]).exclude(pk=branch.pk).exists():
             return _bad(f"Another branch already uses code '{fields['code']}'.")
+        old_currency = branch.currency_code
         for key, value in fields.items():
             setattr(branch, key, value)
         branch.save()
+        if branch.currency_code != old_currency:
+            from expenses.items import retag_claims_to_branch_currency
+            retag_claims_to_branch_currency(branch)
         count = branch.primary_employees.filter(is_active=True).count()
         return Response(_branch_json(branch, count))
 

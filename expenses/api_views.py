@@ -41,7 +41,8 @@ class ExpenseCurrencyConfigView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        branch = request.user.primary_branch or request.user.get_accessible_branches().first()
+        # Claims are always filed under the employee's own (primary) branch, so its currency is the payout currency.
+        branch = request.user.primary_branch
         data = {"all_currencies": all_currencies_json()}
         if branch:
             data.update(branch.currency_config())

@@ -196,3 +196,43 @@ def expense_currency_context(branch):
         "claim_currency": currency_json(branch.currency_code),
         "claim_currencies": [currency_json(c) for c in branch.claim_currencies()],
     }
+
+
+# Claims that are still open: their currency follows the branch when the branch currency changes.
+OPEN_CLAIM_STATUSES = (
+    "DRAFT", "UNDER_ADMIN_REVIEW", "UNDER_DIRECTOR_REVIEW", "REJECTED_BY_ADMIN", "REJECTED_BY_DIRECTOR", "WITHDRAWN",
+)
+
+
+@transaction.atomic
+def retag_claims_to_branch_currency(branch, include_closed=False):
+    """
+    Move claims of `branch` onto the branch's reimbursement currency.
+
+    Only claims whose items are all in the claim's old currency (rate 1, i.e. no real conversion) are moved:
+    their amounts are kept and simply re-labelled, which is right when the old label was wrong (e.g. the
+    "USD" default before branch currencies existed). Claims with genuine foreign-currency lines are skipped,
+    because their exchange rates were entered against the old currency.
+    Approved / paid claims are only touched with include_closed=True.
+    Returns (moved_claim_numbers, skipped_claim_numbers).
+    """
+    from expenses.models import ExpenseClaim
+
+    target = branch.currency_code
+    qs = ExpenseClaim.objects.filter(branch=branch).exclude(currency_code=target).prefetch_related("items")
+    if not include_closed:
+        qs = qs.filter(status__in=OPEN_CLAIM_STATUSES)
+    moved, skipped = [], []
+    for claim in qs:
+        old = claim.currency_code
+        items = list(claim.items.all())
+        if any(i.currency_code != old or i.exchange_rate != Decimal("1") for i in items):
+            skipped.append(claim.claim_number)
+            continue
+        for i in items:
+            i.currency_code = target
+            i.save(update_fields=["currency_code"])
+        claim.currency_code = target
+        claim.save(update_fields=["currency_code", "updated_at"])
+        moved.append(claim.claim_number)
+    return moved, skipped

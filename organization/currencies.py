@@ -210,6 +210,13 @@ _PLACE_CURRENCY = {
     "uae": "AED", "u.a.e": "AED", "u.a.e.": "AED", "united arab emirates": "AED",
     "dubai": "AED", "abu dhabi": "AED", "sharjah": "AED", "ajman": "AED",
     "india": "INR", "bharat": "INR", "kochi": "INR", "cochin": "INR", "kerala": "INR",
+    "mumbai": "INR", "chennai": "INR", "bangalore": "INR", "bengaluru": "INR", "delhi": "INR", "new delhi": "INR",
+    "singapore": "SGD", "saudi arabia": "SAR", "ksa": "SAR", "riyadh": "SAR", "jeddah": "SAR",
+    "qatar": "QAR", "doha": "QAR", "oman": "OMR", "muscat": "OMR", "kuwait": "KWD", "bahrain": "BHD",
+    "manama": "BHD", "united kingdom": "GBP", "uk": "GBP", "england": "GBP", "london": "GBP",
+    "united states": "USD", "usa": "USD", "us": "USD", "malaysia": "MYR", "sri lanka": "LKR",
+    "egypt": "EGP", "germany": "EUR", "france": "EUR", "netherlands": "EUR", "spain": "EUR", "italy": "EUR",
+    "australia": "AUD", "canada": "CAD", "japan": "JPY", "china": "CNY", "hong kong": "HKD",
 }
 
 
