@@ -77,7 +77,7 @@
 
             {% include "portal/_branch_currency_fields.html" with prefix="edit" %}
 
-            <label class="gw-switch-row" for="editBranchActive">
+            <label class="gw-switch-row" for="editBranchActive" {% if not can_manage_branches %}style="display: none;"{% endif %}>
                 <span>
                     <span class="gw-switch-label-title">Active office</span>
                     <span class="gw-switch-label-hint">Inactive offices are hidden from employee branch selectors and new claims.</span>

@@ -104,11 +104,8 @@ class DashboardAnalyticsView(APIView):
             branches = branches.filter(id=branch_id)
 
         if role == RoleChoices.LEAD_MANAGER:
-            leave_qs = LeaveApplication.objects.filter(employee__profile__reporting_lead=user)
-            team = User.objects.filter(profile__reporting_lead=user, is_active=True)
-            if branch_id:
-                leave_qs = leave_qs.filter(branch__in=branches)
-                team = team.filter(primary_branch__in=branches)
+            leave_qs = LeaveApplication.objects.filter(employee__profile__reporting_lead=user, branch__in=branches)
+            team = User.objects.filter(profile__reporting_lead=user, is_active=True, primary_branch__in=branches)
         else:
             leave_qs = LeaveApplication.objects.filter(branch__in=branches)
             team = User.objects.filter(primary_branch__in=branches, is_active=True)

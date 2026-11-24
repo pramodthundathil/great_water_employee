@@ -20,6 +20,9 @@ from django.urls import reverse
 
 from accounts.models import User, RoleChoices, EmployeeProfile
 from organization.models import Organization, Department
+from organization.branch_config import (
+    BranchScopeError, can_configure_branch, require_configurable, resolve_config_branch, visible_to,
+)
 from expenses.models import ExpenseClaim, ExpenseCategory, ExpenseAttachment, ExpenseClaimStatus
 from leaves.models import (
     LeaveType, LeavePolicy, LeaveAccrualRun, HolidayCalendar, Holiday,
@@ -44,7 +47,7 @@ MAX_RECEIPTS_PER_CLAIM = 20
 
 
 from accounts.services import (  # noqa: E402  (shared with the mobile API)
-    EmployeeError, can_manage_users, can_reset_passwords, can_set_scope, create_employee,
+    EmployeeError, can_access_employee, can_manage_users, can_reset_passwords, can_set_scope, create_employee,
     password_reset_block_reason, set_employee_password, toggle_employee_active, update_employee,
 )
 
@@ -113,7 +116,7 @@ def employee_edit_view(request, pk):
 
     emp = get_object_or_404(User, pk=pk)
     accessible_branches = user.get_accessible_branches()
-    if emp.primary_branch and not user.can_access_branch(emp.primary_branch):
+    if not can_access_employee(user, emp):
         messages.error(request, "This employee belongs to a branch outside your access scope.")
         return redirect("portal_employees")
 
@@ -229,7 +232,7 @@ def expense_edit_view(request, pk):
     context = {
         "active_nav": "expenses",
         "claim": claim,
-        "categories": ExpenseCategory.objects.filter(is_active=True),
+        "categories": ExpenseCategory.available_for(claim.branch),
         "attachments": claim.attachments.all(),
         "items": claim.items.select_related("category"),
         "today": date.today(),
@@ -267,6 +270,18 @@ def expense_categories_view(request):
 
     if request.method == "POST":
         action = request.POST.get("action")
+        cat = None
+        try:
+            if action == "create":
+                new_branch = resolve_config_branch(user, request.POST.get("branch"))
+            elif action in ("update", "toggle"):
+                cat = get_object_or_404(
+                    visible_to(user, ExpenseCategory.objects.all()), pk=request.POST.get("category_id"))
+                require_configurable(user, cat.branch_id)
+        except BranchScopeError as e:
+            messages.error(request, str(e))
+            return redirect("portal_expense_categories")
+
         if action == "create":
             name = request.POST.get("name", "").strip()
             code = request.POST.get("code", "").strip().upper()
@@ -277,31 +292,36 @@ def expense_categories_view(request):
             else:
                 org = get_default_organization(user)
                 ExpenseCategory.objects.create(
-                    organization=org, name=name[:100], code=code[:50],
+                    organization=org, branch=new_branch, name=name[:100], code=code[:50],
                     description=request.POST.get("description", "").strip(),
                 )
                 messages.success(request, f"Category '{name}' added.")
         elif action == "update":
-            cat = get_object_or_404(ExpenseCategory, pk=request.POST.get("category_id"))
             cat.name = request.POST.get("name", cat.name).strip() or cat.name
             cat.description = request.POST.get("description", "").strip()
             cat.save()
             messages.success(request, f"Category '{cat.name}' updated.")
         elif action == "toggle":
-            cat = get_object_or_404(ExpenseCategory, pk=request.POST.get("category_id"))
             cat.is_active = not cat.is_active
             cat.save(update_fields=["is_active"])
             messages.success(request, f"Category '{cat.name}' {'enabled' if cat.is_active else 'disabled'}.")
         return redirect("portal_expense_categories")
 
     categories = list(
-        ExpenseCategory.objects.annotate(claim_count=Count("expense_claims"))
+        visible_to(user, ExpenseCategory.objects.all())
+        .select_related("branch")
+        .annotate(claim_count=Count(
+            "expense_claims", filter=Q(expense_claims__branch__in=user.get_accessible_branches())))
         .order_by("-is_active", "name")
     )
+    for c in categories:
+        c.can_edit = can_configure_branch(user, c.branch_id)
     active_count = sum(1 for c in categories if c.is_active)
     context = {
         "active_nav": "expense_categories",
         "categories": categories,
+        "branches": user.get_accessible_branches(),
+        "can_configure_org": user.has_all_branch_access,
         "active_count": active_count,
         "disabled_count": len(categories) - active_count,
     }
@@ -339,7 +359,7 @@ def _assignable_employees(user):
     """Employees HR may target individually: active, with a profile, in branches they can access."""
     qs = User.objects.filter(is_active=True, profile__isnull=False).select_related("primary_branch", "profile__department")
     branches = user.get_accessible_branches()
-    if not (user.is_superuser or user.is_global_scope):
+    if not user.has_all_branch_access:
         qs = qs.filter(primary_branch__in=branches)
     return qs.order_by("first_name", "last_name", "employee_id")
 
@@ -355,16 +375,23 @@ def _assign_from_post(request, policy):
     """
     user = request.user
     scope = request.POST.get("scope", PolicyScope.ALL)
+    # "All employees" and department assignments of an organisation-wide policy reach every branch.
+    if scope in (PolicyScope.ALL, PolicyScope.DEPARTMENT) and not can_configure_branch(user, policy.branch_id):
+        return 0, "An organisation-wide policy can only be assigned to your own branches or employees."
     if scope == PolicyScope.ALL:
         return assign_policy(policy, scope, actor=user), None
     if scope == PolicyScope.BRANCH:
         targets = list(user.get_accessible_branches().filter(id__in=_posted_ids(request, "branch_ids")))
+        if policy.branch_id:
+            targets = [t for t in targets if t.id == policy.branch_id]
         label = "branch"
     elif scope == PolicyScope.DEPARTMENT:
         targets = list(Department.objects.filter(is_active=True, id__in=_posted_ids(request, "department_ids")))
         label = "department"
     elif scope == PolicyScope.EMPLOYEE:
         targets = list(_assignable_employees(user).filter(id__in=_posted_ids(request, "employee_ids")))
+        if policy.branch_id:
+            targets = [t for t in targets if t.primary_branch_id == policy.branch_id]
         label = "employee"
     else:
         return 0, "Choose who the policy applies to."
@@ -373,14 +400,41 @@ def _assign_from_post(request, policy):
     return assign_policy(policy, scope, targets, actor=user), None
 
 
+def _can_unassign(user, policy, assignment):
+    """Own policies: anything. Organisation-wide policies: only assignments aimed at the user's own branches."""
+    if can_configure_branch(user, policy.branch_id):
+        return True
+    if assignment.scope == PolicyScope.BRANCH:
+        return can_configure_branch(user, assignment.branch_id)
+    if assignment.scope == PolicyScope.EMPLOYEE and assignment.employee:
+        return can_configure_branch(user, assignment.employee.primary_branch_id)
+    return False
+
+
 @login_required
 def leave_settings_view(request):
+    try:
+        return _leave_settings(request)
+    except BranchScopeError as e:
+        messages.error(request, str(e))
+        return _redirect_leave_settings(
+            tab=request.POST.get("tab") or "types", year=_safe_int(request.POST.get("year")),
+            open_type=_safe_int(request.POST.get("leave_type_id")))
+
+
+def _leave_settings(request):
     user = request.user
     if not (user.is_hr_coordinator or user.is_director or user.is_superuser):
         messages.error(request, "Leave settings are managed by the HR Coordinator.")
         return redirect("portal_dashboard")
 
     org = get_default_organization(user)
+    # Everything below is limited to organisation-wide records (read-only unless the user has access
+    # to all branches) plus those of the user's own branches.
+    types_qs = visible_to(user, LeaveType.objects.all())
+    policies_qs = visible_to(
+        user, visible_to(user, LeavePolicy.objects.select_related("leave_type")), field="leave_type__branch")
+    run_branches = None if user.has_all_branch_access else user.get_accessible_branches()
 
     if request.method == "POST":
         action = request.POST.get("action")
@@ -398,7 +452,7 @@ def leave_settings_view(request):
                 return _redirect_leave_settings(tab="types", year=posted_year)
             else:
                 new_lt = LeaveType.objects.create(
-                    organization=org, name=name, code=code,
+                    organization=org, branch=resolve_config_branch(user, request.POST.get("branch")), name=name, code=code,
                     is_paid=request.POST.get("is_paid") == "1",
                     is_accrual_based=request.POST.get("is_accrual_based") == "1",
                     requires_attachment=request.POST.get("requires_attachment") == "1",
@@ -411,7 +465,8 @@ def leave_settings_view(request):
                 return _redirect_leave_settings(tab="types", year=posted_year, open_type=new_lt.id)
 
         elif action == "update_leave_type":
-            lt = get_object_or_404(LeaveType, pk=request.POST.get("leave_type_id"))
+            lt = get_object_or_404(types_qs, pk=request.POST.get("leave_type_id"))
+            require_configurable(user, lt.branch_id)
             if not lt.organization_id:
                 lt.organization = org
             lt.name = (request.POST.get("name", lt.name).strip() or lt.name)[:50]
@@ -425,8 +480,14 @@ def leave_settings_view(request):
 
         elif action == "save_policy":
             policy_id = request.POST.get("policy_id")
-            lt = get_object_or_404(LeaveType, pk=request.POST.get("leave_type_id"))
-            policy = LeavePolicy.objects.filter(pk=policy_id).first() if policy_id else LeavePolicy(leave_type=lt)
+            lt = get_object_or_404(types_qs, pk=request.POST.get("leave_type_id"))
+            if policy_id:
+                policy = get_object_or_404(policies_qs, pk=policy_id, leave_type=lt)
+                require_configurable(user, policy.branch_id)
+            else:
+                # A branch's own leave type only ever has that branch's policies.
+                policy = LeavePolicy(leave_type=lt, branch=resolve_config_branch(
+                    user, lt.branch_id or request.POST.get("branch")))
             values = {
                 "yearly_entitlement": _parse_decimal(request.POST.get("yearly_entitlement")),
                 "monthly_accrual_rate": _parse_decimal(request.POST.get("monthly_accrual_rate") or "0"),
@@ -467,7 +528,7 @@ def leave_settings_view(request):
             return _redirect_leave_settings(tab="types", year=posted_year, open_type=lt.id)
 
         elif action == "assign_policy":
-            policy = get_object_or_404(LeavePolicy.objects.select_related("leave_type"), pk=request.POST.get("policy_id"))
+            policy = get_object_or_404(policies_qs, pk=request.POST.get("policy_id"))
             created, error = _assign_from_post(request, policy)
             if error:
                 messages.error(request, error)
@@ -475,23 +536,24 @@ def leave_settings_view(request):
                 msg = f"'{policy.name}' assigned to {created} new target(s)." if created else \
                     f"Those targets were already assigned to '{policy.name}'."
                 if request.POST.get("apply_now") == "1":
-                    res = apply_policy_now(policy, actor=user)
+                    res = apply_policy_now(policy, actor=user, branches=run_branches)
                     msg += f" Applied now: {res['credited']} employee(s) credited, {res['skipped']} skipped (already credited, on probation or not yet joined)."
                 messages.success(request, msg)
             return _redirect_leave_settings(tab="types", year=posted_year, open_type=policy.leave_type_id)
 
         elif action == "unassign_policy":
-            policy = get_object_or_404(LeavePolicy, pk=request.POST.get("policy_id"))
-            removed = unassign_policy(policy, _posted_ids(request, "assignment_ids"))
+            policy = get_object_or_404(policies_qs, pk=request.POST.get("policy_id"))
+            chosen = policy.assignments.select_related("employee").filter(id__in=_posted_ids(request, "assignment_ids"))
+            removed = unassign_policy(policy, [a.id for a in chosen if _can_unassign(user, policy, a)])
             messages.info(request, f"Removed {removed} assignment(s) from '{policy.name}'." if removed else "Nothing selected to remove.")
             return _redirect_leave_settings(tab="types", year=posted_year, open_type=policy.leave_type_id)
 
         elif action == "apply_policy_now":
-            policy = get_object_or_404(LeavePolicy.objects.select_related("leave_type"), pk=request.POST.get("policy_id"))
+            policy = get_object_or_404(policies_qs, pk=request.POST.get("policy_id"))
             if not policy.is_active:
                 messages.error(request, f"'{policy.name}' is inactive. Activate it before applying.")
             else:
-                res = apply_policy_now(policy, actor=user)
+                res = apply_policy_now(policy, actor=user, branches=run_branches)
                 period = "this month's accrual" if policy.accrual_frequency == "MONTHLY" else f"the {date.today().year} entitlement"
                 messages.success(
                     request,
@@ -503,11 +565,10 @@ def leave_settings_view(request):
         elif action == "add_holiday":
             hdate = _parse_date(request.POST.get("date"))
             name = request.POST.get("name", "").strip()
-            branch_id = request.POST.get("branch") or None
             if not hdate or not name:
                 messages.error(request, "Holiday date and name are required.")
                 return _redirect_leave_settings(tab="holidays", year=posted_year)
-            branch = user.get_accessible_branches().filter(id=branch_id).first() if branch_id else None
+            branch = resolve_config_branch(user, request.POST.get("branch"))
             calendar, _ = HolidayCalendar.objects.get_or_create(
                 organization=org, branch=branch, year=hdate.year,
                 defaults={"name": f"{branch.name if branch else 'All Branches'} Holidays {hdate.year}"},
@@ -531,13 +592,13 @@ def leave_settings_view(request):
                 pk=request.POST.get("holiday_id"),
                 calendar__organization=org,
             )
+            require_configurable(user, holiday.calendar.branch_id)
             hdate = _parse_date(request.POST.get("date"))
             name = request.POST.get("name", "").strip()
-            branch_id = request.POST.get("branch") or None
             if not hdate or not name:
                 messages.error(request, "Holiday date and name are required.")
                 return _redirect_leave_settings(tab="holidays", year=posted_year or holiday.date.year)
-            branch = user.get_accessible_branches().filter(id=branch_id).first() if branch_id else None
+            branch = resolve_config_branch(user, request.POST.get("branch"))
             target_calendar, _ = HolidayCalendar.objects.get_or_create(
                 organization=org, branch=branch, year=hdate.year,
                 defaults={"name": f"{branch.name if branch else 'All Branches'} Holidays {hdate.year}"},
@@ -558,19 +619,20 @@ def leave_settings_view(request):
             return _redirect_leave_settings(tab="holidays", year=hdate.year)
 
         elif action == "delete_holiday":
-            holiday = Holiday.objects.filter(
+            holiday = Holiday.objects.select_related("calendar").filter(
                 pk=request.POST.get("holiday_id"),
                 calendar__organization=org,
             ).first()
             target_year = holiday.date.year if holiday else posted_year
             if holiday:
+                require_configurable(user, holiday.calendar.branch_id)
                 holiday_name = holiday.name
                 holiday.delete()
                 messages.info(request, f"Holiday '{holiday_name}' removed.")
             return _redirect_leave_settings(tab="holidays", year=target_year)
 
         elif action == "run_accrual":
-            res = run_batch_monthly_accrual()
+            res = run_batch_monthly_accrual(branches=run_branches)
             messages.success(
                 request,
                 f"Earned-leave accrual for {res['period_key']}: {res['credited']} credited, "
@@ -587,18 +649,18 @@ def leave_settings_view(request):
     open_assign_id = _safe_int(request.GET.get("open_assign"))
 
     holidays = list(
-        Holiday.objects.filter(calendar__year=year, calendar__organization=org)
-        .filter(Q(calendar__branch__isnull=True) | Q(calendar__branch__in=user.get_accessible_branches()))
+        visible_to(user, Holiday.objects.filter(calendar__year=year, calendar__organization=org),
+                   field="calendar__branch")
         .select_related("calendar__branch")
         .order_by("date")
     )
     leave_types = list(
-        LeaveType.objects.all()
+        types_qs.select_related("branch")
         .prefetch_related(Prefetch(
             "policies",
-            queryset=LeavePolicy.objects.prefetch_related(Prefetch(
+            queryset=policies_qs.select_related("branch", "leave_type").prefetch_related(Prefetch(
                 "assignments",
-                queryset=LeavePolicyAssignment.objects.select_related("branch", "department", "employee"),
+                queryset=LeavePolicyAssignment.objects.select_related("policy__branch", "branch", "department", "employee"),
             )).order_by("-is_active", "effective_date", "id"),
         ))
         .order_by("-is_active", "name")
@@ -609,14 +671,30 @@ def leave_settings_view(request):
 
     # Who each policy *actually* governs once precedence is applied.
     coverage = policy_coverage()
+    own_branch_ids = {b.id for b in branches}
+    for h in holidays:
+        h.can_edit = can_configure_branch(user, h.calendar.branch_id)
     for lt in leave_types:
+        lt.can_edit = can_configure_branch(user, lt.branch_id)
         for p in lt.policies.all():
-            p.covered_employees = coverage.get(p.id, [])
+            p.can_edit = can_configure_branch(user, p.branch_id)
+            p.covered_employees = [
+                e for e in coverage.get(p.id, [])
+                if user.has_all_branch_access or e.primary_branch_id in own_branch_ids
+            ]
             p.covered_count = len(p.covered_employees)
-            p.assignment_list = list(p.assignments.all())
+            # Other branches' targeted assignments of a shared policy are not shown.
+            p.assignment_list = []
+            for a in p.assignments.all():
+                a.can_remove = _can_unassign(user, p, a)
+                if a.can_remove or a.scope in (PolicyScope.ALL, PolicyScope.DEPARTMENT):
+                    p.assignment_list.append(a)
 
     current_period_key = today.strftime("%Y-%m")
-    current_period_credited_count = LeaveAccrualRun.objects.filter(period_key=current_period_key).count()
+    accrual_runs = LeaveAccrualRun.objects.filter(period_key=current_period_key)
+    if run_branches is not None:
+        accrual_runs = accrual_runs.filter(employee__primary_branch__in=run_branches)
+    current_period_credited_count = accrual_runs.count()
     active_leave_types_count = sum(1 for lt in leave_types if lt.is_active)
     all_policies = [p for lt in leave_types for p in lt.policies.all()]
     active_policies_count = sum(1 for p in all_policies if p.is_active)
@@ -643,6 +721,7 @@ def leave_settings_view(request):
         "year": year,
         "years": [year - 1, year, year + 1],
         "branches": branches,
+        "can_configure_org": user.has_all_branch_access,
         "departments": departments,
         "assignable_employees": assignable_employees,
         "policy_scopes": PolicyScope.choices,
@@ -700,7 +779,7 @@ def leave_record_on_behalf_view(request):
     context = {
         "active_nav": "leave_record",
         "employees": employees,
-        "leave_types": LeaveType.objects.filter(is_active=True),
+        "leave_types": visible_to(user, LeaveType.objects.filter(is_active=True)),
         "today": date.today(),
     }
     return render(request, "portal/leave_record.html", context)

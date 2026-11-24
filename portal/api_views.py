@@ -16,7 +16,7 @@ from expenses.models import ExpenseClaim, ExpenseClaimStatus
 from expenses.serializers import ExpenseClaimListSerializer
 from leaves.models import LeaveApplication, LeaveApplicationStatus
 from leaves.serializers import LeaveApplicationListSerializer
-from leaves.services import get_employee_leave_balances
+from leaves.services import get_employee_leave_balances, lead_recommendation_queue
 from notifications.models import NotificationEvent
 from portal.dashboard_services import build_status_alerts
 
@@ -86,11 +86,11 @@ def pending_items_for(user):
     branches = user.get_accessible_branches()
 
     if user.is_lead_manager or LeaveApplication.objects.filter(employee__profile__reporting_lead=user).exists():
-        qs = LeaveApplication.objects.filter(
-            status=LeaveApplicationStatus.PENDING_LEAD_RECOMMENDATION,
-        ).select_related("employee", "branch", "leave_type")
-        if not user.is_superuser:
-            qs = qs.filter(employee__profile__reporting_lead=user)
+        if user.is_superuser:
+            qs = LeaveApplication.objects.filter(status=LeaveApplicationStatus.PENDING_LEAD_RECOMMENDATION)
+        else:
+            qs = lead_recommendation_queue(user)
+        qs = qs.select_related("employee", "branch", "leave_type")
         items += [_leave_item(a, "Lead recommendation", "/leaves/applications/{id}/lead-recommend/", "RECOMMENDED", "Recommend")
                   for a in qs.exclude(employee=user)]
 

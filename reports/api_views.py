@@ -78,11 +78,9 @@ class ReportExportView(APIView):
         if role == RoleChoices.LEAD_MANAGER:
             # Lead / Manager: leave data for their own team only — no expense data.
             claim_qs = ExpenseClaim.objects.none()
-            leave_qs = LeaveApplication.objects.filter(employee__profile__reporting_lead=user)
-            employees = User.objects.filter(profile__reporting_lead=user, is_active=True)
-            if branch_id:
-                leave_qs = leave_qs.filter(branch__in=branches)
-                employees = employees.filter(primary_branch__in=branches)
+            leave_qs = LeaveApplication.objects.filter(employee__profile__reporting_lead=user, branch__in=branches)
+            employees = User.objects.filter(
+                profile__reporting_lead=user, is_active=True, primary_branch__in=branches)
         else:
             claim_qs = ExpenseClaim.objects.filter(branch__in=branches)
             leave_qs = LeaveApplication.objects.filter(branch__in=branches)
@@ -176,7 +174,8 @@ class LeaveReportExportView(APIView):
         accessible_branches = user.get_accessible_branches()
 
         if effective_role(user) == RoleChoices.LEAD_MANAGER:
-            qs = LeaveApplication.objects.filter(employee__profile__reporting_lead=user)
+            qs = LeaveApplication.objects.filter(
+                employee__profile__reporting_lead=user, branch__in=accessible_branches)
             branch_title = "Team Leaves"
         else:
             qs = LeaveApplication.objects.filter(branch__in=accessible_branches)

@@ -166,7 +166,7 @@
                         </a>
                     </div>
 
-                    {% if can_manage_branches %}
+                    {% if b.can_edit %}
                     <div class="d-flex align-items-center gap-1">
                         <button
                             type="button"
@@ -186,6 +186,7 @@
                         >
                             <i class="bi bi-pencil" aria-hidden="true"></i>
                         </button>
+                        {% if can_manage_branches %}
                         <button
                             type="button"
                             class="btn btn-sm btn-light border js-toggle-branch-btn"
@@ -197,7 +198,8 @@
                         >
                             <i class="bi {% if b.is_active %}bi-pause-circle text-warning{% else %}bi-play-circle text-success{% endif %}" aria-hidden="true"></i>
                         </button>
-                        {% if b.can_delete %}
+                        {% endif %}
+                        {% if can_manage_branches and b.can_delete %}
                         <button
                             type="button"
                             class="btn btn-sm btn-outline-danger js-delete-branch-btn"
@@ -486,6 +488,8 @@
     </form>
 </dialog>
 
+{% endif %}
+{% if can_edit_any_branch %}
 {% url 'portal_branches' as branches_action_url %}
 {% include "portal/_branch_modals.html" with form_action=branches_action_url %}
 {% endif %}

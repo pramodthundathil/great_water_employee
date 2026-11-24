@@ -215,7 +215,7 @@ def notify_leave_event(application, event_type, remarks="", partial=False, chang
             title = f"Leave from {emp.get_role_display()} {emp.full_name}: {application.application_number}"
             summary += " Sent directly to HR verification."
         elif status == "PENDING_DIRECTOR_APPROVAL":
-            recipients = User.objects.filter(is_active=True, role=RoleChoices.DIRECTOR).exclude(id=emp.id)
+            recipients = _branch_directors(branch, exclude_ids=[emp.id])
             title = f"Leave from HR Coordinator {emp.full_name}: {application.application_number}"
             summary += " Sent directly for your approval."
         else:
@@ -251,7 +251,7 @@ def notify_leave_event(application, event_type, remarks="", partial=False, chang
 
     elif event_type == "LEAVE_HR_VERIFIED":
         # Notify Directors
-        directors = User.objects.filter(is_active=True, role=RoleChoices.DIRECTOR)
+        directors = _branch_directors(branch)
         for d in directors:
             send_system_notification(
                 recipient=d,

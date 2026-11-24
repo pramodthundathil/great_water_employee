@@ -105,7 +105,7 @@ def clean_items(raw_items, branch, base=None):
     if len(raw_items) > MAX_ITEMS:
         raise ItemError(f"A claim can have at most {MAX_ITEMS} items.")
     base = base or branch.currency_code
-    categories = {c.id: c for c in ExpenseCategory.objects.filter(is_active=True)}
+    categories = {c.id: c for c in ExpenseCategory.available_for(branch)}
     today = date.today()
     clean = []
     for idx, row in enumerate(raw_items, start=1):

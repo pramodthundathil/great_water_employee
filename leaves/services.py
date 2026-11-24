@@ -2,6 +2,7 @@ from decimal import Decimal
 from datetime import date
 from dateutil.relativedelta import relativedelta
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 
@@ -10,7 +11,7 @@ from leaves.models import (
     LeaveLedgerEntryType, LeaveApplication, LeaveApplicationStatus,
     LeaveAuditLog, LeaveAuditAction, LeaveApproval, fmt_days,
     initial_approval_stage, STAGE_PENDING_STATUS, STAGE_LABELS,
-    LeavePolicyAssignment, PolicyScope, SCOPE_PRIORITY,
+    LeavePolicyAssignment, PolicyScope,
 )
 
 
@@ -18,9 +19,17 @@ from leaves.models import (
 # Policy assignment & resolution
 # ---------------------------------------------------------------------------
 
-def _eligible_employees():
+def _eligible_employees(branches=None):
+    """Active employees, optionally limited to the given branches."""
     from accounts.models import User
-    return User.objects.filter(is_active=True, profile__isnull=False).select_related("profile", "primary_branch")
+    qs = User.objects.filter(is_active=True, profile__isnull=False).select_related("profile", "primary_branch")
+    return qs if branches is None else qs.filter(primary_branch__in=branches)
+
+
+def _policy_covers_branch(policy, employee):
+    """Branch-owned policies / leave types never reach employees of another branch."""
+    return all(b is None or b == employee.primary_branch_id
+               for b in (policy.branch_id, policy.leave_type.branch_id))
 
 
 def _assignment_matches(assignment, employee):
@@ -39,7 +48,7 @@ def _assignment_matches(assignment, employee):
 
 def _load_active_policies(leave_type=None, frequency=None):
     qs = LeavePolicy.objects.filter(is_active=True, leave_type__is_active=True).select_related("leave_type") \
-        .prefetch_related("assignments")
+        .prefetch_related("assignments__policy")
     if leave_type is not None:
         qs = qs.filter(leave_type=leave_type)
     if frequency is not None:
@@ -57,8 +66,10 @@ def resolve_policies_for_employee(employee, policies=None):
         policies = _load_active_policies()
     best = {}
     for policy in policies:
+        if not _policy_covers_branch(policy, employee):
+            continue
         rank = max(
-            (SCOPE_PRIORITY.get(a.scope, 0) for a in policy.assignments.all() if _assignment_matches(a, employee)),
+            (a.priority for a in policy.assignments.all() if _assignment_matches(a, employee)),
             default=0,
         )
         if rank == 0:
@@ -160,9 +171,9 @@ def _grant_yearly_entitlement(employee, policy, year, actor=None):
 
 
 @transaction.atomic
-def apply_policy_now(policy, actor=None, as_of_date=None):
+def apply_policy_now(policy, actor=None, as_of_date=None, branches=None):
     """
-    Put a policy into effect immediately for everyone it currently governs:
+    Put a policy into effect immediately for everyone it currently governs (in `branches`, if given):
       Monthly policies -> credit this month's accrual
       Yearly / fixed   -> credit this year's entitlement
     Safe to repeat: nothing is credited twice for the same leave type and period,
@@ -174,7 +185,7 @@ def apply_policy_now(policy, actor=None, as_of_date=None):
     if not policy.is_active:
         return results
     policies = _load_active_policies(leave_type=policy.leave_type)
-    for emp in _eligible_employees():
+    for emp in _eligible_employees(branches):
         effective = resolve_policies_for_employee(emp, policies).get(policy.leave_type_id)
         if effective is None or effective.id != policy.id:
             continue
@@ -195,7 +206,11 @@ def get_employee_leave_balances(employee):
     - Pending days (Awaiting recommendation, HR verification, or Director approval)
     - Available balance (official ledger balance)
     """
-    leave_types = LeaveType.objects.filter(is_active=True)
+    # Types of the employee's own branch, plus any they already hold history in (e.g. after a transfer).
+    leave_types = LeaveType.objects.filter(is_active=True).filter(
+        Q(pk__in=LeaveType.available_for(employee).values("pk"))
+        | Q(pk__in=LeaveLedgerEntry.objects.filter(employee=employee).values("leave_type_id"))
+    )
     effective_policies = resolve_policies_for_employee(employee)
     summary = []
 
@@ -300,10 +315,10 @@ def run_accrual_for_employee(employee, policy, period_key, as_of_date=None):
     return accrual_run, "Accrual processed successfully"
 
 
-def run_batch_monthly_accrual(period_key=None, as_of_date=None):
+def run_batch_monthly_accrual(period_key=None, as_of_date=None, branches=None):
     """
     Executes monthly accrual for every active employee under the monthly policy
-    assigned to them (see resolve_policies_for_employee).
+    assigned to them (see resolve_policies_for_employee). `branches` limits the run.
     """
     if as_of_date is None:
         as_of_date = date.today()
@@ -311,7 +326,7 @@ def run_batch_monthly_accrual(period_key=None, as_of_date=None):
         period_key = as_of_date.strftime("%Y-%m")
 
     policies = _load_active_policies()
-    employees = list(_eligible_employees())
+    employees = list(_eligible_employees(branches))
 
     results = {
         "period_key": period_key,
@@ -344,6 +359,10 @@ def record_manual_leave_adjustment(employee, leave_type, days, remarks, hr_user)
     """
     if not remarks or not remarks.strip():
         raise ValidationError("Mandatory justification remarks are required for all manual balance adjustments.")
+
+    if not leave_type.is_available_to(employee) and not LeaveLedgerEntry.objects.filter(
+            employee=employee, leave_type=leave_type).exists():
+        raise ValidationError(f"{leave_type.name} is not available in this employee's branch.")
 
     days_dec = Decimal(str(days))
     if days_dec == Decimal("0.00"):
@@ -383,7 +402,6 @@ PENDING_LEAVE_STATUSES = ACTIVE_LEAVE_STATUSES[:3]
 
 def get_holiday_dates(branch, start_date, end_date):
     """Public (non-optional) holidays for the branch plus organisation-wide calendars."""
-    from django.db.models import Q
     from leaves.models import Holiday
 
     qs = Holiday.objects.filter(
@@ -440,6 +458,8 @@ def validate_leave_request(employee, leave_type, start_date, end_date, is_half_d
     Validates a leave request and returns (number_of_days, end_date, warnings).
     Raises LeaveRequestError on blocking problems.
     """
+    if not leave_type.is_available_to(employee):
+        raise LeaveRequestError(f"{leave_type.name} is not available in this branch.", code="leave_type_unavailable")
     if end_date < start_date:
         raise LeaveRequestError("End date cannot be before start date.", code="invalid_dates")
 
@@ -658,28 +678,45 @@ def visible_leave_applications(user, include_own=True):
     """
     Leave applications a user may track, with their current status and history.
       Employee        : own applications only
-      Lead / Manager  : own + direct reports + anything they have acted on
+      Lead / Manager  : own + direct reports + anything they have acted on, in their branches
       HR / Director / : every application in their accessible branches (all regions for
-      Admin Manager     global-scope users) + anything they have acted on
+      Admin Manager     global-scope users)
     """
-    from django.db.models import Q
     from accounts.models import RoleChoices
 
     own = Q(employee=user)
-    acted = Q(approval_history__approver=user)
     if user.is_superuser:
         scope = Q()
     elif user.role == RoleChoices.EMPLOYEE:
         scope = own
     elif user.role == RoleChoices.LEAD_MANAGER:
-        scope = own | Q(employee__profile__reporting_lead=user) | acted
+        scope = own | (
+            Q(branch__in=user.get_accessible_branches())
+            & (Q(employee__profile__reporting_lead=user) | Q(approval_history__approver=user))
+        )
     else:
-        scope = own | Q(branch__in=user.get_accessible_branches()) | acted
+        scope = own | Q(branch__in=user.get_accessible_branches())
 
     qs = LeaveApplication.objects.filter(scope)
     if not include_own:
         qs = qs.exclude(employee=user)
     return qs.distinct()
+
+
+def lead_recommendation_queue(user):
+    """Leave awaiting this user's recommendation as reporting lead, in the branches they can access."""
+    return LeaveApplication.objects.filter(
+        employee__profile__reporting_lead=user,
+        branch__in=user.get_accessible_branches(),
+        status=LeaveApplicationStatus.PENDING_LEAD_RECOMMENDATION,
+    )
+
+
+def can_recommend_leave(user, application):
+    if user.is_superuser:
+        return True
+    lead_id = getattr(getattr(application.employee, "profile", None), "reporting_lead_id", None)
+    return user.id == lead_id and user.can_access_branch(application.branch)
 
 
 def leave_review_options(user, application):
@@ -693,8 +730,7 @@ def leave_review_options(user, application):
     can_partial = not application.is_half_day and application.start_date != application.end_date
 
     if status == LeaveApplicationStatus.PENDING_LEAD_RECOMMENDATION:
-        lead_id = getattr(getattr(application.employee, "profile", None), "reporting_lead_id", None)
-        if not (user.id == lead_id or user.is_superuser):
+        if not can_recommend_leave(user, application):
             return None
         stage, label, path, positive, positive_label = (
             "LEAD_MANAGER", "Lead recommendation", "lead-recommend", "RECOMMENDED", "Recommend")

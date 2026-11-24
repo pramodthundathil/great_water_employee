@@ -5,7 +5,7 @@ Single source of truth for who may see which report / analytics section.
   LEAD_MANAGER    leave reports only (their team)
   ADMIN_MANAGER   expense / claim reports only (their branches)
   HR_COORDINATOR  every report (their branches — all branches when global scope)
-  DIRECTOR        every report, organisation-wide (superusers are Directors)
+  DIRECTOR        every report (their branches — all branches when global scope; superusers always)
 
 Branch scope comes from User.get_accessible_branches(): a global-scope Admin Manager /
 HR Coordinator sees every branch, a branch-assigned one only their primary + scoped branches.

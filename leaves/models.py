@@ -102,6 +102,10 @@ class LeaveType(models.Model):
         on_delete=models.CASCADE,
         related_name="leave_types"
     )
+    branch = models.ForeignKey(
+        "organization.Branch", on_delete=models.CASCADE, null=True, blank=True, related_name="leave_types",
+        help_text="Leave blank if it applies to all branches",
+    )
     name = models.CharField(max_length=50)  # e.g., Earned Leave, Casual Leave, Sick Leave, Unpaid Leave
     code = models.CharField(max_length=20, unique=True)  # EL, CL, SL, LWP
     is_paid = models.BooleanField(default=True)
@@ -117,12 +121,25 @@ class LeaveType(models.Model):
     def __str__(self):
         return f"{self.name} ({self.code})"
 
+    def is_available_to(self, employee):
+        return self.branch_id is None or self.branch_id == employee.primary_branch_id
+
+    @classmethod
+    def available_for(cls, employee):
+        """Active leave types an employee may apply for: organisation-wide plus their own branch's."""
+        from organization.branch_config import available_in
+        return available_in(employee.primary_branch_id, cls.objects.filter(is_active=True))
+
 
 class LeavePolicy(models.Model):
     leave_type = models.ForeignKey(
         LeaveType,
         on_delete=models.CASCADE,
         related_name="policies"
+    )
+    branch = models.ForeignKey(
+        "organization.Branch", on_delete=models.CASCADE, null=True, blank=True, related_name="leave_policies",
+        help_text="Leave blank if it applies to all branches",
     )
     name = models.CharField(max_length=100)
     yearly_entitlement = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("18.00"))
@@ -207,6 +224,9 @@ class LeavePolicyAssignment(models.Model):
 
     @property
     def priority(self):
+        """"All employees" of a branch-owned policy means that branch, so it ranks as a branch assignment."""
+        if self.scope == PolicyScope.ALL and self.policy.branch_id:
+            return SCOPE_PRIORITY[PolicyScope.BRANCH]
         return SCOPE_PRIORITY.get(self.scope, 0)
 
     @property
@@ -217,6 +237,8 @@ class LeavePolicyAssignment(models.Model):
             return self.department.name
         if self.scope == PolicyScope.EMPLOYEE and self.employee_id:
             return f"{self.employee.full_name} ({self.employee.employee_id})"
+        if self.policy.branch_id:
+            return f"All {self.policy.branch.name} employees"
         return "All employees"
 
     def __str__(self):
@@ -437,6 +459,8 @@ class LeaveApplication(models.Model):
         new_end = end_date or self.end_date
         if new_type.id == self.leave_type_id and new_start == self.start_date and new_end == self.end_date:
             return None
+        if new_type.id != self.leave_type_id and not new_type.is_available_to(self.employee):
+            raise ValidationError(f"{new_type.name} is not available in this employee's branch.")
         if not new_type.is_active:
             raise ValidationError(f"{new_type.name} is not an active leave type.")
         if new_end < new_start:

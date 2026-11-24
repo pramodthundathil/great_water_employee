@@ -49,8 +49,8 @@ CORS_ALLOWED_ORIGINS=https://portal.greatwaters.com,https://api.greatwaters.com
 CSRF_TRUSTED_ORIGINS=https://portal.greatwaters.com,https://api.greatwaters.com
 
 # JWT Configuration
-JWT_ACCESS_TOKEN_LIFETIME_MINUTES=15
-JWT_REFRESH_TOKEN_LIFETIME_DAYS=30
+JWT_ACCESS_MINUTES=1440
+JWT_REFRESH_DAYS=30
 
 # Email (SMTP)
 EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend

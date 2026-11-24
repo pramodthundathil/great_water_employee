@@ -64,6 +64,10 @@ class ExpenseCategory(models.Model):
         on_delete=models.CASCADE,
         related_name="expense_categories"
     )
+    branch = models.ForeignKey(
+        "organization.Branch", on_delete=models.CASCADE, null=True, blank=True, related_name="expense_categories",
+        help_text="Leave blank if it applies to all branches",
+    )
     name = models.CharField(max_length=100)
     code = models.CharField(max_length=50, unique=True)
     description = models.TextField(blank=True)
@@ -77,6 +81,12 @@ class ExpenseCategory(models.Model):
 
     def __str__(self):
         return self.name
+
+    @classmethod
+    def available_for(cls, branch):
+        """Active categories usable on a claim of `branch`: organisation-wide plus its own."""
+        from organization.branch_config import available_in
+        return available_in(getattr(branch, "pk", None), cls.objects.filter(is_active=True))
 
 
 class ExpenseClaim(models.Model):

@@ -1,0 +1,8 @@
+{# Which branch a new configuration record belongs to. Context: branches, can_configure_org, field_id. #}
+<label class="form-label small fw-semibold mb-1" for="{{ field_id }}">Applies to branch</label>
+<select id="{{ field_id }}" name="branch" class="form-select form-select-sm">
+    {% if can_configure_org %}<option value="">All branches (Organization-wide)</option>{% endif %}
+    {% for b in branches %}
+    <option value="{{ b.id }}" {% if not can_configure_org and b.id == user.primary_branch_id %}selected{% endif %}>{{ b.name }} ({{ b.code }})</option>
+    {% endfor %}
+</select>

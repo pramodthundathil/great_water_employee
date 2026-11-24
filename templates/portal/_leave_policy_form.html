@@ -7,13 +7,14 @@
     <input type="hidden" name="year" value="{{ year }}">
     {% if policy %}<input type="hidden" name="policy_id" value="{{ policy.id }}">{% endif %}
 
-    <fieldset class="border-0 p-0 m-0">
+    <fieldset class="border-0 p-0 m-0" {% if policy and not policy.can_edit %}disabled{% endif %}>
         <legend class="gw-fieldset-legend justify-content-between w-100">
             <span>
                 <i class="bi bi-sliders2 me-1 text-primary" aria-hidden="true"></i>
                 {% if policy %}{{ policy.name }}{% else %}New Entitlement Policy{% endif %}
             </span>
             {% if policy %}
+            <span class="ms-auto me-2 d-inline-flex gap-1">{% include "portal/_config_scope_chip.html" with obj=policy %}</span>
             <span class="status-badge {% if policy.is_active %}badge-approved{% else %}badge-draft{% endif %}">
                 {% if policy.is_active %}Active{% else %}Inactive{% endif %}
             </span>
@@ -183,13 +184,20 @@
 
         {% if not policy %}
         <div class="mt-3">
+            {% if lt.branch %}
+            <div class="small text-secondary"><i class="bi bi-geo-alt me-1" aria-hidden="true"></i>This leave type belongs to {{ lt.branch.name }}, so the policy applies there only.</div>
+            {% else %}
+            {% with field_id="pol-branch-"|add:lt.code %}{% include "portal/_config_branch_select.html" %}{% endwith %}
+            {% endif %}
+        </div>
+        <div class="mt-3">
             <div class="form-label small fw-semibold mb-2">Applies to</div>
             <div class="gw-radio-grid">
                 <label class="gw-radio-card" for="applies-all-{{ lt.id }}-{{ pid }}">
                     <input type="radio" name="applies_to" value="ALL" id="applies-all-{{ lt.id }}-{{ pid }}" checked>
                     <span>
                         <span class="gw-radio-title">All employees</span>
-                        <span class="gw-radio-desc">Organisation default. More specific policies still override it.</span>
+                        <span class="gw-radio-desc">{% if can_configure_org %}Everyone in the chosen branch, or the organisation default.{% else %}Everyone in your branch.{% endif %} More specific policies still override it.</span>
                     </span>
                 </label>
                 <label class="gw-radio-card" for="applies-specific-{{ lt.id }}-{{ pid }}">
@@ -203,12 +211,14 @@
         </div>
         {% endif %}
 
+        {% if not policy or policy.can_edit %}
         <div class="d-flex justify-content-end mt-3 pt-2 border-top">
             <button type="submit" class="btn btn-sm btn-gw-primary">
                 <i class="bi bi-check2-circle me-1" aria-hidden="true"></i>
                 {% if policy %}Save Policy{% else %}Create Policy{% endif %}
             </button>
         </div>
+        {% endif %}
     </fieldset>
 </form>
 {% if policy %}{% include "portal/_leave_policy_assignments.html" with policy=policy lt=lt year=year %}{% endif %}

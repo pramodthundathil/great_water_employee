@@ -14,6 +14,7 @@ from decimal import Decimal
 
 from accounts.models import User, RoleChoices, EmployeeProfile, UserBranchScope
 from organization.models import Branch, Department
+from organization.branch_config import can_edit_branch, can_manage_all_branches, visible_to
 from organization.currencies import (
     all_currencies_json, currency_json, default_currency_for_country, normalize_code, parse_code_list,
 )
@@ -36,7 +37,7 @@ from leaves.services import (
     log_leave_audit, client_ip, resubmit_leave_application,
     initial_leave_route, visible_leave_applications, can_view_leave_application,
     filter_leave_track, leave_track_counts, leave_review_options, leave_correction_options, notify_leave_review,
-    employee_leave_snapshot,
+    employee_leave_snapshot, can_recommend_leave, lead_recommendation_queue,
 )
 from portal.admin_views import validate_upload, validate_receipt_count, can_manage_users, get_default_organization
 from expenses.services import (
@@ -139,6 +140,17 @@ def logout_view(request):
     return redirect("portal_login")
 
 
+def _session_branch(request, branches):
+    """
+    Branch picked in the header filter, or "all" (= every branch in `branches`). A remembered branch the
+    user can no longer access is dropped, so a stale session never widens what they see.
+    """
+    selected = str(request.session.get("selected_branch_id") or "all")
+    if selected != "all" and not (selected.isdigit() and branches.filter(id=selected).exists()):
+        selected = request.session["selected_branch_id"] = "all"
+    return selected
+
+
 def _resolve_dashboard_scope(request, user):
     """Resolve accessible branches and branch-filtered expense/leave QuerySets."""
     accessible_branches = user.get_accessible_branches()
@@ -149,9 +161,7 @@ def _resolve_dashboard_scope(request, user):
         selected_branch = requested_branch
         request.session["selected_branch_id"] = requested_branch
     else:
-        selected_branch = request.session.get("selected_branch_id", "all")
-        if selected_branch != "all" and not accessible_branches.filter(id=selected_branch).exists():
-            selected_branch = "all"
+        selected_branch = _session_branch(request, accessible_branches)
 
     if user.role == RoleChoices.EMPLOYEE:
         branch_qs = accessible_branches
@@ -324,10 +334,7 @@ def dashboard_view(request):
         recent_claims = claim_qs.select_related("category", "branch", "employee").order_by("-created_at")[:6]
         recent_leaves = leave_qs.select_related("leave_type", "branch", "employee").order_by("-submitted_at")[:6]
         team_leaves_pending = (
-            LeaveApplication.objects.filter(
-                employee__profile__reporting_lead=user,
-                status=LeaveApplicationStatus.PENDING_LEAD_RECOMMENDATION,
-            ).count()
+            lead_recommendation_queue(user).count()
             if user.is_lead_manager
             else 0
         )
@@ -347,7 +354,7 @@ def dashboard_view(request):
 def expenses_list_view(request):
     user = request.user
     accessible_branches = user.get_accessible_branches()
-    selected_branch = request.session.get("selected_branch_id", "all")
+    selected_branch = _session_branch(request, accessible_branches)
 
     if request.method == "POST":
         if request.POST.get("action") == "bulk_delete":
@@ -526,7 +533,7 @@ def expenses_list_view(request):
         "status_filter": status_filter,
         "category_filter": category_filter,
         "is_filtered": bool(q or status_filter or category_filter),
-        "categories": ExpenseCategory.objects.filter(is_active=True),
+        "categories": ExpenseCategory.available_for(user.primary_branch or accessible_branches.first()),
         "today": date.today(),
         **expense_currency_context(user.primary_branch or accessible_branches.first()),
     }
@@ -816,7 +823,7 @@ def expense_approvals_view(request):
         "min_amount": request.GET.get("min", "") if min_amount is not None else "",
         "max_amount": request.GET.get("max", "") if max_amount is not None else "",
         "is_filtered": bool(q or category_filter or age_filter or min_amount is not None or max_amount is not None),
-        "categories": ExpenseCategory.objects.filter(is_active=True),
+        "categories": visible_to(user, ExpenseCategory.objects.filter(is_active=True)),
         "expense_branches": expense_branches,
         "selected_branch": str(selected_branch),
     }
@@ -1064,7 +1071,7 @@ def reimbursements_view(request):
         "min_amount": request.GET.get("min", "") if min_amount is not None else "",
         "max_amount": request.GET.get("max", "") if max_amount is not None else "",
         "is_filtered": is_filtered,
-        "categories": ExpenseCategory.objects.filter(is_active=True),
+        "categories": visible_to(user, ExpenseCategory.objects.filter(is_active=True)),
         "payment_modes": PaymentMode.choices,
         "expense_branches": expense_branches,
         "selected_branch": str(selected_branch),
@@ -1082,7 +1089,7 @@ def reimbursements_view(request):
 def leaves_list_view(request):
     user = request.user
     accessible_branches = user.get_accessible_branches()
-    selected_branch = request.session.get("selected_branch_id", "all")
+    selected_branch = _session_branch(request, accessible_branches)
 
     if request.method == "POST":
         leave_type_id = request.POST.get("leave_type")
@@ -1148,7 +1155,7 @@ def leaves_list_view(request):
         applications = applications.filter(branch_id=selected_branch)
 
     applications = applications.select_related("leave_type", "branch", "employee")
-    leave_types = LeaveType.objects.filter(is_active=True)
+    leave_types = LeaveType.available_for(user)
 
     # ---- Server-side datatable: search, filters, sorting, pagination ----
     q = request.GET.get("q", "").strip()
@@ -1284,8 +1291,8 @@ def leave_detail_view(request, pk):
         "audit_trail": _audit_rows(app),
         "can_resubmit": app.can_resubmit(user),
         "review": review,
-        "leave_types": LeaveType.objects.filter(is_active=True) if app.can_resubmit(user) else [],
-        "amend_leave_types": LeaveType.objects.filter(is_active=True) if review or corrections else [],
+        "leave_types": LeaveType.available_for(app.employee) if app.can_resubmit(user) else [],
+        "amend_leave_types": LeaveType.available_for(app.employee) if review or corrections else [],
         "corrections": corrections,
     }
     return render(request, "portal/leave_detail.html", context)
@@ -1524,11 +1531,10 @@ def _apply_leave_review(user, app, action, remarks="", source="WEB", ip_address=
     Apply one Lead / HR / Director decision: forward / approve (optionally partial or amended),
     return to an earlier stage, or reject. Returns (level, message); level is success | error.
     """
-    reporting_lead = getattr(getattr(app.employee, "profile", None), "reporting_lead", None)
     if app.employee_id == user.id:
         return "error", f"{app.application_number}: you cannot act on your own leave application."
     if app.status == LeaveApplicationStatus.PENDING_LEAD_RECOMMENDATION:
-        if not (reporting_lead == user or user.is_superuser):
+        if not can_recommend_leave(user, app):
             return "error", f"{app.application_number}: only the employee's reporting Lead / Manager can recommend it."
     elif not user.can_access_branch(app.branch):
         return "error", f"{app.application_number}: you do not have permission for this branch."
@@ -1611,7 +1617,7 @@ def leave_approvals_view(request):
         return redirect("portal_dashboard")
 
     accessible_branches = user.get_accessible_branches()
-    selected_branch = request.session.get("selected_branch_id", "all")
+    selected_branch = _session_branch(request, accessible_branches)
 
     if request.method == "POST":
         next_url = request.POST.get("next", "")
@@ -1660,8 +1666,7 @@ def leave_approvals_view(request):
     branch_qs = LeaveApplication.objects.filter(branch__in=accessible_branches)
     if selected_branch and selected_branch != "all":
         branch_qs = branch_qs.filter(branch_id=selected_branch)
-    lead_qs = LeaveApplication.objects.filter(
-        employee__profile__reporting_lead=user, status=LeaveApplicationStatus.PENDING_LEAD_RECOMMENDATION)
+    lead_qs = lead_recommendation_queue(user)
 
     queue_sources = {}
     if user.is_lead_manager or user.is_superuser or lead_qs.exists():
@@ -1794,7 +1799,7 @@ def leave_approvals_view(request):
         "leave_type_filter": leave_type_filter,
         "starts_filter": starts_filter,
         "is_filtered": bool(q or leave_type_filter or starts_filter),
-        "leave_types": LeaveType.objects.filter(is_active=True),
+        "leave_types": visible_to(user, LeaveType.objects.filter(is_active=True)),
         "urgent_count": urgent_count,
         "filtered_days": filtered_days,
         **dt,
@@ -1814,7 +1819,7 @@ def leave_preview_view(request):
     leave_type = None
     leave_type_id = request.GET.get("leave_type", "")
     if leave_type_id.isdecimal():
-        leave_type = LeaveType.objects.filter(id=leave_type_id, is_active=True).first()
+        leave_type = LeaveType.available_for(request.user).filter(id=leave_type_id).first()
     return JsonResponse(preview_leave_request(request.user, start_date, end_date, is_half_day, leave_type))
 
 
@@ -1827,12 +1832,14 @@ def leave_ledger_view(request):
     if emp_id and user.role != RoleChoices.EMPLOYEE:
         candidate = get_object_or_404(User, id=emp_id)
         is_direct_report = getattr(getattr(candidate, "profile", None), "reporting_lead_id", None) == user.id
-        if candidate == user or is_direct_report or user.is_superuser or (
-            user.role != RoleChoices.LEAD_MANAGER and candidate.primary_branch and user.can_access_branch(candidate.primary_branch)
+        in_branch = bool(candidate.primary_branch) and user.can_access_branch(candidate.primary_branch)
+        if candidate == user or user.is_superuser or (
+            in_branch and (is_direct_report or user.role != RoleChoices.LEAD_MANAGER)
         ):
             target_emp = candidate
         else:
             messages.error(request, "You do not have access to this employee's leave records.")
+            return redirect("portal_leave_ledger")
 
     if request.method == "POST" and (user.is_hr_coordinator or user.is_superuser):
         leave_type_id = request.POST.get("leave_type_id")
@@ -1859,12 +1866,14 @@ def leave_ledger_view(request):
         # A negative official balance is leave taken beyond entitlement: Loss of Pay.
         b["lop_days"] = -b["available_balance"] if b["available_balance"] < 0 else 0
     entries = LeaveLedgerEntry.objects.filter(employee=target_emp).select_related("leave_type", "created_by").order_by("-created_at")
-    leave_types = LeaveType.objects.filter(is_active=True)
+    leave_types = [b["leave_type"] for b in balances]
 
     if user.role == RoleChoices.EMPLOYEE:
         accessible_employees = []
     elif user.role == RoleChoices.LEAD_MANAGER and not user.is_superuser:
-        accessible_employees = User.objects.filter(Q(pk=user.pk) | Q(profile__reporting_lead=user), is_active=True)
+        accessible_employees = User.objects.filter(
+            Q(pk=user.pk) | Q(profile__reporting_lead=user, primary_branch__in=user.get_accessible_branches()),
+            is_active=True)
     else:
         accessible_employees = User.objects.filter(is_active=True, primary_branch__in=user.get_accessible_branches())
 
@@ -1899,18 +1908,6 @@ def leave_ledger_view(request):
         "today": today,
     }
     return render(request, "portal/leave_ledger.html", context)
-
-
-def _can_manage_branches(user):
-    """Return True when the user is authorized to create, edit, or deactivate branches."""
-    return (
-        user.is_superuser
-        or user.role == RoleChoices.DIRECTOR
-        or (
-            user.is_global_scope
-            and user.role in [RoleChoices.ADMIN_MANAGER, RoleChoices.HR_COORDINATOR]
-        )
-    )
 
 
 def _branch_dependencies(branch):
@@ -1949,11 +1946,12 @@ def _extract_branch_fields(post_data):
 
 def _handle_branch_action(request, user, redirect_response, target_branch=None):
     """Execute create, update, toggle_active, or delete actions for branches."""
-    if not _can_manage_branches(user):
+    action = request.POST.get("action")
+    can_manage = can_manage_all_branches(user)
+    # A branch-level Director may edit the details of their own office, nothing else.
+    if not can_manage and action != "update":
         messages.error(request, "You do not have permission to manage branches.")
         return redirect("portal_branches")
-
-    action = request.POST.get("action")
 
     if action and action.startswith("dept_"):
         return _handle_department_action(request, user, action, redirect_response)
@@ -1974,6 +1972,9 @@ def _handle_branch_action(request, user, redirect_response, target_branch=None):
         return redirect_response
 
     branch = target_branch or get_object_or_404(Branch, pk=request.POST.get("branch_id"))
+    if not can_edit_branch(user, branch):
+        messages.error(request, "You do not have permission to manage that branch.")
+        return redirect("portal_branches")
 
     if action == "update":
         fields = _extract_branch_fields(request.POST)
@@ -1983,6 +1984,8 @@ def _handle_branch_action(request, user, redirect_response, target_branch=None):
         if Branch.objects.filter(code=fields["code"]).exclude(pk=branch.pk).exists():
             messages.error(request, f"Another branch already uses code '{fields['code']}'.")
             return redirect_response
+        if not can_manage:
+            fields.pop("is_active")  # opening / closing an office is an organisation-level decision
         old_currency = branch.currency_code
         for key, value in fields.items():
             setattr(branch, key, value)
@@ -2093,7 +2096,7 @@ def _handle_department_action(request, user, action, redirect_response):
 @login_required
 def branches_view(request):
     user = request.user
-    can_manage = _can_manage_branches(user)
+    can_manage = can_manage_all_branches(user)
 
     if request.method == "POST":
         return _handle_branch_action(request, user, redirect("portal_branches"))
@@ -2109,6 +2112,7 @@ def branches_view(request):
         ).order_by("-is_active", "code")
     )
     for b in branches:
+        b.can_edit = can_edit_branch(user, b)
         b.can_delete = (
             b.total_employee_count == 0
             and b.claims_count == 0
@@ -2124,6 +2128,7 @@ def branches_view(request):
         "active_nav": "branches",
         "branches": branches,
         "can_manage_branches": can_manage,
+        "can_edit_any_branch": any(b.can_edit for b in branches),
         "active_branches_count": active_branches_count,
         "inactive_branches_count": inactive_branches_count,
         "total_staff_count": total_staff_count,
@@ -2140,7 +2145,7 @@ def branches_view(request):
 def branch_detail_view(request, pk):
     user = request.user
     branch = get_object_or_404(Branch, pk=pk)
-    can_manage = _can_manage_branches(user)
+    can_manage = can_manage_all_branches(user)
 
     if not can_manage and not user.can_access_branch(branch):
         messages.error(request, "You do not have permission to view that branch.")
@@ -2188,6 +2193,7 @@ def branch_detail_view(request, pk):
         "active_nav": "branches",
         "branch": branch,
         "can_manage_branches": can_manage,
+        "can_edit_branch": can_edit_branch(user, branch),
         "can_manage_employees": can_manage_users(user),
         "employees": employees,
         "active_employees_count": active_employees_count,
@@ -2212,7 +2218,7 @@ def branch_detail_view(request, pk):
 def employees_view(request):
     user = request.user
     accessible_branches = user.get_accessible_branches()
-    selected_branch = request.session.get("selected_branch_id", "all")
+    selected_branch = _session_branch(request, accessible_branches)
 
     can_manage = can_manage_users(user)
 
@@ -2476,14 +2482,15 @@ def reports_view(request):
         RoleChoices.LEAD_MANAGER: "Leave reports for your direct reports.",
         RoleChoices.ADMIN_MANAGER: "Expense claim and reimbursement reports for the branches you manage.",
         RoleChoices.HR_COORDINATOR: "All reports for the branches you cover.",
-        RoleChoices.DIRECTOR: "All reports, organisation-wide.",
+        RoleChoices.DIRECTOR: "All reports, organisation-wide." if user.has_all_branch_access
+        else "All reports for the branches you cover.",
     }.get(role, "")
     context = {
         "active_nav": "reports",
         "branches": accessible_branches,
         "departments": Department.objects.filter(is_active=True),
-        "categories": ExpenseCategory.objects.filter(is_active=True),
-        "leave_types": LeaveType.objects.filter(is_active=True),
+        "categories": visible_to(user, ExpenseCategory.objects.filter(is_active=True)),
+        "leave_types": visible_to(user, LeaveType.objects.filter(is_active=True)),
         "expense_statuses": ExpenseClaimStatus.choices,
         "leave_statuses": LeaveApplicationStatus.choices,
         "today": date.today(),

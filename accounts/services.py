@@ -38,7 +38,8 @@ def can_reset_passwords(user):
 
 
 def can_set_scope(user):
-    return user.is_superuser or user.role == RoleChoices.DIRECTOR
+    """Granting access to all branches is reserved for Directors who have it themselves."""
+    return user.is_superuser or (user.role == RoleChoices.DIRECTOR and user.has_all_branch_access)
 
 
 def password_reset_block_reason(actor, target):
@@ -51,13 +52,45 @@ def password_reset_block_reason(actor, target):
         return "The system administrator's password can only be changed by the administrator."
     if target.role == RoleChoices.DIRECTOR and not (actor.is_superuser or actor.role == RoleChoices.DIRECTOR):
         return "Only the Director can change another Director's password."
-    if target.primary_branch and not actor.can_access_branch(target.primary_branch):
-        return "This employee belongs to a branch outside your access scope."
+    if not can_access_employee(actor, target):
+        return OUTSIDE_SCOPE
+    if outranks(target, actor):
+        return ORG_WIDE_ACCOUNT
     return None
 
 
+OUTSIDE_SCOPE = "This employee belongs to a branch outside your access scope."
+ORG_WIDE_ACCOUNT = "This account has access to all branches and can only be managed by someone who also has it."
+
+
 def can_access_employee(actor, target):
-    return not target.primary_branch or actor.can_access_branch(target.primary_branch)
+    if actor.has_all_branch_access:
+        return True
+    return bool(target.primary_branch) and actor.can_access_branch(target.primary_branch)
+
+
+def outranks(target, actor):
+    """A branch-limited manager must not take over or alter an organisation-wide account."""
+    return target.pk != actor.pk and target.is_global_scope and not actor.has_all_branch_access
+
+
+def _require_manageable(actor, emp):
+    if not can_manage_users(actor):
+        raise EmployeeError("You are not authorised to manage employee records.")
+    if not can_access_employee(actor, emp):
+        raise EmployeeError(OUTSIDE_SCOPE)
+    if outranks(emp, actor):
+        raise EmployeeError(ORG_WIDE_ACCOUNT)
+
+
+def _resolve_lead(lead_id, branch, current_id=None, exclude_pk=None):
+    """Reporting Lead chosen on a form. A new lead must have access to the employee's branch."""
+    if not lead_id:
+        return None
+    lead = User.objects.filter(id=lead_id).exclude(pk=exclude_pk).first()
+    if lead is not None and lead.pk != current_id and branch is not None and not lead.can_access_branch(branch):
+        raise EmployeeError(f"{lead.full_name} has no access to {branch.name} and cannot be the reporting lead there.")
+    return lead
 
 
 # ------------------------------------------------------------------ helpers
@@ -146,7 +179,7 @@ def create_employee(actor, data):
         user=user,
         department=Department.objects.filter(id=dept_id).first() if dept_id else None,
         designation=_str(data, "designation") or "Staff Specialist",
-        reporting_lead=User.objects.filter(id=lead_id).first() if lead_id else None,
+        reporting_lead=_resolve_lead(lead_id, branch),
         date_of_joining=_parse_date(data.get("date_of_joining")) or timezone.now().date(),
     )
     return user, generated
@@ -155,10 +188,7 @@ def create_employee(actor, data):
 @transaction.atomic
 def update_employee(actor, emp, data):
     """Update an employee's record from form / JSON data. Only keys present in `data` are changed."""
-    if not can_manage_users(actor):
-        raise EmployeeError("You are not authorised to manage employee records.")
-    if not can_access_employee(actor, emp):
-        raise EmployeeError("This employee belongs to a branch outside your access scope.")
+    _require_manageable(actor, emp)
 
     profile, _ = EmployeeProfile.objects.get_or_create(user=emp)
 
@@ -174,6 +204,7 @@ def update_employee(actor, emp, data):
             setattr(emp, field, _str(data, field))
     if "role" in data and _str(data, "role") in RoleChoices.values:
         emp.role = _str(data, "role")
+    old_branch_id = emp.primary_branch_id
     if "primary_branch" in data:
         branch_id = data.get("primary_branch")
         if branch_id:
@@ -183,6 +214,7 @@ def update_employee(actor, emp, data):
             emp.primary_branch = branch
     if "is_global_scope" in data and can_set_scope(actor):
         emp.is_global_scope = str(data.get("is_global_scope")).lower() in ("1", "true")
+    branch_changed = emp.primary_branch_id != old_branch_id
     emp.save()
 
     if "department" in data:
@@ -190,9 +222,10 @@ def update_employee(actor, emp, data):
         profile.department = Department.objects.filter(id=dept_id).first() if dept_id else None
     if "designation" in data:
         profile.designation = _str(data, "designation")
-    if "reporting_lead" in data:
-        lead_id = data.get("reporting_lead")
-        profile.reporting_lead = User.objects.filter(id=lead_id).exclude(pk=emp.pk).first() if lead_id else None
+    if branch_changed or "reporting_lead" in data:
+        lead_id = data.get("reporting_lead", profile.reporting_lead_id)
+        profile.reporting_lead = _resolve_lead(
+            lead_id, emp.primary_branch, None if branch_changed else profile.reporting_lead_id, emp.pk)
     if "date_of_joining" in data:
         doj = _parse_date(data.get("date_of_joining"))
         if doj:
@@ -206,10 +239,7 @@ def update_employee(actor, emp, data):
 
 
 def toggle_employee_active(actor, emp):
-    if not can_manage_users(actor):
-        raise EmployeeError("You are not authorised to manage employee records.")
-    if not can_access_employee(actor, emp):
-        raise EmployeeError("This employee belongs to a branch outside your access scope.")
+    _require_manageable(actor, emp)
     if emp.pk == actor.pk:
         raise EmployeeError("You cannot deactivate your own account.")
     if emp.is_superuser and not actor.is_superuser:
@@ -233,6 +263,8 @@ def set_employee_password(actor, emp, new_password):
 def _bulk_block_reason(actor, emp):
     if not can_access_employee(actor, emp):
         return "outside your branch scope"
+    if outranks(emp, actor):
+        return "has access to all branches"
     if emp.pk == actor.pk:
         return "your own account"
     if emp.is_superuser and not actor.is_superuser:

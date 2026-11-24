@@ -31,6 +31,7 @@
                 class="btn btn-sm btn-gw-primary js-open-assign"
                 data-policy-id="{{ policy.id }}"
                 data-policy-name="{{ policy.name }}"
+                data-policy-can-edit="{% if policy.can_edit %}1{% else %}0{% endif %}"
                 data-policy-frequency="{{ policy.accrual_frequency }}"
             >
                 <i class="bi bi-person-plus me-1" aria-hidden="true"></i>Assign
@@ -60,8 +61,8 @@
         <input type="hidden" name="year" value="{{ year }}">
         <div class="d-flex flex-wrap gap-2">
             {% for a in policy.assignment_list %}
-            <label class="gw-assign-chip gw-assign-chip--{{ a.scope|lower }}" title="Select to remove">
-                <input type="checkbox" name="assignment_ids" value="{{ a.id }}" class="form-check-input m-0 js-unassign-check">
+            <label class="gw-assign-chip gw-assign-chip--{{ a.scope|lower }}" title="{% if a.can_remove %}Select to remove{% else %}Managed organisation-wide{% endif %}">
+                <input type="checkbox" name="assignment_ids" value="{{ a.id }}" class="form-check-input m-0 js-unassign-check" {% if not a.can_remove %}disabled{% endif %}>
                 <i class="bi {% if a.scope == 'ALL' %}bi-globe2{% elif a.scope == 'BRANCH' %}bi-geo-alt{% elif a.scope == 'DEPARTMENT' %}bi-diagram-3{% else %}bi-person{% endif %}" aria-hidden="true"></i>
                 <span>{{ a.target_label }}</span>
             </label>

@@ -61,21 +61,22 @@
 ### 2.1 Branch Scoping in Django Querysets
 Every database query for models with branch affinity (`ExpenseClaim`, `LeaveApplication`, `EmployeeProfile`, `HolidayCalendar`) must filter against the user's authorized branch list:
 
-```python
-def get_user_branches(user):
-    """
-    Returns QuerySet of Branch objects accessible to the user.
-    """
-    if user.is_superuser or (user.is_global_scope and user.role in ['DIRECTOR', 'ADMIN_MANAGER', 'HR_COORDINATOR']):
-        return Branch.objects.filter(is_active=True)
-    
-    # Primary branch plus any explicitly assigned branch scopes
-    assigned_branch_ids = user.branch_scopes.values_list('branch_id', flat=True)
-    branch_ids = set(assigned_branch_ids)
-    if user.primary_branch_id:
-        branch_ids.add(user.primary_branch_id)
-    return Branch.objects.filter(id__in=branch_ids, is_active=True)
-```
+This is implemented by `User.get_accessible_branches()` / `User.has_all_branch_access`:
+
+- Superusers always access every branch.
+- A Director, Admin Manager, HR Coordinator or Lead / Manager accesses every branch only with
+  organisation-wide scope (`is_global_scope`); otherwise only the primary branch plus assigned branch scopes.
+  "(All)" in the matrix above means "all accessible branches".
+- Only superusers and organisation-wide Directors can grant organisation-wide scope, and branch-limited
+  managers cannot alter organisation-wide accounts.
+- A reporting lead must have access to the employee's branch.
+
+**Configuration** (`organization/branch_config.py`): leave types, leave policies, expense categories and
+holiday calendars belong to one branch, or to all branches (`branch` empty). Users without access to all
+branches create and edit their own branch's records only; organisation-wide records are read-only to them,
+and accrual runs / policy assignments they start affect only their own branches. Creating, deactivating or
+deleting offices and managing departments needs access to all branches; a branch-level Director may edit the
+details of their own office.
 
 ### 2.2 ID Manipulation & Privilege Escalation Protection
 - Accessing `/expenses/claims/<id>/` or `/api/v1/expenses/<id>/` checks `claim.branch_id in user_branches` AND `claim.employee == user or user.has_approval_role()`.

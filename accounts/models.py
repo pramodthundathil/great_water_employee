@@ -11,6 +11,15 @@ class RoleChoices(models.TextChoices):
     DIRECTOR = "DIRECTOR", "Director"
 
 
+# Roles for which the organisation-wide scope flag opens every branch.
+ALL_BRANCH_ROLES = (
+    RoleChoices.LEAD_MANAGER,
+    RoleChoices.ADMIN_MANAGER,
+    RoleChoices.HR_COORDINATOR,
+    RoleChoices.DIRECTOR,
+)
+
+
 class User(AbstractUser):
     employee_id = models.CharField(
         max_length=30,
@@ -70,6 +79,14 @@ class User(AbstractUser):
         name = f"{self.first_name} {self.last_name}".strip()
         return name if name else self.username
 
+    @property
+    def has_all_branch_access(self):
+        """
+        Superusers see every branch. Other approver roles do so only when granted organisation-wide
+        scope; without it they are limited to their primary branch plus assigned branch scopes.
+        """
+        return self.is_superuser or (self.is_global_scope and self.role in ALL_BRANCH_ROLES)
+
     def get_accessible_branches(self):
         """
         Returns QuerySet of Branch objects accessible to this user.
@@ -77,11 +94,7 @@ class User(AbstractUser):
         """
         from organization.models import Branch
 
-        if self.is_superuser or (self.is_global_scope and self.role in [
-            RoleChoices.DIRECTOR,
-            RoleChoices.ADMIN_MANAGER,
-            RoleChoices.HR_COORDINATOR,
-        ]):
+        if self.has_all_branch_access:
             return Branch.objects.filter(is_active=True)
 
         branch_ids = set()
@@ -99,11 +112,7 @@ class User(AbstractUser):
         """
         if not branch:
             return False
-        if self.is_superuser or (self.is_global_scope and self.role in [
-            RoleChoices.DIRECTOR,
-            RoleChoices.ADMIN_MANAGER,
-            RoleChoices.HR_COORDINATOR,
-        ]):
+        if self.has_all_branch_access:
             return True
         if self.primary_branch_id == branch.id:
             return True

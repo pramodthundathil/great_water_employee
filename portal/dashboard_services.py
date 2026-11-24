@@ -17,6 +17,7 @@ from leaves.models import (
     REJECTED_LEAVE_STATUSES,
     fmt_days,
 )
+from leaves.services import lead_recommendation_queue
 from notifications.models import NotificationEvent
 from notifications.services import send_system_notification
 
@@ -390,13 +391,16 @@ def build_monthly_expense_series(claim_qs, months=6, as_of_date=None):
 
 def build_leave_utilization_series(leave_qs):
     """Aggregate approved leave days grouped by LeaveType across the scoped queryset."""
-    leave_types = list(LeaveType.objects.filter(is_active=True).order_by("name"))
     approved_totals = {
         row["leave_type_id"]: float(row["total_days"] or 0)
         for row in leave_qs.filter(status=LeaveApplicationStatus.APPROVED)
         .values("leave_type_id")
         .annotate(total_days=Sum("number_of_days"))
     }
+    # Branch-specific types are listed only where they were actually used.
+    leave_types = list(
+        LeaveType.objects.filter(Q(branch__isnull=True) | Q(pk__in=list(approved_totals)), is_active=True).order_by("name")
+    )
 
     labels = [lt.name for lt in leave_types]
     values = [approved_totals.get(lt.id, 0.0) for lt in leave_types]
@@ -546,7 +550,8 @@ def build_all_staff_analytics(branch_qs, claim_qs, leave_qs):
             bucket["pending_count"] += row["cnt"]
 
     # 3. Official available leave balances per (employee, leave_type)
-    active_leave_types = list(LeaveType.objects.filter(is_active=True).order_by("code"))
+    active_leave_types = list(LeaveType.objects.filter(
+        Q(branch__isnull=True) | Q(branch__in=branch_qs), is_active=True).order_by("code"))
     active_lt_ids = {lt.id for lt in active_leave_types}
     latest_balances = {}
     for emp_id, lt_id, bal in (
@@ -642,25 +647,17 @@ def leave_calendar_scope(user):
     """
     Leave applications whose employees this user may see on the dashboard leave calendar.
 
-    - Director: every employee in the organisation.
-    - HR Coordinator: every employee, unless they are tied to branch(es) (primary branch or
-      branch scopes, without organisation-wide scope) — then only those branches.
-    - Lead / Admin Manager: employees of their own branch(es) (primary + active branch scopes).
+    - Superuser / organisation-wide roles: every employee.
+    - Director / HR / Admin Manager / Lead: employees of their own branch(es) only
+      (primary branch + active branch scopes).
     - Employee: only their own applications.
     """
     qs = LeaveApplication.objects.all()
-    if user.is_director:
+    if user.has_all_branch_access:
         return qs
-    if user.is_hr_coordinator:
-        if user.is_global_scope:
-            return qs
-        branch_ids = set(user.branch_scopes.filter(is_active=True).values_list("branch_id", flat=True))
-        if user.primary_branch_id:
-            branch_ids.add(user.primary_branch_id)
-        return qs.filter(branch_id__in=branch_ids) if branch_ids else qs
-    if user.role in (RoleChoices.LEAD_MANAGER, RoleChoices.ADMIN_MANAGER):
-        return qs.filter(branch__in=user.get_accessible_branches())
-    return qs.filter(employee=user)
+    if user.role == RoleChoices.EMPLOYEE:
+        return qs.filter(employee=user)
+    return qs.filter(branch__in=user.get_accessible_branches())
 
 
 def build_leave_calendar(user, selected_branch_id=None, today=None):
@@ -760,9 +757,7 @@ def build_my_action_center(user, selected_branch_id=None, today=None):
 
     # ---- Leave items waiting on this user ----
     leave_sources = []
-    lead_qs = LeaveApplication.objects.filter(
-        employee__profile__reporting_lead=user, status=LeaveApplicationStatus.PENDING_LEAD_RECOMMENDATION
-    )
+    lead_qs = lead_recommendation_queue(user)
     leave_sources.append(lead_qs)
     if user.is_hr_coordinator or user.is_director:
         scoped = LeaveApplication.objects.filter(branch__in=user.get_accessible_branches())

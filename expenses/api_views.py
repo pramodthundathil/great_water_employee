@@ -28,7 +28,7 @@ class ExpenseCategoryListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        categories = ExpenseCategory.objects.filter(is_active=True)
+        categories = ExpenseCategory.available_for(request.user.primary_branch)
         return Response(ExpenseCategorySerializer(categories, many=True).data)
 
 

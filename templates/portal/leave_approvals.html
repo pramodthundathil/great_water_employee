@@ -46,7 +46,7 @@
                 {% if view == 'lead' %}Leave requests from your direct reports.
                 {% elif view == 'hr' %}Check policy compliance and balances, then forward to the Director.
                 {% elif view == 'director' %}Approving deducts the approved days from the employee's balance.
-                {% else %}Follow every leave you are allowed to see{% if user.is_global_scope %} across all regions{% elif user.is_lead_manager %} for your team and leave you have acted on{% else %} in your branches{% endif %}, including after you have acted on it.{% endif %}
+                {% else %}Follow every leave you are allowed to see{% if user.has_all_branch_access %} across all regions{% elif user.is_lead_manager %} for your team in your branches{% else %} in your branches{% endif %}, including after you have acted on it.{% endif %}
             </div>
         </div>
         <div class="gw-queue-summary">

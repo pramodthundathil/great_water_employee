@@ -181,6 +181,7 @@
                             {% if lt.is_accrual_based %}
                             <span class="gw-rule-chip">Earned by service</span>
                             {% endif %}
+                            {% include "portal/_config_scope_chip.html" with obj=lt %}
                             {% if lt.requires_attachment %}
                             <span class="gw-rule-chip"><i class="bi bi-paperclip" aria-hidden="true"></i> Attachment required</span>
                             {% endif %}
@@ -245,7 +246,7 @@
                             <input type="hidden" name="tab" value="types">
                             <input type="hidden" name="year" value="{{ year }}">
 
-                            <fieldset class="border-0 p-0 m-0 flex-grow-1">
+                            <fieldset class="border-0 p-0 m-0 flex-grow-1" {% if not lt.can_edit %}disabled{% endif %}>
                                 <legend class="gw-fieldset-legend">
                                     <i class="bi bi-tag text-primary" aria-hidden="true"></i>
                                     <span>Leave Type Rules</span>
@@ -320,11 +321,13 @@
                                 </div>
                             </fieldset>
 
+                            {% if lt.can_edit %}
                             <div class="d-flex justify-content-end pt-2 border-top mt-auto">
                                 <button type="submit" class="btn btn-sm btn-outline-primary">
                                     <i class="bi bi-check2 me-1" aria-hidden="true"></i>Save Leave Type
                                 </button>
                             </div>
+                            {% endif %}
                         </form>
                     </div>
 
@@ -502,6 +505,9 @@
                                         {% endif %}
                                     </td>
                                     <td data-label="Actions" class="text-end text-nowrap">
+                                        {% if not h.can_edit %}
+                                        <span class="small text-muted"><i class="bi bi-lock" aria-hidden="true"></i> View only</span>
+                                        {% else %}
                                         <button
                                             type="button"
                                             class="btn btn-sm btn-light border me-1 js-edit-holiday-btn"
@@ -526,6 +532,7 @@
                                         >
                                             <i class="bi bi-trash" aria-hidden="true"></i>
                                         </button>
+                                        {% endif %}
                                     </td>
                                 </tr>
                                 {% empty %}
@@ -534,7 +541,7 @@
                                         <div class="empty-state">
                                             <div class="empty-state-icon"><i class="bi bi-calendar-x" aria-hidden="true"></i></div>
                                             <div class="empty-state-title">No holidays listed for {{ year }}</div>
-                                            <div class="empty-state-desc">Add organization-wide or branch-specific holidays using the form on the right.</div>
+                                            <div class="empty-state-desc">Add {% if can_configure_org %}organization-wide or {% endif %}branch-specific holidays using the form on the right.</div>
                                         </div>
                                     </td>
                                 </tr>
@@ -610,7 +617,7 @@
                         <div>
                             <label class="form-label small fw-semibold mb-1" for="addHolidayBranch">Applies to branch</label>
                             <select id="addHolidayBranch" name="branch" class="form-select" aria-describedby="addHolidayBranchHelp">
-                                <option value="">All branches (Organization-wide)</option>
+                                {% if can_configure_org %}<option value="">All branches (Organization-wide)</option>{% endif %}
                                 {% for b in branches %}
                                 <option value="{{ b.id }}">{{ b.name }} ({{ b.code }})</option>
                                 {% endfor %}
@@ -717,6 +724,8 @@
                 </div>
             </div>
 
+            <div>{% include "portal/_config_branch_select.html" with field_id="newLtBranch" %}</div>
+
             <div class="gw-switch-list">
                 <label class="gw-switch-row" for="newPaid">
                     <span>
@@ -792,7 +801,7 @@
             <div>
                 <label class="form-label small fw-semibold mb-1" for="editHolidayBranch">Applies to branch</label>
                 <select id="editHolidayBranch" name="branch" class="form-select">
-                    <option value="">All branches (Organization-wide)</option>
+                    {% if can_configure_org %}<option value="">All branches (Organization-wide)</option>{% endif %}
                     {% for b in branches %}
                     <option value="{{ b.id }}">{{ b.name }} ({{ b.code }})</option>
                     {% endfor %}
@@ -861,7 +870,7 @@
 
         <div class="gw-dialog-body">
             <p class="mb-2">
-                Credit earned leave for <strong>{{ current_period_label }}</strong> (<code>{{ current_period_key }}</code>) across all active monthly accrual policies?
+                Credit earned leave for <strong>{{ current_period_label }}</strong> (<code>{{ current_period_key }}</code>) across all active monthly accrual policies{% if not can_configure_org %} for employees of your branch{{ branches|length|pluralize:"es" }} only{% endif %}?
             </p>
             <ul class="small text-secondary mb-0 ps-3">
                 <li>Eligible active employees receive their monthly credit immediately.</li>
@@ -1367,6 +1376,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     ? "Credit this month's accrual immediately to everyone this policy now governs. Anyone already credited is skipped."
                     : "Credit this year's entitlement immediately to everyone this policy now governs. Anyone already credited is skipped.";
             }
+            // Organisation-wide policies: branch-level users may only target their own branches / people.
+            ['scopeAll', 'scopeDept'].forEach((id) => {
+                const radio = document.getElementById(id);
+                radio.disabled = btn.dataset.policyCanEdit !== '1';
+                radio.closest('label').style.display = radio.disabled ? 'none' : '';
+            });
             syncScope(); filterEmployees(); updateCounts();
             assignDialog.showModal();
         };

@@ -23,7 +23,7 @@ from leaves.services import (
     validate_leave_request, LeaveRequestError, calculate_leave_days,
     log_leave_audit, client_ip, resubmit_leave_application,
     initial_leave_route, visible_leave_applications, can_view_leave_application,
-    filter_leave_track, leave_track_counts, notify_leave_review,
+    filter_leave_track, leave_track_counts, notify_leave_review, can_recommend_leave,
 )
 from leaves.models import LeaveAuditAction, fmt_days
 from leaves.models import Holiday
@@ -42,10 +42,10 @@ def resolve_target_employee(request):
     target = get_object_or_404(User, id=emp_id)
     if target == user or user.is_superuser:
         return target
-    if getattr(getattr(target, "profile", None), "reporting_lead_id", None) == user.id:
-        return target
-    if user.role != RoleChoices.LEAD_MANAGER and target.primary_branch and user.can_access_branch(target.primary_branch):
-        return target
+    if target.primary_branch and user.can_access_branch(target.primary_branch):
+        is_report = getattr(getattr(target, "profile", None), "reporting_lead_id", None) == user.id
+        if is_report or user.role != RoleChoices.LEAD_MANAGER:
+            return target
     return None
 from accounts.models import RoleChoices, User
 from notifications.services import notify_leave_event
@@ -116,7 +116,9 @@ class LeaveTypeListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        types = LeaveType.objects.filter(is_active=True)
+        # Reviewers amending a request need the types of the applicant's branch.
+        target = resolve_target_employee(request) or request.user
+        types = LeaveType.available_for(target)
         return Response(LeaveTypeSerializer(types, many=True).data)
 
 
@@ -337,9 +339,8 @@ class LeaveApplicationLeadRecommendView(APIView):
         user = request.user
         app = get_object_or_404(LeaveApplication, pk=pk)
 
-        # Must be the employee's designated reporting lead or superuser
-        reporting_lead = getattr(app.employee.profile, "reporting_lead", None) if hasattr(app.employee, "profile") else None
-        if user != reporting_lead and not user.is_superuser:
+        # Must be the employee's designated reporting lead (with access to the branch) or superuser
+        if not can_recommend_leave(user, app):
             return Response({"detail": "Only the designated Lead/Manager can recommend this leave."}, status=status.HTTP_403_FORBIDDEN)
 
         action = request.data.get("action", "").upper()

@@ -142,6 +142,7 @@
                             </span>
                         </div>
                         <h2 class="gw-cat-name">{{ c.name }}</h2>
+                        <div class="d-flex flex-wrap gap-1 mt-1">{% include "portal/_config_scope_chip.html" with obj=c %}</div>
                         {% if c.description %}
                         <p class="gw-cat-desc" title="{{ c.description }}">{{ c.description }}</p>
                         {% else %}
@@ -155,6 +156,7 @@
                     <i class="bi bi-receipt" aria-hidden="true"></i>
                     {{ c.claim_count }} claim{{ c.claim_count|pluralize }}
                 </span>
+                {% if c.can_edit %}
                 <div class="gw-cat-actions d-flex gap-1">
                     <button
                         type="button"
@@ -182,6 +184,7 @@
                         {% endif %}
                     </form>
                 </div>
+                {% endif %}
             </div>
         </article>
     </div>
@@ -246,6 +249,7 @@
                     </div>
                 </div>
             </div>
+            <div>{% include "portal/_config_branch_select.html" with field_id="newCatBranch" %}</div>
             <div>
                 <label class="form-label small fw-semibold mb-1" for="newCatDesc">Description</label>
                 <textarea id="newCatDesc" name="description" class="form-control" rows="3"

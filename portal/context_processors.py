@@ -1,6 +1,5 @@
 from django.conf import settings
 from notifications.models import NotificationEvent
-from accounts.models import RoleChoices
 
 
 def great_waters_context(request):
@@ -29,11 +28,7 @@ def great_waters_context(request):
         accessible_branches = list(request.user.get_accessible_branches())
         context["user_accessible_branches"] = accessible_branches
 
-        is_global = request.user.is_superuser or (
-            request.user.is_global_scope and request.user.role in [
-                RoleChoices.DIRECTOR, RoleChoices.ADMIN_MANAGER, RoleChoices.HR_COORDINATOR
-            ]
-        )
+        is_global = request.user.has_all_branch_access
         context["is_global_user"] = is_global
 
         # Session or parameter based branch filter
@@ -41,8 +36,8 @@ def great_waters_context(request):
         if selected and (selected == "all" or any(str(b.id) == str(selected) for b in accessible_branches)):
             context["selected_branch_id"] = selected
             request.session["selected_branch_id"] = selected
-        elif not is_global and request.user.primary_branch_id:
-            context["selected_branch_id"] = str(request.user.primary_branch_id)
+        elif not is_global and len(accessible_branches) == 1:
+            context["selected_branch_id"] = str(accessible_branches[0].id)
         else:
             context["selected_branch_id"] = "all"
 

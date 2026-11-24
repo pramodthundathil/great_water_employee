@@ -164,14 +164,14 @@
                     <i class="bi bi-list fs-5"></i>
                 </button>
 
-                {% if is_global_user %}
+                {% if is_global_user or user_accessible_branches|length > 1 %}
                 <!-- Global Scope Branch Selector -->
                 <form method="get" class="d-flex align-items-center m-0 header-branch-form">
                     <div class="branch-selector-pill">
                         <i class="bi bi-globe-americas flex-shrink-0"></i>
                         <span class="text-muted me-1 d-none d-sm-inline flex-shrink-0">Branch:</span>
                         <select name="branch_filter" aria-label="Filter by branch" class="form-select form-select-sm border-0 bg-transparent fw-semibold text-dark branch-select-input" onchange="this.form.submit()">
-                            <option value="all" {% if selected_branch_id == 'all' %}selected{% endif %}>All Branches (Consolidated)</option>
+                            <option value="all" {% if selected_branch_id == 'all' %}selected{% endif %}>{% if is_global_user %}All Branches (Consolidated){% else %}My Branches{% endif %}</option>
                             {% for b in user_accessible_branches %}
                             <option value="{{ b.id }}" {% if selected_branch_id == b.id|stringformat:"s" %}selected{% endif %}>{{ b.name }} ({{ b.code }})</option>
                             {% endfor %}

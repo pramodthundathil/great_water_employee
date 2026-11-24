@@ -15,11 +15,15 @@ from rest_framework.views import APIView
 
 from accounts.models import RoleChoices, User
 from accounts.services import (
-    EmployeeError, can_manage_users, can_set_scope, create_employee, lead_candidates,
+    EmployeeError, can_access_employee, can_manage_users, can_set_scope, outranks, create_employee, lead_candidates,
     password_reset_block_reason, set_employee_password, toggle_employee_active, update_employee,
 )
 from expenses.models import ExpenseCategory
 from leaves.models import LeavePolicy, LeaveType
+from organization.branch_config import (
+    BranchScopeError, can_configure_branch, can_edit_branch, can_manage_all_branches, require_configurable,
+    resolve_config_branch, visible_to,
+)
 from organization.models import Branch, Department
 from organization.currencies import default_currency_for_country, normalize_code, parse_code_list
 
@@ -37,13 +41,6 @@ def can_view_expense_config(user):
 
 def can_view_leave_config(user):
     return user.is_superuser or user.role in [RoleChoices.DIRECTOR, RoleChoices.HR_COORDINATOR]
-
-
-def can_manage_branches(user):
-    """Create / edit / deactivate offices — same rule as the web portal."""
-    return user.is_superuser or user.role == RoleChoices.DIRECTOR or (
-        user.is_global_scope and user.role in [RoleChoices.ADMIN_MANAGER, RoleChoices.HR_COORDINATOR]
-    )
 
 
 def _forbidden(msg="You do not have access to this page."):
@@ -101,7 +98,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
         actor = self.context.get("actor")
         if actor is None:
             return None
-        manage = can_manage_users(actor)
+        manage = can_manage_users(actor) and can_access_employee(actor, obj) and not outranks(obj, actor)
         return {
             "can_edit": manage,
             "can_toggle_active": manage and obj.pk != actor.pk and (actor.is_superuser or not obj.is_superuser),
@@ -260,17 +257,14 @@ class BranchOverviewView(APIView):
         user = request.user
         if not can_view_staff(user):
             return _forbidden()
-        sees_all = user.is_superuser or user.role == RoleChoices.DIRECTOR or (
-            user.is_global_scope and user.role in [RoleChoices.ADMIN_MANAGER, RoleChoices.HR_COORDINATOR]
-        )
-        base = Branch.objects.all() if sees_all else user.get_accessible_branches()
+        base = Branch.objects.all() if can_manage_all_branches(user) else user.get_accessible_branches()
         branches = base.annotate(
             employee_count=Count("primary_employees", filter=Q(primary_employees__is_active=True), distinct=True),
         ).order_by("-is_active", "code")
-        return Response([_branch_json(b, b.employee_count) for b in branches])
+        return Response([_branch_json(b, b.employee_count, user) for b in branches])
 
     def post(self, request):
-        if not can_manage_branches(request.user):
+        if not can_manage_all_branches(request.user):
             return _forbidden("You do not have permission to manage branches.")
         fields, error = _branch_fields(request.data)
         if error:
@@ -279,11 +273,12 @@ class BranchOverviewView(APIView):
             return _bad(f"A branch with code '{fields['code']}' already exists.")
         fields.setdefault("is_active", True)
         branch = Branch.objects.create(organization=_default_org(request.user), **fields)
-        return Response(_branch_json(branch, 0), status=status.HTTP_201_CREATED)
+        return Response(_branch_json(branch, 0, request.user), status=status.HTTP_201_CREATED)
 
 
-def _branch_json(b, employee_count):
+def _branch_json(b, employee_count, user):
     return {
+        "can_edit": can_edit_branch(user, b), "can_set_active": can_manage_all_branches(user),
         "id": b.id, "code": b.code, "name": b.name, "address": b.address, "city": b.city,
         "country": b.country, "phone": b.phone, "is_active": b.is_active, "employee_count": employee_count,
         "currency_code": b.currency_code, "allowed_currencies": b.allowed_currency_list,
@@ -321,14 +316,16 @@ class BranchUpdateView(APIView):
     permission_classes = [IsAuthenticated]
 
     def patch(self, request, pk):
-        if not can_manage_branches(request.user):
-            return _forbidden("You do not have permission to manage branches.")
         branch = get_object_or_404(Branch, pk=pk)
+        if not can_edit_branch(request.user, branch):
+            return _forbidden("You do not have permission to manage this branch.")
         fields, error = _branch_fields(request.data, partial=True)
         if error:
             return _bad(error)
         if "code" in fields and Branch.objects.filter(code=fields["code"]).exclude(pk=branch.pk).exists():
             return _bad(f"Another branch already uses code '{fields['code']}'.")
+        if not can_manage_all_branches(request.user):
+            fields.pop("is_active", None)  # opening / closing an office is an organisation-level decision
         old_currency = branch.currency_code
         for key, value in fields.items():
             setattr(branch, key, value)
@@ -337,19 +334,48 @@ class BranchUpdateView(APIView):
             from expenses.items import retag_claims_to_branch_currency
             retag_claims_to_branch_currency(branch)
         count = branch.primary_employees.filter(is_active=True).count()
-        return Response(_branch_json(branch, count))
+        return Response(_branch_json(branch, count, request.user))
 
 
 # ---------------------------------------------------------------- Configuration
+# Organisation-wide records are read-only unless the user has access to all branches; everyone else
+# creates and edits records of their own branches only (see organization/branch_config.py).
 
-class ExpenseCategoryConfigView(APIView):
-    """GET /api/v1/settings/expense-categories/ — all categories, including inactive ones."""
+def _scope_json(obj, user):
+    b = obj.branch
+    return {"branch": {"id": b.id, "code": b.code, "name": b.name} if b else None,
+            "can_edit": can_configure_branch(user, obj.branch_id)}
+
+
+class BranchScopedConfigView(APIView):
+    """Turns branch-scope violations into a 403 response."""
     permission_classes = [IsAuthenticated]
+
+    def handle_exception(self, exc):
+        if isinstance(exc, BranchScopeError):
+            return _forbidden(str(exc))
+        return super().handle_exception(exc)
+
+
+def _visible_policies(user):
+    qs = visible_to(user, LeavePolicy.objects.select_related("leave_type", "branch"))
+    return visible_to(user, qs, field="leave_type__branch")
+
+
+def _visible_types(user):
+    return visible_to(user, LeaveType.objects.select_related("branch"))
+
+
+class ExpenseCategoryConfigView(BranchScopedConfigView):
+    """GET /api/v1/settings/expense-categories/ — all categories, including inactive ones."""
 
     def get(self, request):
         if not can_view_expense_config(request.user):
             return _forbidden()
-        return Response([_category_json(c) for c in ExpenseCategory.objects.order_by("-is_active", "name")])
+        return Response([
+            _category_json(c, request.user)
+            for c in visible_to(request.user, ExpenseCategory.objects.select_related("branch")).order_by("-is_active", "name")
+        ])
 
     def post(self, request):
         if not can_view_expense_config(request.user):
@@ -362,23 +388,25 @@ class ExpenseCategoryConfigView(APIView):
             return _bad(f"Category code {code} already exists.")
         cat = ExpenseCategory.objects.create(
             organization=_default_org(request.user), name=name, code=code,
+            branch=resolve_config_branch(request.user, request.data.get("branch")),
             description=_text(request.data, "description"),
         )
-        return Response(_category_json(cat), status=status.HTTP_201_CREATED)
+        return Response(_category_json(cat, request.user), status=status.HTTP_201_CREATED)
 
 
-def _category_json(c):
-    return {"id": c.id, "name": c.name, "code": c.code, "description": c.description, "is_active": c.is_active}
+def _category_json(c, user):
+    return {"id": c.id, "name": c.name, "code": c.code, "description": c.description, "is_active": c.is_active,
+            **_scope_json(c, user)}
 
 
-class ExpenseCategoryUpdateView(APIView):
+class ExpenseCategoryUpdateView(BranchScopedConfigView):
     """PATCH /api/v1/settings/expense-categories/<pk>/  {name?, description?, is_active?}"""
-    permission_classes = [IsAuthenticated]
 
     def patch(self, request, pk):
         if not can_view_expense_config(request.user):
             return _forbidden("Expense categories are managed by the Admin Manager.")
-        cat = get_object_or_404(ExpenseCategory, pk=pk)
+        cat = get_object_or_404(visible_to(request.user, ExpenseCategory.objects.all()), pk=pk)
+        require_configurable(request.user, cat.branch_id)
         if "name" in request.data:
             name = _text(request.data, "name", 100)
             if not name:
@@ -389,18 +417,17 @@ class ExpenseCategoryUpdateView(APIView):
         if "is_active" in request.data:
             cat.is_active = _bool(request.data.get("is_active"))
         cat.save()
-        return Response(_category_json(cat))
+        return Response(_category_json(cat, request.user))
 
 
-class LeaveSettingsView(APIView):
+class LeaveSettingsView(BranchScopedConfigView):
     """GET /api/v1/settings/leave-types/ — leave types with their entitlement policies."""
-    permission_classes = [IsAuthenticated]
 
     def get(self, request):
         if not can_view_leave_config(request.user):
             return _forbidden()
-        types = LeaveType.objects.prefetch_related("policies").order_by("-is_active", "name")
-        return Response([_leave_type_json(lt) for lt in types])
+        types = _visible_types(request.user).order_by("-is_active", "name")
+        return Response([_leave_type_json(lt, request.user) for lt in types])
 
     def post(self, request):
         if not can_view_leave_config(request.user):
@@ -413,15 +440,17 @@ class LeaveSettingsView(APIView):
             return _bad(f"Leave type code {code} already exists.")
         lt = LeaveType.objects.create(
             organization=_default_org(request.user), name=name, code=code,
+            branch=resolve_config_branch(request.user, request.data.get("branch")),
             is_paid=_bool(request.data.get("is_paid"), True),
             is_accrual_based=_bool(request.data.get("is_accrual_based")),
             requires_attachment=_bool(request.data.get("requires_attachment")),
         )
-        return Response(_leave_type_json(lt), status=status.HTTP_201_CREATED)
+        return Response(_leave_type_json(lt, request.user), status=status.HTTP_201_CREATED)
 
 
-def _policy_json(p):
+def _policy_json(p, user):
     return {
+        **_scope_json(p, user),
         "id": p.id, "name": p.name,
         "yearly_entitlement": str(p.yearly_entitlement),
         "accrual_frequency": p.accrual_frequency,
@@ -434,23 +463,24 @@ def _policy_json(p):
     }
 
 
-def _leave_type_json(lt):
-    policies = sorted(lt.policies.all(), key=lambda p: (not p.is_active, p.effective_date))
+def _leave_type_json(lt, user):
+    policies = sorted(_visible_policies(user).filter(leave_type=lt), key=lambda p: (not p.is_active, p.effective_date))
     return {
         "id": lt.id, "name": lt.name, "code": lt.code, "is_paid": lt.is_paid,
         "is_accrual_based": lt.is_accrual_based, "requires_attachment": lt.requires_attachment,
-        "is_active": lt.is_active, "policies": [_policy_json(p) for p in policies],
+        "is_active": lt.is_active, "policies": [_policy_json(p, user) for p in policies],
+        **_scope_json(lt, user),
     }
 
 
-class LeaveTypeUpdateView(APIView):
+class LeaveTypeUpdateView(BranchScopedConfigView):
     """PATCH /api/v1/settings/leave-types/<pk>/"""
-    permission_classes = [IsAuthenticated]
 
     def patch(self, request, pk):
         if not can_view_leave_config(request.user):
             return _forbidden("Leave settings are managed by the HR Coordinator.")
-        lt = get_object_or_404(LeaveType, pk=pk)
+        lt = get_object_or_404(_visible_types(request.user), pk=pk)
+        require_configurable(request.user, lt.branch_id)
         if not lt.organization_id:
             lt.organization = _default_org(request.user)
         if "name" in request.data:
@@ -462,7 +492,7 @@ class LeaveTypeUpdateView(APIView):
             if key in request.data:
                 setattr(lt, key, _bool(request.data.get(key)))
         lt.save()
-        return Response(_leave_type_json(lt))
+        return Response(_leave_type_json(lt, request.user))
 
 
 def _decimal(value):
@@ -505,30 +535,31 @@ def _save_policy(policy, lt, data):
     return None
 
 
-class LeavePolicyCreateView(APIView):
+class LeavePolicyCreateView(BranchScopedConfigView):
     """POST /api/v1/settings/leave-types/<pk>/policies/"""
-    permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
         if not can_view_leave_config(request.user):
             return _forbidden("Leave settings are managed by the HR Coordinator.")
-        lt = get_object_or_404(LeaveType, pk=pk)
-        policy = LeavePolicy(leave_type=lt)
+        lt = get_object_or_404(_visible_types(request.user), pk=pk)
+        # A branch's own leave type only ever has that branch's policies.
+        branch = resolve_config_branch(request.user, lt.branch_id or request.data.get("branch"))
+        policy = LeavePolicy(leave_type=lt, branch=branch)
         error = _save_policy(policy, lt, request.data)
         if error:
             return _bad(error)
-        return Response(_policy_json(policy), status=status.HTTP_201_CREATED)
+        return Response(_policy_json(policy, request.user), status=status.HTTP_201_CREATED)
 
 
-class LeavePolicyUpdateView(APIView):
+class LeavePolicyUpdateView(BranchScopedConfigView):
     """PATCH /api/v1/settings/leave-policies/<pk>/"""
-    permission_classes = [IsAuthenticated]
 
     def patch(self, request, pk):
         if not can_view_leave_config(request.user):
             return _forbidden("Leave settings are managed by the HR Coordinator.")
-        policy = get_object_or_404(LeavePolicy.objects.select_related("leave_type"), pk=pk)
+        policy = get_object_or_404(_visible_policies(request.user), pk=pk)
+        require_configurable(request.user, policy.branch_id)
         error = _save_policy(policy, policy.leave_type, request.data)
         if error:
             return _bad(error)
-        return Response(_policy_json(policy))
+        return Response(_policy_json(policy, request.user))
