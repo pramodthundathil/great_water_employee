@@ -505,6 +505,75 @@ def validate_leave_request(employee, leave_type, start_date, end_date, is_half_d
     return number_of_days, end_date, warnings
 
 
+MAX_PREVIEW_RANGE_DAYS = 731
+
+
+def preview_leave_request(employee, start_date, end_date, is_half_day=False, leave_type=None):
+    """
+    Read-only summary shown while an employee picks dates: chargeable days, every overlapping
+    application and the balance / Loss of Pay effect. Uses the same rules as validate_leave_request
+    but reports all problems together instead of stopping at the first.
+    """
+    if is_half_day:
+        end_date = start_date
+    if end_date < start_date:
+        return {"error": "End date cannot be before start date."}
+    total_days = (end_date - start_date).days + 1
+    if total_days > MAX_PREVIEW_RANGE_DAYS:
+        return {"error": "The selected range is too long. Please check the dates."}
+
+    days = calculate_leave_days(employee.primary_branch, start_date, end_date, is_half_day)
+    overlaps = LeaveApplication.objects.filter(
+        employee=employee, start_date__lte=end_date, end_date__gte=start_date,
+        status__in=ACTIVE_LEAVE_STATUSES,
+    ).select_related("leave_type").order_by("start_date")
+
+    balance_info = None
+    if leave_type is not None:
+        if leave_type.is_paid:
+            balance = LeaveLedgerEntry.get_current_balance(employee, leave_type)
+            pending = sum(
+                LeaveApplication.objects.filter(
+                    employee=employee, leave_type=leave_type, status__in=PENDING_LEAVE_STATUSES,
+                ).values_list("number_of_days", flat=True),
+                Decimal("0.00"),
+            )
+            available = balance - pending
+            lop = max(days - max(available, Decimal("0")), Decimal("0"))
+            balance_info = {
+                "is_paid": True,
+                "ledger_balance": float(balance),
+                "pending": float(pending),
+                "available": float(available),
+                "after": float(available - days),
+                "lop_days": float(lop),
+                "exceeded": available < days,
+            }
+        else:
+            balance_info = {"is_paid": False, "lop_days": float(days), "exceeded": False}
+
+    return {
+        "number_of_days": float(days),
+        "calendar_days": total_days,
+        "excluded_days": 0 if is_half_day else total_days - int(days),
+        "leave_type": leave_type.name if leave_type else "",
+        "overlaps": [
+            {
+                "number": a.application_number,
+                "leave_type": a.leave_type.name,
+                "start": f"{a.start_date:%d %b %Y}",
+                "end": f"{a.end_date:%d %b %Y}",
+                "days": float(a.number_of_days),
+                "status": a.get_status_display(),
+                "approved": a.status == LeaveApplicationStatus.APPROVED,
+            }
+            for a in overlaps
+        ],
+        "balance": balance_info,
+        "can_submit": days > 0 and not overlaps,
+    }
+
+
 def deduct_leave_from_ledger(application, actor, note_prefix="Approved Leave Application"):
     """Creates the ledger deduction for an approved application (paid leave types only)."""
     if not application.leave_type.is_paid:

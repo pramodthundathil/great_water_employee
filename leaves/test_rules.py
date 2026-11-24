@@ -112,6 +112,36 @@ class LeaveRuleTests(TestCase):
         client.force_authenticate(self.lead)
         self.assertEqual(client.get(f"/api/v1/leaves/balance/?employee_id={self.emp.id}").status_code, 200)
 
+    def test_web_preview_reports_days_overlap_and_lop_together(self):
+        url = "/leaves/preview/"
+        LeaveApplication.objects.create(employee=self.emp, branch=self.branch, leave_type=self.el,
+                                        start_date=date(2026, 9, 1), end_date=date(2026, 9, 3),
+                                        number_of_days=Decimal("3"), reason="x")
+        self.client.force_login(self.emp)
+        # Balance 8, pending 3 -> available 5; 10 days requested -> 5 LOP, and the dates clash
+        d = self.client.get(url, {"leave_type": self.el.id, "start_date": "2026-09-01", "end_date": "2026-09-10"}).json()
+        self.assertEqual((d["number_of_days"], len(d["overlaps"]), d["can_submit"]), (10.0, 1, False))
+        self.assertEqual((d["balance"]["available"], d["balance"]["lop_days"], d["balance"]["exceeded"]), (5.0, 5.0, True))
+        # Holiday excluded, balance sufficient
+        d = self.client.get(url, {"leave_type": self.el.id, "start_date": "2026-08-14", "end_date": "2026-08-16"}).json()
+        self.assertEqual((d["number_of_days"], d["excluded_days"], d["can_submit"]), (2.0, 1, True))
+        self.assertFalse(d["balance"]["exceeded"])
+        # Half day ignores the end date; no leave type yet
+        d = self.client.get(url, {"start_date": "2026-08-14", "end_date": "2026-08-01", "is_half_day": "1"}).json()
+        self.assertEqual((d["number_of_days"], d["balance"]), (0.5, None))
+        # Holiday only, unpaid, reversed range, huge range, bad input
+        d = self.client.get(url, {"start_date": "2026-08-15", "end_date": "2026-08-15"}).json()
+        self.assertFalse(d["can_submit"])
+        d = self.client.get(url, {"leave_type": self.lwp.id, "start_date": "2026-08-14", "end_date": "2026-08-14"}).json()
+        self.assertEqual(d["balance"]["lop_days"], 1.0)
+        self.assertIn("error", self.client.get(url, {"start_date": "2026-08-14", "end_date": "2026-08-01"}).json())
+        self.assertIn("error", self.client.get(url, {"start_date": "2026-08-14", "end_date": "9999-01-01"}).json())
+        self.assertEqual(self.client.get(url, {"start_date": "x"}).status_code, 400)
+        # Another employee sees none of this person's leave
+        self.client.force_login(self.hr)
+        d = self.client.get(url, {"start_date": "2026-09-01", "end_date": "2026-09-03"}).json()
+        self.assertEqual(d["overlaps"], [])
+
     def test_mobile_endpoints_respond(self):
         client = APIClient()
         client.force_authenticate(self.emp)

@@ -150,7 +150,7 @@
                 <h5 class="modal-title fw-bold"><i class="bi bi-calendar-plus text-primary me-2"></i>Apply for Leave</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
-            <form method="post" enctype="multipart/form-data" action="{% url 'portal_leaves' %}">
+            <form method="post" enctype="multipart/form-data" action="{% url 'portal_leaves' %}" id="applyLeaveForm" data-preview-url="{% url 'portal_leave_preview' %}">
                 {% csrf_token %}
                 <div class="modal-body p-4">
                     <div class="row g-3">
@@ -193,6 +193,9 @@
                             </select>
                         </div>
 
+                        <!-- Live summary for the selected dates (filled by script) -->
+                        <div class="col-12" id="leavePreview" aria-live="polite" hidden></div>
+
                         <div class="col-12">
                             <label class="form-label small fw-bold">Reason for Leave <span class="text-danger">*</span></label>
                             <textarea name="reason" class="form-control" rows="3" placeholder="Provide reason or context for requested time-off..." required></textarea>
@@ -206,16 +209,16 @@
 
                         <div class="col-12">
                             <div class="small text-muted mb-2"><i class="bi bi-info-circle me-1"></i>Public holidays in the selected range are not counted. Overlapping requests are blocked.</div>
-                            <div class="form-check">
+                            <div class="form-check" id="ackBalanceWrapper">
                                 <input class="form-check-input" type="checkbox" name="acknowledge_insufficient_balance" value="1" id="ackBalance">
-                                <label class="form-check-label small" for="ackBalance">Apply even if my balance is insufficient (HR will review)</label>
+                                <label class="form-check-label small" for="ackBalance">Apply even if my balance is insufficient &mdash; extra days may be Loss of Pay (HR will review)</label>
                             </div>
                         </div>
                     </div>
                 </div>
                 <div class="modal-footer bg-light">
                     <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
-                    <button type="submit" class="btn btn-gw-primary px-4">Submit Application</button>
+                    <button type="submit" id="applyLeaveSubmit" class="btn btn-gw-primary px-4">Submit Application</button>
                 </div>
             </form>
         </div>
@@ -254,5 +257,135 @@
             halfDayPeriodWrapper.classList.add('d-none');
         }
     }
+
+    // Apply for Leave: live days, overlap and balance / Loss of Pay summary.
+    (function () {
+        const form = document.getElementById('applyLeaveForm');
+        if (!form) return;
+        const box = document.getElementById('leavePreview');
+        const type = document.getElementById('leaveTypeSelect');
+        const start = document.getElementById('startDateInput');
+        const end = document.getElementById('endDateInput');
+        const half = document.getElementById('halfDayToggle');
+        const ack = document.getElementById('ackBalance');
+        const ackWrapper = document.getElementById('ackBalanceWrapper');
+        const submit = document.getElementById('applyLeaveSubmit');
+        let timer, requestNo = 0;
+
+        const fmt = (n) => `${Number(n)} day${Number(n) === 1 ? '' : 's'}`;
+        const el = (tag, cls, text) => {
+            const node = document.createElement(tag);
+            if (cls) node.className = cls;
+            if (text) node.textContent = text;
+            return node;
+        };
+        const alertBox = (tone, icon, title, text) => {
+            const a = el('div', `alert alert-${tone} py-2 px-3 small mb-2`);
+            const h = el('div', 'fw-bold');
+            h.append(el('i', `bi ${icon} me-1`), document.createTextNode(title));
+            a.append(h);
+            if (text) a.append(el('div', '', text));
+            return a;
+        };
+
+        // Without a usable preview the server still validates on submit.
+        function reset() {
+            submit.disabled = false;
+            ack.required = false;
+            ackWrapper.hidden = false;
+        }
+
+        function render(d) {
+            box.replaceChildren();
+            box.hidden = false;
+            if (d.error) {
+                reset();
+                submit.disabled = true;
+                box.append(alertBox('danger', 'bi-x-circle-fill', d.error));
+                return;
+            }
+            const b = d.balance;
+
+            const excluded = d.excluded_days ? `${fmt(d.calendar_days)} selected, ${d.excluded_days} public holiday / weekly off not counted.` : '';
+            if (d.number_of_days > 0) {
+                box.append(alertBox('primary', 'bi-calendar-check', `Applying for ${fmt(d.number_of_days)} of leave`, excluded));
+            } else {
+                box.append(alertBox('danger', 'bi-calendar-x', 'No leave required',
+                    'The selected dates fall entirely on public holidays / weekly offs.'));
+            }
+
+            if (d.overlaps.length) {
+                const a = alertBox('danger', 'bi-exclamation-octagon-fill', 'These dates overlap with your existing leave');
+                const list = el('ul', 'list-unstyled mb-1 mt-1');
+                d.overlaps.forEach((o) => {
+                    const range = o.start === o.end ? o.start : `${o.start} to ${o.end}`;
+                    const li = el('li', 'd-flex flex-wrap align-items-center gap-2 py-1');
+                    li.append(el('span', 'fw-semibold', o.number),
+                        el('span', '', `${o.leave_type} · ${range} · ${fmt(o.days)}`),
+                        el('span', `status-badge ${o.approved ? 'badge-approved' : 'badge-pending'}`, o.status));
+                    list.append(li);
+                });
+                a.append(list, el('div', '', 'Choose different dates to submit this request.'));
+                box.append(a);
+            }
+
+            if (b && d.number_of_days > 0) {
+                if (!b.is_paid) {
+                    box.append(alertBox('warning', 'bi-cash-coin', `Unpaid leave: ${fmt(b.lop_days)} without pay`,
+                        `${d.leave_type} is not deducted from a paid leave balance.`));
+                } else {
+                    const pending = b.pending ? `, pending requests ${fmt(b.pending)}` : '';
+                    const detail = `Ledger balance ${fmt(b.ledger_balance)}${pending}, available ${fmt(b.available)}.`;
+                    if (b.exceeded) {
+                        box.append(alertBox('warning', 'bi-exclamation-triangle-fill',
+                            `${d.leave_type} balance exceeded: ${fmt(b.lop_days)} may be Loss of Pay (LOP)`, detail));
+                    } else {
+                        box.append(alertBox('success', 'bi-wallet2',
+                            `${d.leave_type} balance is sufficient: ${fmt(b.after)} left after this request`, detail));
+                    }
+                }
+            }
+
+            const exceeded = !!(b && b.exceeded && d.can_submit);
+            ackWrapper.hidden = !exceeded;
+            ack.required = exceeded;
+            if (!exceeded) ack.checked = false;
+            submit.disabled = !d.can_submit;
+        }
+
+        async function load() {
+            const current = ++requestNo;
+            if (!start.value || !end.value) { box.hidden = true; reset(); return; }
+            const params = new URLSearchParams({
+                start_date: start.value, end_date: end.value,
+                is_half_day: half.checked ? '1' : '0', leave_type: type.value,
+            });
+            try {
+                const res = await fetch(`${form.dataset.previewUrl}?${params}`, { credentials: 'same-origin' });
+                const data = await res.json();
+                if (current === requestNo) render(data);
+            } catch (e) {
+                if (current === requestNo) { box.hidden = true; reset(); }
+            }
+        }
+
+        function schedule() {
+            requestNo++; // ignore responses for the previous selection
+            if (half.checked) end.value = start.value;
+            // Never let an acknowledgement for earlier dates carry over.
+            ack.checked = false;
+            clearTimeout(timer);
+            timer = setTimeout(load, 250);
+        }
+
+        start.addEventListener('change', () => {
+            end.min = start.value;
+            if (start.value && end.value < start.value) end.value = start.value;
+            schedule();
+        });
+        [end, type, half].forEach((node) => node.addEventListener('change', schedule));
+        end.min = start.value;
+        document.getElementById('applyLeaveModal').addEventListener('show.bs.modal', load);
+    })();
 </script>
 {% endblock %}

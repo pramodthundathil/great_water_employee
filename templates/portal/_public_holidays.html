@@ -1,0 +1,71 @@
+<!-- Read-only public holiday list. Expects: holidays, year, years, today, target_emp -->
+<div class="gw-card">
+    <div class="gw-card-header">
+        <div>
+            <h2 id="public-holidays-title" class="gw-card-title"><i class="bi bi-calendar-event me-2 text-primary" aria-hidden="true"></i>Public Holidays &mdash; {{ year }}</h2>
+            <div class="small text-muted mt-1">
+                {% if target_emp.primary_branch %}{{ target_emp.primary_branch.name }} and organization-wide holidays.{% else %}Organization-wide holidays.{% endif %}
+                Public holidays inside a leave period are not counted against the balance; optional holidays are.
+            </div>
+        </div>
+        <div class="d-flex gap-1" role="navigation" aria-label="Select holiday calendar year">
+            {% for y in years %}
+            <a href="?emp_id={{ target_emp.id }}&amp;tab=holidays&amp;year={{ y }}" class="btn btn-sm {% if y == year %}btn-primary{% else %}btn-light border{% endif %}" {% if y == year %}aria-current="page"{% endif %}>{{ y }}</a>
+            {% endfor %}
+        </div>
+    </div>
+    <div class="gw-card-body p-0">
+        <div tabindex="0" role="region" aria-labelledby="public-holidays-title" class="gw-holidays-table-wrap">
+            <table class="table gw-table gw-holidays-table m-0">
+                <thead>
+                    <tr>
+                        <th scope="col">Date</th>
+                        <th scope="col">Holiday</th>
+                        <th scope="col">Applies To</th>
+                        <th scope="col">Type</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for h in holidays %}
+                    <tr>
+                        <td data-label="Date">
+                            <div class="d-flex align-items-center gap-2">
+                                <div class="gw-date-badge" aria-hidden="true">
+                                    <div class="gw-date-badge-month">{{ h.date|date:"M" }}</div>
+                                    <div class="gw-date-badge-day">{{ h.date|date:"d" }}</div>
+                                </div>
+                                <div class="text-start">
+                                    <div class="fw-semibold text-dark text-nowrap">{{ h.date|date:"l" }}</div>
+                                    <div class="small text-muted text-nowrap">{{ h.date|date:"d M Y" }}</div>
+                                </div>
+                            </div>
+                        </td>
+                        <td data-label="Holiday">
+                            <div>
+                                <span class="fw-semibold text-dark">{{ h.name }}</span>
+                                {% if year == today.year and h.date >= today %}<span class="badge bg-primary-subtle text-primary ms-1">Upcoming</span>{% endif %}
+                            </div>
+                        </td>
+                        <td data-label="Applies To">
+                            {% if h.calendar.branch %}<span class="dept-pill dept-pill-cyan">{{ h.calendar.branch.name }}</span>{% else %}<span class="dept-pill">All branches</span>{% endif %}
+                        </td>
+                        <td data-label="Type">
+                            {% if h.is_optional %}<span class="status-badge badge-draft">Optional</span>{% else %}<span class="status-badge badge-approved">Public Holiday</span>{% endif %}
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr class="is-empty-row">
+                        <td colspan="4">
+                            <div class="empty-state">
+                                <div class="empty-state-icon"><i class="bi bi-calendar-x" aria-hidden="true"></i></div>
+                                <div class="empty-state-title">No holidays published for {{ year }}</div>
+                                <div class="empty-state-desc">HR publishes the holiday list for each office.</div>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>

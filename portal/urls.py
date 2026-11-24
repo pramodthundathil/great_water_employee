@@ -39,6 +39,7 @@ urlpatterns = [
     # Leaves
     path("leaves/", views.leaves_list_view, name="portal_leaves"),
     path("leaves/<int:pk>/", views.leave_detail_view, name="portal_leave_detail"),
+    path("leaves/preview/", views.leave_preview_view, name="portal_leave_preview"),
     path("leaves/approvals/", views.leave_approvals_view, name="portal_leave_approvals"),
     path("leaves/ledger/", views.leave_ledger_view, name="portal_leave_ledger"),
     path("leaves/settings/", admin_views.leave_settings_view, name="portal_leave_settings"),

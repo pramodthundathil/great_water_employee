@@ -7,6 +7,7 @@ from django.db.models import Sum, Count, Q, ProtectedError
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
+from django.http import JsonResponse
 from django.utils.http import url_has_allowed_host_and_scheme
 from datetime import datetime, date, timedelta
 from decimal import Decimal
@@ -31,7 +32,7 @@ from leaves.models import (
 from leaves.models import LeaveAuditAction, fmt_days, STAGE_LABELS
 from leaves.services import (
     get_employee_leave_balances, record_manual_leave_adjustment,
-    validate_leave_request, LeaveRequestError,
+    validate_leave_request, LeaveRequestError, preview_leave_request,
     log_leave_audit, client_ip, resubmit_leave_application,
     initial_leave_route, visible_leave_applications, can_view_leave_application,
     filter_leave_track, leave_track_counts, leave_review_options, leave_correction_options, notify_leave_review,
@@ -1802,6 +1803,22 @@ def leave_approvals_view(request):
 
 
 @login_required
+def leave_preview_view(request):
+    """JSON for the Apply for Leave modal: days, overlaps and balance for the selected dates."""
+    try:
+        start_date = datetime.strptime(request.GET.get("start_date", ""), "%Y-%m-%d").date()
+        is_half_day = request.GET.get("is_half_day") == "1"
+        end_date = start_date if is_half_day else datetime.strptime(request.GET.get("end_date", ""), "%Y-%m-%d").date()
+    except ValueError:
+        return JsonResponse({"error": "Select valid start and end dates."}, status=400)
+    leave_type = None
+    leave_type_id = request.GET.get("leave_type", "")
+    if leave_type_id.isdecimal():
+        leave_type = LeaveType.objects.filter(id=leave_type_id, is_active=True).first()
+    return JsonResponse(preview_leave_request(request.user, start_date, end_date, is_half_day, leave_type))
+
+
+@login_required
 def leave_ledger_view(request):
     user = request.user
     target_emp = user
@@ -1851,6 +1868,23 @@ def leave_ledger_view(request):
     else:
         accessible_employees = User.objects.filter(is_active=True, primary_branch__in=user.get_accessible_branches())
 
+    # Holidays that apply to the viewed employee: their office plus organisation-wide calendars.
+    today = date.today()
+    try:
+        year = int(request.GET.get("year", ""))
+    except ValueError:
+        year = today.year
+    if year not in (today.year - 1, today.year, today.year + 1):
+        year = today.year
+    holiday_scope = Q(calendar__branch__isnull=True)
+    if target_emp.primary_branch_id:
+        holiday_scope |= Q(calendar__branch_id=target_emp.primary_branch_id)
+    holidays = list(
+        Holiday.objects.filter(holiday_scope, calendar__year=year, calendar__is_active=True)
+        .select_related("calendar__branch")
+        .order_by("date")
+    )
+
     context = {
         "active_nav": "leave_ledger",
         "target_emp": target_emp,
@@ -1858,6 +1892,11 @@ def leave_ledger_view(request):
         "entries": entries,
         "leave_types": leave_types,
         "accessible_employees": accessible_employees,
+        "active_tab": "holidays" if request.GET.get("tab") == "holidays" else "balances",
+        "holidays": holidays,
+        "year": year,
+        "years": [today.year - 1, today.year, today.year + 1],
+        "today": today,
     }
     return render(request, "portal/leave_ledger.html", context)
 

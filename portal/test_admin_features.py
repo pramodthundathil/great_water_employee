@@ -8,7 +8,7 @@ from rest_framework.test import APIClient
 
 from accounts.models import User, RoleChoices, EmployeeProfile
 from expenses.models import ExpenseCategory, ExpenseClaim, ExpenseClaimStatus
-from leaves.models import LeaveType, LeavePolicy, Holiday
+from leaves.models import LeaveType, LeavePolicy, Holiday, HolidayCalendar
 from organization.models import Organization, Branch
 
 
@@ -155,6 +155,25 @@ class LeaveSettingsViewTests(TestCase):
         self.assertEqual(resp.status_code, 302)
         lt = LeaveType.objects.get(code="CL")
         self.assertIsNotNone(lt.organization_id)
+
+    def test_employee_sees_own_branch_holidays_on_leave_balances(self):
+        other = Branch.objects.create(organization=self.org, code="GW-DXB", name="Dubai")
+        year = date.today().year
+        for branch, name in ((self.branch, "Onam"), (None, "New Year"), (other, "Dubai Only")):
+            cal = HolidayCalendar.objects.create(organization=self.org, branch=branch, name=name, year=year)
+            Holiday.objects.create(calendar=cal, date=date(year, 1, 1), name=name)
+        self.client.force_login(self.emp)
+        self.assertContains(self.client.get("/leaves/ledger/"), "tab=holidays")
+        for y in (year, "invalid", "9" * 30):
+            resp = self.client.get(f"/leaves/ledger/?tab=holidays&year={y}")
+            self.assertContains(resp, "Onam")
+            self.assertContains(resp, "New Year")
+            self.assertNotContains(resp, "Dubai Only")
+        # An employee cannot switch to another person's calendar
+        colleague = User.objects.create_user(username="E9", employee_id="E9", email="e9@gw.test", password="Password@123",
+                                             role=RoleChoices.EMPLOYEE, primary_branch=other)
+        resp = self.client.get(f"/leaves/ledger/?tab=holidays&emp_id={colleague.id}")
+        self.assertNotContains(resp, "Dubai Only")
 
     def test_add_update_and_delete_holiday_preserves_tab_and_year(self):
         self.client.force_login(self.hr)

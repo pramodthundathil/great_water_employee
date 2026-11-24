@@ -23,6 +23,10 @@
 <div class="gw-card mb-4">
     <div class="gw-card-body py-3">
         <form method="get" class="row g-2 align-items-center">
+            {% if active_tab == 'holidays' %}
+            <input type="hidden" name="tab" value="holidays">
+            <input type="hidden" name="year" value="{{ year }}">
+            {% endif %}
             <div class="col-md-5">
                 <div class="input-group input-group-sm">
                     <span class="input-group-text bg-light text-muted"><i class="bi bi-person"></i> Employee Statement:</span>
@@ -43,6 +47,24 @@
 </div>
 {% endif %}
 
+<!-- Section Tabs -->
+<nav class="mb-4" aria-label="Leave balance sections">
+    <div class="gw-segmented-tabs">
+        <a href="?emp_id={{ target_emp.id }}" class="gw-segmented-tab text-decoration-none {% if active_tab == 'balances' %}active{% endif %}" {% if active_tab == 'balances' %}aria-current="page"{% endif %}>
+            <i class="bi bi-wallet2" aria-hidden="true"></i>
+            <span>Balances &amp; Ledger</span>
+        </a>
+        <a href="?emp_id={{ target_emp.id }}&amp;tab=holidays" class="gw-segmented-tab text-decoration-none {% if active_tab == 'holidays' %}active{% endif %}" {% if active_tab == 'holidays' %}aria-current="page"{% endif %}>
+            <i class="bi bi-calendar-event" aria-hidden="true"></i>
+            <span>Public Holidays ({{ year }})</span>
+            <span class="gw-tab-count">{{ holidays|length }}</span>
+        </a>
+    </div>
+</nav>
+
+{% if active_tab == 'holidays' %}
+{% include "portal/_public_holidays.html" %}
+{% else %}
 <!-- Live Balance Breakdown -->
 <div class="row g-3 mb-4">
     {% for b in balances %}
@@ -131,6 +153,8 @@
         </div>
     </div>
 </div>
+
+{% endif %}
 
 <!-- Modal: HR Manual Balance Adjustment -->
 {% if user.is_hr_coordinator or user.is_superuser %}
